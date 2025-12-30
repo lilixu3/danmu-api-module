@@ -68,7 +68,7 @@ jobs:
           [ "$REPO" = "custom" ] && REPO="${{ inputs.custom_repo }}"
           git clone --depth 1 --branch "${{ inputs.repo_ref }}" "https://github.com/${REPO}.git" upstream
 
-      - name: Build modules
+       - name: Build modules
         run: |
           set -euo pipefail
           VERSION="${{ inputs.module_version }}"
@@ -84,70 +84,104 @@ jobs:
             local arch="aarch64"
             local work_dir="node_work"
             
-            echo ">>> 正在准备构建 Node 环境..."
+            echo ">>> [Step 1] 准备工作目录..."
+            rm -rf "$work_dir"
             mkdir -p "$work_dir/extracted"
             cd "$work_dir"
             
-            echo ">>> 获取软件包索引..."
+            echo ">>> [Step 2] 获取软件包索引..."
             curl -sL "${repo_url}/dists/stable/main/binary-${arch}/Packages" > Packages
 
-            # 核心包：nodejs 以及 Termux 运行必需的支撑库
-            # 明确加入 libandroid-support, libc++, openssl, zlib
+            # 这里的依赖列表必须包含基础库
             local pkgs="nodejs libandroid-support libc++ openssl zlib"
             
             for pkg in $pkgs; do
-                echo ">>> 正在下载并处理: $pkg"
+                echo ">>> [Step 3] 下载: $pkg"
                 local deb_rel_path=$(grep -A 20 "Package: ${pkg}$" Packages | grep "Filename:" | awk '{print $2}' | head -n 1)
+                
                 if [ -z "$deb_rel_path" ]; then
-                    echo "警告: 找不到软件包 $pkg"
-                    continue
+                    echo "!!! 错误: 在索引中找不到 $pkg"
+                    exit 1
                 fi
 
-                curl -L "${repo_url}/${deb_rel_path}" -o "${pkg}.deb"
+                curl -L -f --retry 3 "${repo_url}/${deb_rel_path}" -o "${pkg}.deb"
+                
+                echo ">>> [Step 4] 解压: $pkg"
                 ar x "${pkg}.deb"
                 
-                # 处理压缩格式
+                # 兼容不同的压缩格式
                 if [ -f data.tar.zst ]; then
                     tar --zstd -xf data.tar.zst -C extracted/
                 elif [ -f data.tar.xz ]; then
                     tar -xf data.tar.xz -C extracted/
+                else
+                    echo "!!! 错误: 未知的压缩格式 (data.tar.* 缺失)"
+                    ls -l
+                    exit 1
                 fi
-                # 清理中间产物
+                
+                # 清理
                 rm -f control.tar.* data.tar.* debian-binary "${pkg}.deb"
             done
 
-            # --- 移动文件到模块目录 ---
-            echo ">>> 正在将二进制文件和库移动到模块..."
+            echo ">>> [Step 5] 调试：检查解压后的目录结构 (部分展示)"
+            # 只列出 extracted 目录下的前 3 层，方便排查路径
+            find extracted -maxdepth 4 -type d
+
+            # --- 关键修复：动态查找文件 ---
+            echo ">>> [Step 6] 正在定位 Node 二进制文件..."
+            
+            # 查找以 bin/node 结尾的文件路径
+            NODE_BIN_PATH=$(find extracted -type f -path "*/bin/node" | head -n 1)
+
+            if [ -z "$NODE_BIN_PATH" ]; then
+                echo "!!! 严重错误: 在解压产物中找不到 node 二进制文件！"
+                echo ">>> 完整文件列表:"
+                find extracted
+                exit 1
+            fi
+
+            echo "    找到 Node: $NODE_BIN_PATH"
+            
+            # 根据 node 路径反推 lib 路径
+            # 如果 node 在 .../usr/bin/node，那么 lib 应该在 .../usr/lib
+            TERMUX_USR_DIR=$(dirname "$(dirname "$NODE_BIN_PATH")")
+            TERMUX_LIB_DIR="$TERMUX_USR_DIR/lib"
+            
+            echo "    推断 Lib 目录: $TERMUX_LIB_DIR"
+
+            if [ ! -d "$TERMUX_LIB_DIR" ]; then
+                 echo "!!! 严重错误: 找不到对应的库目录: $TERMUX_LIB_DIR"
+                 exit 1
+            fi
+
+            # --- 移动文件 ---
+            echo ">>> [Step 7] 移动文件到模块..."
             mkdir -p "$root/node/bin"
             mkdir -p "$root/node/lib"
 
-            # 这里的路径是 Termux deb 包的标准路径
-            local termux_usr="extracted/data/data/com.termux/files/usr"
+            cp "$NODE_BIN_PATH" "$root/node/bin/"
+            chmod 0755 "$root/node/bin/node"
 
-            # 1. 复制 Node 二进制
-            if [ -f "$termux_usr/bin/node" ]; then
-                cp "$termux_usr/bin/node" "$root/node/bin/"
-                chmod 0755 "$root/node/bin/node"
+            # 复制库文件 (保留软链接)
+            cp -a "$TERMUX_LIB_DIR"/. "$root/node/lib/"
+
+            echo ">>> [Step 8] 最终验证..."
+            echo "    Bin 目录内容: $(ls "$root/node/bin/")"
+            echo "    Lib 目录文件数: $(find "$root/node/lib" -type f | wc -l)"
+
+            if [ ! -f "$root/node/bin/node" ]; then
+                echo "!!! 复制失败：Node 文件不存在"
+                exit 1
             fi
-
-            # 2. 复制库文件 (包含所有 .so 文件和符号链接)
-            # 使用 -d 保留链接关系，避免重复拷贝同一文件的不同版本
-            if [ -d "$termux_usr/lib" ]; then
-                find "$termux_usr/lib" -maxdepth 1 -name "*.so*" -exec cp -d {} "$root/node/lib/" \;
-            fi
-
-            echo ">>> 验证提取结果:"
-            ls -F "$root/node/bin/"
-            echo "成功提取库文件数量: $(ls "$root/node/lib/" | wc -l)"
 
             cd ..
             rm -rf "$work_dir"
 
-            # --- 修改 service.sh 注入环境变量 ---
+            # --- 修改 service.sh ---
             if [ -f "$root/service.sh" ]; then
-                echo ">>> 更新 service.sh 环境变量..."
-                # 确保在脚本开头注入，MODDIR 在 Magisk 环境下通常已定义或可由 ${0%/*} 获取
-                sed -i '2i # --- Node Runtime Env ---\nMODDIR=${0%/*}\nexport PATH=$MODDIR/node/bin:$PATH\nexport LD_LIBRARY_PATH=$MODDIR/node/lib:$LD_LIBRARY_PATH\n# ------------------' "$root/service.sh"
+                echo ">>> 注入环境变量到 service.sh"
+                sed -i '2i # Env for Node\nMODDIR=${0%/*}\nexport PATH=$MODDIR/node/bin:$PATH\nexport LD_LIBRARY_PATH=$MODDIR/node/lib:$LD_LIBRARY_PATH' "$root/service.sh"
             fi
           }
 
@@ -155,21 +189,18 @@ jobs:
           finalize_zip() {
             local root="$1"
             local out_name="$2"
-            echo ">>> 正在打包 $out_name ..."
-            # 确保脚本权限
             find "$root" -type f -name "*.sh" -exec chmod 0755 {} \;
             (cd "$root" && zip -r "../../out/${out_name}" .)
           }
 
           # 1. 构建 No-Node 版本
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
-            echo ">>> 正在构建 No-Node 版本..."
+            echo ">>> 构建 No-Node 版本..."
             unzip -q "${TEMPLATE_NO_NODE}" -d build/tmp/no_node
             MODULE_ROOT=$(find build/tmp/no_node -name "module.prop" | head -n 1 | xargs dirname)
             
             mkdir -p "$MODULE_ROOT/app/danmu_api"
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
-            
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
             sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
             
@@ -178,14 +209,13 @@ jobs:
 
           # 2. 构建 Node 版本
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "node" ]]; then
-            echo ">>> 正在构建 Node 完整版..."
+            echo ">>> 构建 Node 版本..."
             unzip -q "${TEMPLATE_NODE}" -d build/tmp/node
             MODULE_ROOT=$(find build/tmp/node -name "module.prop" | head -n 1 | xargs dirname)
             
             mkdir -p "$MODULE_ROOT/app/danmu_api"
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
             
-            # 执行修复后的提取函数
             fetch_termux_node "$MODULE_ROOT"
             
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
@@ -193,6 +223,7 @@ jobs:
             
             finalize_zip "$MODULE_ROOT" "danmu_api_server_node_${VERSION}.zip"
           fi
+
 
       - name: Upload Flashable Modules
         uses: actions/upload-artifact@v4
