@@ -82,46 +82,74 @@ jobs:
           
           mkdir -p build/tmp build/out
 
-          # --- 函数：下载并提取 Termux Node.js ---
+          # --- 函数：下载并提取 Termux Node.js 及其完整依赖 ---
           fetch_termux_node() {
             local root="$1"
-            echo "正在从 Termux 仓库获取最新 Node.js (aarch64)..."
-            
             local repo_url="https://packages.termux.dev/apt/termux-main"
-            local deb_path=$(curl -sL "${repo_url}/dists/stable/main/binary-aarch64/Packages" | grep -A 20 "Package: nodejs$" | grep "Filename:" | awk '{print $2}' | head -n 1)
+            local arch="aarch64"
+            local tmp_dir="node_extract_tmp"
             
-            if [ -z "$deb_path" ]; then
-              echo "无法获取 Termux Node.js 下载地址"
-              exit 1
+            echo "开始解析 Termux Node.js 依赖..."
+            mkdir -p "$tmp_dir" && cd "$tmp_dir"
+            
+            # 获取包列表索引
+            curl -sL "${repo_url}/dists/stable/main/binary-${arch}/Packages" > Packages
+            
+            # 获取 nodejs 及其直接依赖
+            # 通常包括: libandroid-support, libc++, openssl, zlib, icu-libs, libuv, nghttp2, c-ares
+            local deps=$(grep -A 20 "Package: nodejs$" Packages | grep "Depends:" | cut -d: -f2 | tr ',' '\n' | awk '{print $1}')
+            local pkg_list="nodejs $deps"
+            
+            echo "待下载包列表: $pkg_list"
+
+            for pkg in $pkg_list; do
+                echo "正在获取软件包: $pkg"
+                local deb_path=$(grep -A 20 "Package: ${pkg}$" Packages | grep "Filename:" | awk '{print $2}' | head -n 1)
+                if [ -z "$deb_path" ]; then continue; fi
+                
+                curl -L -O "${repo_url}/${deb_path}"
+                ar x *.deb
+                
+                # 解压数据层 (可能为 .tar.xz 或 .tar.zst)
+                local data_tar=$(ls data.tar.* | head -n 1)
+                if [[ "$data_tar" == *.zst ]]; then
+                    tar --zstd -xf "$data_tar"
+                else
+                    tar -xf "$data_tar"
+                fi
+                # 清理临时 deb 文件，防止重名干扰
+                rm -f *.deb data.tar.* control.tar.* debian-binary
+            done
+
+            # --- 整理文件到模块目录 ---
+            echo "正在整理文件到模块 node 目录..."
+            mkdir -p "$root/node/bin"
+            mkdir -p "$root/node/lib"
+
+            # 1. 移动 node 主程序
+            local bin_src=$(find . -type f -name "node" | grep "/bin/node" | head -n 1)
+            if [ -f "$bin_src" ]; then
+                cp "$bin_src" "$root/node/bin/"
+                chmod 0755 "$root/node/bin/node"
             fi
 
-            curl -L -o node.deb "${repo_url}/${deb_path}"
-            ar x node.deb
-            
-            local data_tar=$(ls data.tar.* | head -n 1)
-            if [[ "$data_tar" == *.zst ]]; then
-                tar --zstd -xf "$data_tar"
-            else
-                tar -xf "$data_tar"
-            fi
-            
-            # 提取 node 到 node/bin
-            local bin_src=$(find . -type f -name "node" | grep "/bin/node" | head -n 1)
-            mkdir -p "$root/node/bin"
-            cp "$bin_src" "$root/node/bin/"
-            chmod 0755 "$root/node/bin/node"
-            
-            # 提取所有 .so 依赖到 lib
-            mkdir -p "$root/lib"
-            find . -path "*/usr/lib/*.so*" -type f -o -type l | while read -r lib_file; do
-                cp -d "$lib_file" "$root/lib/"
+            # 2. 移动所有相关库文件 (.so)
+            # 使用 -d 保持符号链接（非常重要，否则 node 会找不到库）
+            find . -name "*.so*" -type f -o -type l | while read -r lib_file; do
+                if [[ "$lib_file" == *"usr/lib"* ]]; then
+                    cp -d "$lib_file" "$root/node/lib/"
+                fi
             done
-            
-            # --- 自动修复 service.sh 路径问题 ---
-            # Termux Node 需要 LD_LIBRARY_PATH 才能运行
+
+            cd ..
+            rm -rf "$tmp_dir"
+            echo "Node.js 及其依赖提取完成。"
+
+            # --- 自动修正 service.sh 环境 ---
             if [ -f "$root/service.sh" ]; then
-                echo "正在优化 service.sh 环境..."
-                sed -i '2i # Auto-added by build script\nexport LD_LIBRARY_PATH=$MODDIR/lib:$LD_LIBRARY_PATH\nexport PATH=$MODDIR/node/bin:$PATH' "$root/service.sh"
+                echo "注入环境变量到 service.sh..."
+                # 在第2行插入环境定义，确保 MODDIR 和 LD_LIBRARY_PATH 正确
+                sed -i '2i # Env set by Build Script\nMODDIR=${0%/*}\nexport PATH=$MODDIR/node/bin:$PATH\nexport LD_LIBRARY_PATH=$MODDIR/node/lib:$LD_LIBRARY_PATH' "$root/service.sh"
             fi
           }
 
@@ -130,7 +158,6 @@ jobs:
             local root="$1"
             local out_name="$2"
             find "$root" -type f -name "*.sh" -exec chmod 0755 {} \;
-            # 重要：进入目录内部打包，确保 module.prop 在根目录
             (cd "$root" && zip -r "../../out/${out_name}" .)
           }
 
@@ -152,6 +179,8 @@ jobs:
             MODULE_ROOT=$(find build/tmp/node -name "module.prop" | head -n 1 | xargs dirname)
             
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
+            
+            # 调用修复后的函数
             fetch_termux_node "$MODULE_ROOT"
             
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
