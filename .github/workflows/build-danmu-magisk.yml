@@ -90,6 +90,9 @@ jobs:
 
           mkdir -p build/tmp build/out
 
+          # =========================================================
+          # 函数：下载并提取 Termux Node.js（不再注入/改写 service.sh）
+          # =========================================================
           fetch_termux_node() {
             local root="$1"
             local arch="aarch64"
@@ -116,7 +119,7 @@ jobs:
             fi
             local PKG_INDEX="${work_dir}/Packages"
 
-            # ✅ 修复：不用正则匹配 Package: <name>（因为 libc++ 里的 + 会被 awk 当成正则元字符）
+            # 关键：用字符串相等定位 Package 行（避免 libc++ 里的 + 被当正则）
             pkg_filename() {
               local pkg="$1"
               awk -v pkg="$pkg" '
@@ -137,7 +140,6 @@ jobs:
                 }' "$PKG_INDEX"
             }
 
-            # ✅ 修复：Depends 同样用字符串相等定位包块
             pkg_depends() {
               local pkg="$1"
               awk -v pkg="$pkg" '
@@ -178,6 +180,7 @@ jobs:
               local grp="$1"
               local alt
               IFS='|' read -ra alts <<< "$grp"
+
               for alt in "${alts[@]}"; do
                 alt="$(echo "$alt" | xargs)"
                 [ -z "$alt" ] && continue
@@ -287,25 +290,6 @@ jobs:
             if [ "${lib_items:-0}" -eq 0 ]; then
               echo "!!! 错误: node/lib 仍为空（依赖未写入）"
               exit 1
-            fi
-
-            echo ">>> [Node构建] 注入 service.sh 环境变量..."
-            if [ -f "$root/service.sh" ]; then
-              if ! grep -q "### NODE ENV BEGIN" "$root/service.sh"; then
-                local tmp="${work_dir}/service.sh.tmp"
-                {
-                  head -n 1 "$root/service.sh"
-                  printf '%s\n' \
-                    '### NODE ENV BEGIN' \
-                    'MODDIR=${0%/*}' \
-                    'export PATH="$MODDIR/node/bin:$PATH"' \
-                    'export LD_LIBRARY_PATH="$MODDIR/node/lib:${LD_LIBRARY_PATH:-}"' \
-                    '### NODE ENV END'
-                  tail -n +2 "$root/service.sh"
-                } > "$tmp"
-                mv "$tmp" "$root/service.sh"
-                chmod 0755 "$root/service.sh"
-              fi
             fi
 
             echo ">>> [Node构建] 验证通过:"
