@@ -116,32 +116,46 @@ jobs:
             fi
             local PKG_INDEX="${work_dir}/Packages"
 
+            # ✅ 修复：不用正则匹配 Package: <name>（因为 libc++ 里的 + 会被 awk 当成正则元字符）
             pkg_filename() {
               local pkg="$1"
               awk -v pkg="$pkg" '
                 BEGIN{RS="";FS="\n"}
-                $0 ~ "(^|\n)Package: " pkg "(\n|$)" {
+                {
+                  hit=0
                   for(i=1;i<=NF;i++){
-                    if($i ~ /^Filename: /){
-                      sub(/^Filename: /,"",$i);
-                      print $i; exit
+                    if($i == "Package: " pkg){ hit=1; break }
+                  }
+                  if(hit){
+                    for(i=1;i<=NF;i++){
+                      if(index($i,"Filename: ")==1){
+                        sub(/^Filename: /,"",$i);
+                        print $i; exit
+                      }
                     }
                   }
                 }' "$PKG_INDEX"
             }
 
+            # ✅ 修复：Depends 同样用字符串相等定位包块
             pkg_depends() {
               local pkg="$1"
               awk -v pkg="$pkg" '
                 BEGIN{RS="";FS="\n"}
-                $0 ~ "(^|\n)Package: " pkg "(\n|$)" {
+                {
+                  hit=0
                   for(i=1;i<=NF;i++){
-                    if($i ~ /^Depends: /){
-                      dep=substr($i,10);
-                      for(j=i+1;j<=NF && $j ~ /^ /; j++){
-                        dep=dep " " substr($j,2);
+                    if($i == "Package: " pkg){ hit=1; break }
+                  }
+                  if(hit){
+                    for(i=1;i<=NF;i++){
+                      if(index($i,"Depends: ")==1){
+                        dep=substr($i,10);
+                        for(j=i+1;j<=NF && $j ~ /^ /; j++){
+                          dep=dep " " substr($j,2);
+                        }
+                        print dep; exit
                       }
-                      print dep; exit
                     }
                   }
                 }' "$PKG_INDEX"
@@ -160,20 +174,15 @@ jobs:
               done
             }
 
-            # ✅ 修复点：libc++ 同时尝试 libc++ 与 libc++-shared（两边仓库命名不一致）
             resolve_group() {
               local grp="$1"
               local alt
               IFS='|' read -ra alts <<< "$grp"
-
               for alt in "${alts[@]}"; do
                 alt="$(echo "$alt" | xargs)"
                 [ -z "$alt" ] && continue
 
-                # 候选列表（默认只试自己）
                 local candidates=("$alt")
-
-                # libc++ 命名兼容：两者都试
                 if [ "$alt" = "libc++" ]; then
                   candidates=("libc++" "libc++-shared")
                 elif [ "$alt" = "libc++-shared" ]; then
@@ -190,7 +199,6 @@ jobs:
                   fi
                 done
               done
-
               return 1
             }
 
@@ -301,7 +309,6 @@ jobs:
             fi
 
             echo ">>> [Node构建] 验证通过:"
-            ls -l "$root/node/bin/node" >/dev/null
             echo "    node/lib items: $lib_items"
             echo "    libc++_shared.so exists? $( [ -e "$root/node/lib/libc++_shared.so" ] && echo yes || echo no )"
             echo "---------------------------------------------------"
