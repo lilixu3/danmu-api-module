@@ -14,13 +14,13 @@ on:
         required: true
 
       custom_repo:
-        description: "自定义仓库（owner/repo），当 repo_source=custom 时生效"
+        description: "自定义仓库（owner/repo）"
         type: string
         required: false
         default: ""
 
       repo_ref:
-        description: "分支 / Tag / Commit（默认 main）"
+        description: "分支 / Tag / Commit"
         type: string
         required: true
         default: main
@@ -78,6 +78,8 @@ jobs:
           set -euo pipefail
           VERSION="${{ inputs.module_version }}"
           VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9' | head -c 8)"
+          [ -z "$VERSION_CODE" ] && VERSION_CODE=1
+          
           mkdir -p build/tmp build/out
 
           # --- 函数：下载并提取 Termux Node.js ---
@@ -86,7 +88,6 @@ jobs:
             echo "正在从 Termux 仓库获取最新 Node.js (aarch64)..."
             
             local repo_url="https://packages.termux.dev/apt/termux-main"
-            # 这里的解析逻辑更健壮一点
             local deb_path=$(curl -sL "${repo_url}/dists/stable/main/binary-aarch64/Packages" | grep -A 20 "Package: nodejs$" | grep "Filename:" | awk '{print $2}' | head -n 1)
             
             if [ -z "$deb_path" ]; then
@@ -95,79 +96,74 @@ jobs:
             fi
 
             curl -L -o node.deb "${repo_url}/${deb_path}"
-            
-            # 提取 deb 内部文件
             ar x node.deb
             
-            # 找到数据包（可能是 .xz 或 .zst）
             local data_tar=$(ls data.tar.* | head -n 1)
-            echo "正在解压 $data_tar ..."
-            
             if [[ "$data_tar" == *.zst ]]; then
                 tar --zstd -xf "$data_tar"
             else
                 tar -xf "$data_tar"
             fi
             
-            # --- 核心修复：使用 find 动态定位文件 ---
-            # 寻找 node 二进制文件
+            # 提取 node 到 node/bin
             local bin_src=$(find . -type f -name "node" | grep "/bin/node" | head -n 1)
-            if [ -z "$bin_src" ]; then
-                echo "错误：未能在包内找到 node 二进制文件"
-                exit 1
-            fi
             mkdir -p "$root/node/bin"
             cp "$bin_src" "$root/node/bin/"
             chmod 0755 "$root/node/bin/node"
             
-            # 寻找所有的 .so 依赖库
+            # 提取所有 .so 依赖到 lib
             mkdir -p "$root/lib"
-            # 提取 usr/lib 目录下的所有库文件，保留软连接 (-d)
             find . -path "*/usr/lib/*.so*" -type f -o -type l | while read -r lib_file; do
                 cp -d "$lib_file" "$root/lib/"
             done
             
-            echo "Node.js 及依赖库提取完成"
+            # --- 自动修复 service.sh 路径问题 ---
+            # Termux Node 需要 LD_LIBRARY_PATH 才能运行
+            if [ -f "$root/service.sh" ]; then
+                echo "正在优化 service.sh 环境..."
+                sed -i '2i # Auto-added by build script\nexport LD_LIBRARY_PATH=$MODDIR/lib:$LD_LIBRARY_PATH\nexport PATH=$MODDIR/node/bin:$PATH' "$root/service.sh"
+            fi
           }
 
           # --- 函数：打包 ---
           finalize_zip() {
             local root="$1"
             local out_name="$2"
-            # 修复权限
             find "$root" -type f -name "*.sh" -exec chmod 0755 {} \;
-            # 确保 zip 内部没有多余的一层文件夹（cd 到 root 内部再压）
+            # 重要：进入目录内部打包，确保 module.prop 在根目录
             (cd "$root" && zip -r "../../out/${out_name}" .)
           }
 
           # 1. 构建 No-Node 版本
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
             unzip -q "${TEMPLATE_NO_NODE}" -d build/tmp/no_node
-            MODULE_ROOT=$(find build/tmp/no_node -name "module.prop" -exec dirname {} | head -n 1)
+            MODULE_ROOT=$(find build/tmp/no_node -name "module.prop" | head -n 1 | xargs dirname)
+            
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
             sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
+            
             finalize_zip "$MODULE_ROOT" "danmu_api_server_${VERSION}.zip"
           fi
 
           # 2. 构建 Node 版本
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "node" ]]; then
             unzip -q "${TEMPLATE_NODE}" -d build/tmp/node
-            MODULE_ROOT=$(find build/tmp/node -name "module.prop" -exec dirname {} | head -n 1)
-            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
+            MODULE_ROOT=$(find build/tmp/node -name "module.prop" | head -n 1 | xargs dirname)
             
-            # 提取 Node
+            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
             fetch_termux_node "$MODULE_ROOT"
             
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
             sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
+            
             finalize_zip "$MODULE_ROOT" "danmu_api_server_node_${VERSION}.zip"
           fi
 
-      - name: Upload Artifacts
+      - name: Upload Flashable Modules
         uses: actions/upload-artifact@v4
         with:
-          name: Danmu_API_Flashable_v${{ inputs.module_version }}
+          name: Danmu_API_v${{ inputs.module_version }}
           path: build/out/*.zip
 
       - name: Create Release
