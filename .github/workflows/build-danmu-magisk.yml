@@ -65,14 +65,21 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip unzip rsync curl jq binutils zstd
+          sudo apt-get install -y zip unzip rsync curl jq binutils zstd xz-utils dpkg
 
       - name: Fetch upstream danmu_api
         run: |
+          set -euo pipefail
           REPO="${{ inputs.repo_source }}"
           [ "$REPO" = "custom" ] && REPO="${{ inputs.custom_repo }}"
           echo ">>> Cloning $REPO..."
-          git clone --depth 1 --branch "${{ inputs.repo_ref }}" "https://github.com/${REPO}.git" upstream
+          rm -rf upstream
+          git clone --depth 1 "https://github.com/${REPO}.git" upstream
+          cd upstream
+          # 支持 branch / tag / commit
+          git fetch --depth 1 origin "${{ inputs.repo_ref }}" || true
+          git checkout -q "${{ inputs.repo_ref }}" 2>/dev/null || git checkout -q FETCH_HEAD
+          cd ..
 
       - name: Build modules
         run: |
@@ -80,111 +87,194 @@ jobs:
           VERSION="${{ inputs.module_version }}"
           VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9' | head -c 8)"
           [ -z "$VERSION_CODE" ] && VERSION_CODE=1
-          
+
           mkdir -p build/tmp build/out
 
           # =========================================================
-          # 函数：下载并提取 Termux Node.js (动态路径修复版)
+          # 函数：下载并提取 Termux Node.js（递归解析 Depends，确保 node/bin 与 node/lib 非空）
           # =========================================================
           fetch_termux_node() {
             local root="$1"
-            local repo_url="https://packages.termux.dev/apt/termux-main"
             local arch="aarch64"
-            local work_dir="node_work"
-            
+
+            # 使用 termux.net 的 stable 仓库（有 Packages.xz，体积小，稳定）
+            local repo_base="https://termux.net"
+            local pkg_index_url="${repo_base}/dists/stable/main/binary-${arch}/Packages.xz"
+
+            local work_dir
+            work_dir="$(mktemp -d)"
+            local extracted="${work_dir}/extracted"
+            mkdir -p "$extracted"
+
             echo "---------------------------------------------------"
-            echo ">>> [Node构建] 开始处理 Termux Node环境..."
-            
-            rm -rf "$work_dir"
-            mkdir -p "$work_dir/extracted"
-            cd "$work_dir"
-            
-            echo ">>> [Node构建] 下载软件包索引..."
-            curl -sL "${repo_url}/dists/stable/main/binary-${arch}/Packages" > Packages
+            echo ">>> [Node构建] 开始拉取 Termux Node 运行时..."
+            echo ">>> [Node构建] Repo: ${repo_base}"
+            echo ">>> [Node构建] Index: ${pkg_index_url}"
 
-            # 关键依赖：libandroid-support 是必须的，否则报错
-            local pkgs="nodejs libandroid-support libc++ openssl zlib"
-            
-            for pkg in $pkgs; do
-                echo ">>> [Node构建] 处理依赖包: $pkg"
-                local deb_rel_path=$(grep -A 20 "Package: ${pkg}$" Packages | grep "Filename:" | awk '{print $2}' | head -n 1)
-                
-                if [ -z "$deb_rel_path" ]; then
-                    echo "!!! 错误: 无法在源中找到 $pkg"
-                    exit 1
-                fi
+            echo ">>> [Node构建] 下载 Packages.xz..."
+            curl -fL --retry 3 "$pkg_index_url" -o "${work_dir}/Packages.xz"
+            xz -dc "${work_dir}/Packages.xz" > "${work_dir}/Packages"
 
-                # 下载
-                curl -L -f --retry 3 "${repo_url}/${deb_rel_path}" -o "${pkg}.deb"
-                
-                # 解压 ar
-                ar x "${pkg}.deb"
-                
-                # 解压 data.tar (兼容 zst 和 xz)
-                if [ -f data.tar.zst ]; then
-                    tar --zstd -xf data.tar.zst -C extracted/
-                elif [ -f data.tar.xz ]; then
-                    tar -xf data.tar.xz -C extracted/
-                else
-                    echo "!!! 错误: 未知压缩格式"
-                    ls -l
-                    exit 1
-                fi
-                
-                rm -f control.tar.* data.tar.* debian-binary "${pkg}.deb"
+            local PKG_INDEX="${work_dir}/Packages"
+
+            # 取某个包的 Filename
+            pkg_filename() {
+              local pkg="$1"
+              awk -v pkg="$pkg" '
+                BEGIN{RS="";FS="\n"}
+                $0 ~ "(^|\n)Package: " pkg "(\n|$)" {
+                  for(i=1;i<=NF;i++){
+                    if($i ~ /^Filename: /){
+                      sub(/^Filename: /,"",$i);
+                      print $i; exit
+                    }
+                  }
+                }' "$PKG_INDEX"
+            }
+
+            # 取某个包的 Depends（合并折行）
+            pkg_depends() {
+              local pkg="$1"
+              awk -v pkg="$pkg" '
+                BEGIN{RS="";FS="\n"}
+                $0 ~ "(^|\n)Package: " pkg "(\n|$)" {
+                  for(i=1;i<=NF;i++){
+                    if($i ~ /^Depends: /){
+                      dep=substr($i,10);
+                      for(j=i+1;j<=NF && $j ~ /^ /; j++){
+                        dep=dep " " substr($j,2);
+                      }
+                      print dep; exit
+                    }
+                  }
+                }' "$PKG_INDEX"
+            }
+
+            # 解析 Depends 字符串 -> 依赖包名列表（取第一个备选，去版本/架构修饰）
+            parse_depends() {
+              local depstr="$1"
+              depstr="${depstr:-}"
+              [ -z "$depstr" ] && return 0
+
+              # 逗号分隔
+              echo "$depstr" | tr ',' '\n' | while read -r item; do
+                item="$(echo "$item" | xargs)"
+                [ -z "$item" ] && continue
+
+                # 取第一个备选（foo | bar）
+                item="$(echo "$item" | awk -F'|' '{print $1}')"
+                item="$(echo "$item" | xargs)"
+
+                # 去掉版本约束 (>= x)
+                item="$(echo "$item" | sed -E 's/\([^)]*\)//g')"
+                item="$(echo "$item" | xargs)"
+
+                # 去掉 :any / :all / :aarch64 等
+                item="$(echo "$item" | sed -E 's/:[a-z0-9_-]+//g')"
+                item="$(echo "$item" | xargs)"
+
+                # 过滤空
+                [ -n "$item" ] && echo "$item"
+              done
+            }
+
+            # 下载并解压 .deb（用 dpkg-deb 自动处理 xz/zst/gz）
+            download_and_extract() {
+              local pkg="$1"
+              local fname="$2"
+              local url="${repo_base}/${fname}"
+
+              echo ">>> [Node构建] 下载: $pkg"
+              curl -fL --retry 3 "$url" -o "${work_dir}/${pkg}.deb"
+              dpkg-deb -x "${work_dir}/${pkg}.deb" "$extracted"
+              rm -f "${work_dir}/${pkg}.deb"
+            }
+
+            # 递归解析依赖并解压
+            declare -A SEEN
+            local queue=()
+            local node_pkg="nodejs"   # 需要 LTS 可改为 nodejs-lts
+            queue+=("$node_pkg")
+
+            while [ "${#queue[@]}" -gt 0 ]; do
+              local pkg="${queue[0]}"
+              queue=("${queue[@]:1}")
+
+              [ -n "$pkg" ] || continue
+              if [ "${SEEN[$pkg]+x}" = "x" ]; then
+                continue
+              fi
+              SEEN["$pkg"]=1
+
+              local fname
+              fname="$(pkg_filename "$pkg" || true)"
+              if [ -z "$fname" ]; then
+                echo "!!! 错误: 在 Packages 索引中找不到包: $pkg"
+                exit 1
+              fi
+
+              download_and_extract "$pkg" "$fname"
+
+              local deps
+              deps="$(pkg_depends "$pkg" || true)"
+              while read -r dep; do
+                [ -n "$dep" ] && queue+=("$dep")
+              done < <(parse_depends "$deps")
             done
 
-            # --- 核心修复：动态查找文件位置 ---
-            echo ">>> [Node构建] 定位二进制文件..."
-            
-            # 无论解压路径多深，直接找 bin/node
-            NODE_BIN_PATH=$(find extracted -type f -path "*/bin/node" | head -n 1)
-
+            echo ">>> [Node构建] 定位 node 二进制..."
+            local NODE_BIN_PATH
+            NODE_BIN_PATH="$(find "$extracted" -type f -path "*/files/usr/bin/node" | head -n 1 || true)"
             if [ -z "$NODE_BIN_PATH" ]; then
-                echo "!!! 错误: 未找到 node 二进制文件"
-                echo "目录结构调试:"
-                find extracted -maxdepth 4
-                exit 1
+              # 兼容极少数包名/路径变化
+              NODE_BIN_PATH="$(find "$extracted" -type f -path "*/usr/bin/node" | head -n 1 || true)"
             fi
-            
-            echo "    Found Node at: $NODE_BIN_PATH"
+            if [ -z "$NODE_BIN_PATH" ]; then
+              echo "!!! 错误: 解压后未找到 node 可执行文件"
+              echo ">>> 调试：列出可能的 bin 目录"
+              find "$extracted" -maxdepth 6 -type d -name bin -print || true
+              exit 1
+            fi
+            echo "    Found: $NODE_BIN_PATH"
 
-            # 反推 lib 目录 (bin 的同级目录 ../lib)
-            TERMUX_USR_DIR=$(dirname "$(dirname "$NODE_BIN_PATH")")
-            TERMUX_LIB_DIR="$TERMUX_USR_DIR/lib"
-            
-            if [ ! -d "$TERMUX_LIB_DIR" ]; then
-                echo "!!! 错误: 未找到对应的 lib 目录: $TERMUX_LIB_DIR"
-                exit 1
+            local PREFIX_DIR
+            PREFIX_DIR="$(dirname "$(dirname "$NODE_BIN_PATH")")"  # .../usr
+            local LIB_DIR="${PREFIX_DIR}/lib"
+            if [ ! -d "$LIB_DIR" ]; then
+              echo "!!! 错误: 未找到 lib 目录: $LIB_DIR"
+              exit 1
             fi
 
-            # --- 移动文件 ---
-            echo ">>> [Node构建] 写入模块目录..."
-            mkdir -p "$root/node/bin"
-            mkdir -p "$root/node/lib"
+            echo ">>> [Node构建] 写入模块目录: $root/node/{bin,lib}"
+            mkdir -p "$root/node/bin" "$root/node/lib"
 
-            # 复制 node
-            cp "$NODE_BIN_PATH" "$root/node/bin/"
+            # node
+            cp -f "$NODE_BIN_PATH" "$root/node/bin/node"
             chmod 0755 "$root/node/bin/node"
 
-            # 复制库文件 (使用 -a 保留软链接，这很重要！)
-            cp -a "$TERMUX_LIB_DIR"/. "$root/node/lib/"
+            # libs（包含 node_modules 等）
+            cp -a "$LIB_DIR"/. "$root/node/lib/"
 
-            # --- 验证 ---
-            echo ">>> [Node构建] 验证结果:"
-            echo "    Node Bin: $(ls -F "$root/node/bin/")"
-            echo "    Lib Count: $(find "$root/node/lib" -type f | wc -l) (files)"
-
-            # 清理工作区
-            cd ..
-            rm -rf "$work_dir"
-
-            # --- 注入环境变量 ---
-            if [ -f "$root/service.sh" ]; then
-                echo ">>> [Node构建] 更新 service.sh..."
-                sed -i '2i # --- Node Env ---\nMODDIR=${0%/*}\nexport PATH=$MODDIR/node/bin:$PATH\nexport LD_LIBRARY_PATH=$MODDIR/node/lib:$LD_LIBRARY_PATH\n# ----------------' "$root/service.sh"
+            # 强校验：避免出现“node/bin、node/lib 空目录但构建仍通过”
+            if [ ! -s "$root/node/bin/node" ]; then
+              echo "!!! 错误: node 写入失败（文件为空或不存在）"
+              exit 1
             fi
+
+            local lib_items
+            lib_items="$(find "$root/node/lib" -mindepth 1 \( -type f -o -type l -o -type d \) | wc -l | tr -d ' ')"
+            if [ "${lib_items:-0}" -eq 0 ]; then
+              echo "!!! 错误: node/lib 仍为空（依赖未写入）"
+              exit 1
+            fi
+
+            echo ">>> [Node构建] 验证通过:"
+            echo "    node/bin: $(ls -al "$root/node/bin" | wc -l) lines"
+            echo "    node/lib items: $lib_items"
+            echo "    libc++_shared.so exists? $( [ -e "$root/node/lib/libc++_shared.so" ] && echo yes || echo no )"
             echo "---------------------------------------------------"
+
+            rm -rf "$work_dir"
           }
 
           # =========================================================
@@ -204,20 +294,15 @@ jobs:
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
             echo ">>> [TASK] 构建 No-Node 版本..."
             unzip -q "${TEMPLATE_NO_NODE}" -d build/tmp/no_node
-            
-            # 动态查找模块根目录 (包含 module.prop 的目录)
+
             MODULE_ROOT=$(find build/tmp/no_node -name "module.prop" | head -n 1 | xargs dirname)
-            
-            # 确保目标目录存在
+
             mkdir -p "$MODULE_ROOT/app/danmu_api"
-            
-            # 同步文件
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
-            
-            # 修改版本号
+
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
             sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
-            
+
             finalize_zip "$MODULE_ROOT" "danmu_api_server_${VERSION}.zip"
           fi
 
@@ -227,22 +312,18 @@ jobs:
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "node" ]]; then
             echo ">>> [TASK] 构建 Node 完整版..."
             unzip -q "${TEMPLATE_NODE}" -d build/tmp/node
-            
+
             MODULE_ROOT=$(find build/tmp/node -name "module.prop" | head -n 1 | xargs dirname)
-            
-            # 确保目标目录存在
+
             mkdir -p "$MODULE_ROOT/app/danmu_api"
-            
-            # 同步文件
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
-            
-            # 下载并注入 Node
+
+            # 下载并注入 Node（确保 node/bin 与 node/lib 不为空，否则直接失败）
             fetch_termux_node "$MODULE_ROOT"
-            
-            # 修改版本号
+
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
             sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
-            
+
             finalize_zip "$MODULE_ROOT" "danmu_api_server_node_${VERSION}.zip"
           fi
 
