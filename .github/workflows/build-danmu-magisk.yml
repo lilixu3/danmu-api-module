@@ -91,7 +91,7 @@ jobs:
           mkdir -p build/tmp build/out
 
           # =========================================================
-          # 函数：下载并提取 Termux Node.js（不再注入/改写 service.sh）
+          # 函数：下载并提取 Termux Node.js（只拷贝真正需要的 .so 依赖，不再整包复制 usr/lib）
           # =========================================================
           fetch_termux_node() {
             local root="$1"
@@ -119,7 +119,7 @@ jobs:
             fi
             local PKG_INDEX="${work_dir}/Packages"
 
-            # 关键：用字符串相等定位 Package 行（避免 libc++ 里的 + 被当正则）
+            # 用字符串相等定位 Package 行（避免 libc++ 里的 + 被当正则）
             pkg_filename() {
               local pkg="$1"
               awk -v pkg="$pkg" '
@@ -215,6 +215,7 @@ jobs:
               rm -f "${work_dir}/${pkg}.deb"
             }
 
+            # 递归拉取 nodejs 及其依赖包（只是为了把库/二进制都解出来）
             declare -A SEEN
             local queue=()
             local node_pkg="nodejs"
@@ -276,25 +277,98 @@ jobs:
             echo ">>> [Node构建] 写入模块目录: $root/node/{bin,lib}"
             mkdir -p "$root/node/bin" "$root/node/lib"
 
+            # 复制 node
             cp -f "$NODE_BIN_PATH" "$root/node/bin/node"
             chmod 0755 "$root/node/bin/node"
-            cp -a "$LIB_DIR"/. "$root/node/lib/"
 
+            # ------------------------------
+            # 核心优化：只复制真正需要的动态库（传递依赖）
+            # ------------------------------
+            # 取 ELF NEEDED
+            needed_of() {
+              local f="$1"
+              readelf -d "$f" 2>/dev/null | awk '/NEEDED/{gsub(/\[|\]/,"",$5); print $5}' || true
+            }
+
+            # 从 termux 的 $LIB_DIR 找到一个库文件（只在顶层找，避免把 node_modules/ 等目录拉进来）
+            find_lib_in_termux() {
+              local soname="$1"
+              if [ -e "$LIB_DIR/$soname" ] || [ -L "$LIB_DIR/$soname" ]; then
+                echo "$LIB_DIR/$soname"
+                return 0
+              fi
+              return 1
+            }
+
+            # 复制库（保留软链，并确保软链目标也复制）
+            copy_lib_to_module() {
+              local src="$1"
+              cp -a "$src" "$root/node/lib/"
+
+              if [ -L "$src" ]; then
+                local tgt
+                tgt="$(readlink -f "$src" || true)"
+                if [ -n "$tgt" ] && [ -e "$tgt" ]; then
+                  cp -a "$tgt" "$root/node/lib/"
+                fi
+              fi
+            }
+
+            # BFS：从 node 开始追依赖，把 termux 自己提供的 so 都捞出来
+            declare -A DONE_LIB
+            local file_q=()
+            file_q+=("$NODE_BIN_PATH")
+
+            while [ "${#file_q[@]}" -gt 0 ]; do
+              local cur="${file_q[0]}"
+              file_q=("${file_q[@]:1}")
+
+              # 只处理 ELF 文件
+              for so in $(needed_of "$cur"); do
+                # 已处理过
+                if [ "${DONE_LIB[$so]+x}" = "x" ]; then
+                  continue
+                fi
+
+                # termux /usr/lib 里能找到就复制；找不到则认为是系统库（Android 自带）直接略过
+                local src
+                if src="$(find_lib_in_termux "$so")"; then
+                  DONE_LIB["$so"]=1
+                  copy_lib_to_module "$src"
+
+                  # 继续追这个库的依赖（用真实文件追）
+                  local real_src
+                  real_src="$(readlink -f "$src" 2>/dev/null || echo "$src")"
+                  if [ -e "$real_src" ]; then
+                    file_q+=("$real_src")
+                  fi
+                else
+                  DONE_LIB["$so"]=1
+                fi
+              done
+            done
+
+            # 强校验：避免 node/lib 为空
             if [ ! -s "$root/node/bin/node" ]; then
               echo "!!! 错误: node 写入失败（文件为空或不存在）"
               exit 1
             fi
-
             local lib_items
-            lib_items="$(find "$root/node/lib" -mindepth 1 \( -type f -o -type l -o -type d \) | wc -l | tr -d ' ')"
+            lib_items="$(find "$root/node/lib" -mindepth 1 \( -type f -o -type l \) | wc -l | tr -d ' ')"
             if [ "${lib_items:-0}" -eq 0 ]; then
-              echo "!!! 错误: node/lib 仍为空（依赖未写入）"
+              echo "!!! 错误: node/lib 仍为空（未解析到任何 termux 动态库）"
               exit 1
             fi
 
+            # 可选：进一步减小体积（不需要可删）
+            # strip 不会动脚本/目录，只处理 ELF
+            strip --strip-unneeded "$root/node/bin/node" 2>/dev/null || true
+            find "$root/node/lib" -maxdepth 1 -type f -name "*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+
             echo ">>> [Node构建] 验证通过:"
-            echo "    node/lib items: $lib_items"
-            echo "    libc++_shared.so exists? $( [ -e "$root/node/lib/libc++_shared.so" ] && echo yes || echo no )"
+            echo "    node/lib files: $lib_items"
+            echo "    libs list:"
+            ls -1 "$root/node/lib" | sed 's/^/      - /'
             echo "---------------------------------------------------"
 
             rm -rf "$work_dir"
