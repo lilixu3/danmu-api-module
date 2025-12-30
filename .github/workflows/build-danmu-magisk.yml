@@ -160,23 +160,37 @@ jobs:
               done
             }
 
+            # ✅ 修复点：libc++ 同时尝试 libc++ 与 libc++-shared（两边仓库命名不一致）
             resolve_group() {
               local grp="$1"
               local alt
               IFS='|' read -ra alts <<< "$grp"
+
               for alt in "${alts[@]}"; do
                 alt="$(echo "$alt" | xargs)"
                 [ -z "$alt" ] && continue
+
+                # 候选列表（默认只试自己）
+                local candidates=("$alt")
+
+                # libc++ 命名兼容：两者都试
                 if [ "$alt" = "libc++" ]; then
-                  alt="libc++-shared"
+                  candidates=("libc++" "libc++-shared")
+                elif [ "$alt" = "libc++-shared" ]; then
+                  candidates=("libc++-shared" "libc++")
                 fi
-                local fname
-                fname="$(pkg_filename "$alt" || true)"
-                if [ -n "$fname" ]; then
-                  echo "$alt"
-                  return 0
-                fi
+
+                local cand
+                for cand in "${candidates[@]}"; do
+                  local fname
+                  fname="$(pkg_filename "$cand" || true)"
+                  if [ -n "$fname" ]; then
+                    echo "$cand"
+                    return 0
+                  fi
+                done
               done
+
               return 1
             }
 
@@ -267,7 +281,7 @@ jobs:
               exit 1
             fi
 
-            echo ">>> [Node构建] 注入 service.sh 环境变量（避免 heredoc 缩进导致 YAML 语法错误）..."
+            echo ">>> [Node构建] 注入 service.sh 环境变量..."
             if [ -f "$root/service.sh" ]; then
               if ! grep -q "### NODE ENV BEGIN" "$root/service.sh"; then
                 local tmp="${work_dir}/service.sh.tmp"
