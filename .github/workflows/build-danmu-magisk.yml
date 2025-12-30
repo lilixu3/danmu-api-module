@@ -36,34 +36,16 @@ on:
         required: true
 
       module_version:
-        description: "模块版本号（写入 module.prop，并用于输出文件名/模块名）"
+        description: "模块版本号"
         type: string
         required: true
         default: "1.1.0"
-
-      nodejs_mobile_version:
-        description: "nodejs-mobile core library 版本（仅 node 版本需要）"
-        type: string
-        required: true
-        default: "0.3.3"
-
-      ndk_tag:
-        description: "Android NDK 标签（用于提取 libc++_shared.so；如 r25c）"
-        type: string
-        required: true
-        default: "r25c"
 
       publish_release:
         description: "是否上传到 GitHub Release"
         type: boolean
         required: true
         default: false
-
-      release_tag:
-        description: "Release Tag（留空则自动使用 v<模块版本号>）"
-        type: string
-        required: false
-        default: ""
 
 jobs:
   build:
@@ -82,284 +64,111 @@ jobs:
 
       - name: Install tools
         run: |
-          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y zip unzip rsync curl jq
-
-      - name: Validate templates exist
-        run: |
-          set -euo pipefail
-          ls -la
-          test -f "${TEMPLATE_NO_NODE}" || (echo "Missing template: ${TEMPLATE_NO_NODE}" && exit 1)
-          test -f "${TEMPLATE_NODE}" || (echo "Missing template: ${TEMPLATE_NODE}" && exit 1)
+          sudo apt-get install -y zip unzip rsync curl jq binutils
 
       - name: Fetch upstream danmu_api
-        id: upstream
         run: |
-          set -euo pipefail
-
           REPO="${{ inputs.repo_source }}"
-          if [ "$REPO" = "custom" ]; then
-            REPO="${{ inputs.custom_repo }}"
-          fi
-
-          if [ -z "$REPO" ]; then
-            echo "repo_source=custom 时 custom_repo 不能为空"
-            exit 1
-          fi
-
-          REF="${{ inputs.repo_ref }}"
-          echo "Using upstream: ${REPO}@${REF}"
-
-          rm -rf upstream
-          git clone --depth 1 --branch "$REF" "https://github.com/${REPO}.git" upstream
-
-          if [ ! -d "upstream/${UPSTREAM_SUBDIR}" ]; then
-            echo "上游仓库不存在目录：${UPSTREAM_SUBDIR}"
-            echo "upstream 顶层："
-            ls -la upstream
-            exit 1
-          fi
-
-          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
-          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+          [ "$REPO" = "custom" ] && REPO="${{ inputs.custom_repo }}"
+          git clone --depth 1 --branch "${{ inputs.repo_ref }}" "https://github.com/${REPO}.git" upstream
 
       - name: Build modules
         run: |
           set -euo pipefail
-
           VERSION="${{ inputs.module_version }}"
-          VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9')"
-          [ -n "$VERSION_CODE" ] || VERSION_CODE=1
+          VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9' | head -c 8)"
+          mkdir -p build/tmp build/out build/deps
 
-          BUILD_VARIANT="${{ inputs.build_variant }}"
-          NODEJSM_VER="${{ inputs.nodejs_mobile_version }}"
-          NDK_TAG="${{ inputs.ndk_tag }}"
-
-          mkdir -p build/tmp build/out
-
-          detect_module_root() {
-            # 参数：解压目录
-            local d="$1"
-            if [ -f "$d/module.prop" ]; then
-              echo "$d"
-              return 0
-            fi
-            # 如果 zip 里有一层顶级目录，找包含 module.prop 的目录
-            local root
-            root="$(find "$d" -mindepth 1 -maxdepth 2 -type f -name module.prop -print -quit | xargs -r dirname || true)"
-            if [ -n "${root:-}" ] && [ -f "$root/module.prop" ]; then
-              echo "$root"
-              return 0
-            fi
-            return 1
-          }
-
-          update_module_prop() {
+          # --- 函数：下载并提取 Termux Node.js ---
+          fetch_termux_node() {
             local root="$1"
-            local prop="$root/module.prop"
-            [ -f "$prop" ] || return 0
-
-            # version / versionCode
-            sed -i "s|^version=.*|version=${VERSION}|g" "$prop" || true
-            sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$prop" || true
-
-            # name 追加版本号（避免重复追加：简单判断是否已包含 v<version>）
-            local name_line base_name
-            name_line="$(grep -E '^name=' "$prop" | head -n1 || true)"
-            base_name="${name_line#name=}"
-            if [ -n "$base_name" ]; then
-              if echo "$base_name" | grep -q "v${VERSION}$"; then
-                : # already ok
-              else
-                # escape '&' for sed replacement
-                local new_name
-                new_name="$(printf "%s v%s" "$base_name" "$VERSION" | sed 's/&/\\&/g')"
-                sed -i "s|^name=.*|name=${new_name}|g" "$prop" || true
-              fi
-            fi
-          }
-
-          sync_danmu_api_dir() {
-            local root="$1"
-            local target="$root/app/danmu_api"
-            if [ ! -d "$target" ]; then
-              echo "模板中找不到目录：app/danmu_api（root=$root）"
-              echo "root 下内容："
-              ls -la "$root"
-              echo "root/app 下内容："
-              ls -la "$root/app" || true
+            echo "正在从 Termux 仓库获取最新 Node.js (aarch64)..."
+            
+            # 获取最新版下载地址 (Termux main repo)
+            local repo_url="https://packages.termux.dev/apt/termux-main"
+            local pkg_list_url="${repo_url}/dists/stable/main/binary-aarch64/Packages.json"
+            
+            # 解析最新的 nodejs deb 路径
+            local deb_path=$(curl -sL https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages | grep -A 15 "Package: nodejs$" | grep "Filename:" | awk '{print $2}' | head -n 1)
+            
+            if [ -z "$deb_path" ]; then
+              echo "无法获取 Termux Node.js 下载地址"
               exit 1
             fi
 
-            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$target/"
-
-            # 基本校验
-            test -f "$target/server.js" || (echo "替换后 app/danmu_api/server.js 不存在，可能上游目录不是预期结构" && exit 1)
+            curl -L -o node.deb "${repo_url}/${deb_path}"
+            
+            # 提取 deb 包 (使用 ar 而不是 dpkg，因为是在 ubuntu 运行)
+            ar x node.deb
+            tar -xf data.tar.xz
+            
+            # 移动二进制文件
+            mkdir -p "$root/node/bin"
+            cp usr/bin/node "$root/node/bin/"
+            
+            # 移动依赖库 (.so)
+            mkdir -p "$root/lib"
+            cp usr/lib/*.so* "$root/lib/" || true
+            
+            echo "Node.js 提取完成"
           }
 
-          fetch_nodejs_mobile_core() {
-            # 下载 nodejs-mobile android zip，并把其 bin/ 合并到模块 node/bin/
-            local root="$1"
-            local node_dir="$root/node"
-            mkdir -p "$node_dir/bin"
-
-            local url="https://github.com/JaneaSystems/nodejs-mobile/releases/download/nodejs-mobile-v${NODEJSM_VER}/nodejs-mobile-v${NODEJSM_VER}-android.zip"
-            echo "Downloading nodejs-mobile core: $url"
-
-            rm -rf build/tmp/nodejs-mobile build/tmp/nodejs-mobile.zip
-            mkdir -p build/tmp/nodejs-mobile
-            curl -L --fail -o build/tmp/nodejs-mobile.zip "$url"
-            unzip -q build/tmp/nodejs-mobile.zip -d build/tmp/nodejs-mobile
-
-            local binpath=""
-            if [ -d "build/tmp/nodejs-mobile/bin" ]; then
-              binpath="build/tmp/nodejs-mobile/bin"
-            else
-              binpath="$(find build/tmp/nodejs-mobile -maxdepth 3 -type d -name bin -print -quit || true)"
-            fi
-
-            if [ -z "$binpath" ] || [ ! -d "$binpath" ]; then
-              echo "nodejs-mobile zip 中找不到 bin/ 目录"
-              exit 1
-            fi
-
-            rsync -a "$binpath/" "$node_dir/bin/"
-          }
-
-          ensure_libcxx_shared() {
-            # 尽可能把 libc++_shared.so 放到 root/lib 与 root/node/lib（以及各自的 arm64-v8a 子目录）
-            local root="$1"
-            local lib_dir="$root/lib"
-            local node_lib_dir="$root/node/lib"
-            mkdir -p "$lib_dir" "$node_lib_dir" "$lib_dir/arm64-v8a" "$node_lib_dir/arm64-v8a"
-
-            # 1) 优先从 nodejs-mobile 解压内容里找
-            local libcxx=""
-            libcxx="$(find build/tmp/nodejs-mobile -name 'libc++_shared.so' -print -quit 2>/dev/null || true)"
-
-            # 2) 找不到则从 NDK 提取
-            if [ -z "$libcxx" ]; then
-              local ndk_url="https://dl.google.com/android/repository/android-ndk-${NDK_TAG}-linux.zip"
-              echo "libc++_shared.so not found in nodejs-mobile package, downloading NDK: $ndk_url"
-
-              rm -rf build/tmp/ndk build/tmp/ndk.zip
-              mkdir -p build/tmp/ndk
-              curl -L --fail -o build/tmp/ndk.zip "$ndk_url"
-              unzip -q build/tmp/ndk.zip -d build/tmp/ndk
-
-              # 尽量选 arm64-v8a
-              libcxx="$(find build/tmp/ndk -name 'libc++_shared.so' 2>/dev/null | grep -E 'arm64|aarch64|arm64-v8a' | head -n1 || true)"
-              if [ -z "$libcxx" ]; then
-                libcxx="$(find build/tmp/ndk -name 'libc++_shared.so' -print -quit 2>/dev/null || true)"
-              fi
-            fi
-
-            if [ -z "$libcxx" ] || [ ! -f "$libcxx" ]; then
-              echo "警告：未能获取 libc++_shared.so，将依赖设备系统自带"
-              return 0
-            fi
-
-            echo "Using libc++_shared.so: $libcxx"
-            cp -f "$libcxx" "$lib_dir/libc++_shared.so" || true
-            cp -f "$libcxx" "$node_lib_dir/libc++_shared.so" || true
-            cp -f "$libcxx" "$lib_dir/arm64-v8a/libc++_shared.so" || true
-            cp -f "$libcxx" "$node_lib_dir/arm64-v8a/libc++_shared.so" || true
-          }
-
+          # --- 函数：打包 ---
           finalize_zip() {
             local root="$1"
-            local out="$2"
-
-            # 确保脚本可执行（Magisk 安装时也会再设权限，但这里先处理一遍更稳）
-            find "$root" -type f -name "*.sh" -exec chmod 0755 {} \; || true
-            [ -f "$root/service.sh" ] && chmod 0755 "$root/service.sh" || true
-            [ -f "$root/post-fs-data.sh" ] && chmod 0755 "$root/post-fs-data.sh" || true
-            [ -d "$root/scripts" ] && find "$root/scripts" -type f -exec chmod 0755 {} \; || true
-
-            (cd "$root" && zip -qr "../../out/${out}" .)
+            local out_name="$2"
+            # 修复权限
+            find "$root" -type f -name "*.sh" -exec chmod 0755 {} \;
+            # 进入目录内部打包，防止出现多余层级
+            (cd "$root" && zip -r "../../out/${out_name}" .)
           }
 
-          build_one() {
-            # 参数：variant_name template_zip out_zip with_node(0/1)
-            local variant="$1"
-            local template="$2"
-            local outzip="$3"
-            local with_node="$4"
-
-            echo "=============================="
-            echo "Building: $variant -> $outzip"
-            echo "Template: $template"
-            echo "=============================="
-
-            rm -rf "build/tmp/${variant}"
-            mkdir -p "build/tmp/${variant}"
-            unzip -q "$template" -d "build/tmp/${variant}"
-
-            local root=""
-            root="$(detect_module_root "build/tmp/${variant}")" || (echo "无法定位模块根目录（module.prop 不存在）" && exit 1)
-
-            echo "Module root: $root"
-
-            sync_danmu_api_dir "$root"
-            update_module_prop "$root"
-
-            if [ "$with_node" = "1" ]; then
-              # node 版本：下载 nodejs-mobile core + 尽量补齐 libc++_shared.so
-              mkdir -p "$root/node"
-              fetch_nodejs_mobile_core "$root"
-              ensure_libcxx_shared "$root"
-            fi
-
-            finalize_zip "$root" "$outzip"
-            echo "OK: build/out/$outzip"
-          }
-
-          # 产物文件名（包含版本号）
-          OUT_NO_NODE="danmu_api_server_${VERSION}.zip"
-          OUT_NODE="danmu_api_server_node_${VERSION}.zip"
-
-          if [ "$BUILD_VARIANT" = "both" ] || [ "$BUILD_VARIANT" = "no_node" ]; then
-            build_one "no_node" "${TEMPLATE_NO_NODE}" "$OUT_NO_NODE" 0
+          # --- 主构建逻辑 ---
+          # 1. 构建 No-Node 版本
+          if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
+            unzip -q "${TEMPLATE_NO_NODE}" -d build/tmp/no_node
+            # 这里的 root 探测简单处理，假设 module.prop 在第一层或第二层
+            MODULE_ROOT=$(find build/tmp/no_node -name "module.prop" -exec dirname {} \;)
+            
+            # 同步源码
+            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
+            
+            # 修改属性
+            sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
+            sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
+            
+            finalize_zip "$MODULE_ROOT" "danmu_api_server_${VERSION}.zip"
           fi
 
-          if [ "$BUILD_VARIANT" = "both" ] || [ "$BUILD_VARIANT" = "node" ]; then
-            build_one "node" "${TEMPLATE_NODE}" "$OUT_NODE" 1
+          # 2. 构建 Node 版本
+          if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "node" ]]; then
+            unzip -q "${TEMPLATE_NODE}" -d build/tmp/node
+            MODULE_ROOT=$(find build/tmp/node -name "module.prop" -exec dirname {} \;)
+            
+            # 同步源码
+            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
+            
+            # 获取 Node.js 和库
+            fetch_termux_node "$MODULE_ROOT"
+            
+            # 修改属性
+            sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
+            sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
+            
+            finalize_zip "$MODULE_ROOT" "danmu_api_server_node_${VERSION}.zip"
           fi
 
-          echo "Build outputs:"
-          ls -la build/out
-
-      - name: Upload artifact (no-node)
+      - name: Upload Flashable Modules
         uses: actions/upload-artifact@v4
         with:
-          name: danmu_api_server_${{ inputs.module_version }}
-          path: build/out/danmu_api_server_${{ inputs.module_version }}.zip
-          if-no-files-found: ignore
+          name: Danmu_API_Modules_v${{ inputs.module_version }}
+          path: build/out/*.zip
 
-      - name: Upload artifact (node)
-        uses: actions/upload-artifact@v4
-        with:
-          name: danmu_api_server_node_${{ inputs.module_version }}
-          path: build/out/danmu_api_server_node_${{ inputs.module_version }}.zip
-          if-no-files-found: ignore
-
-      - name: Compute release tag
-        if: ${{ inputs.publish_release }}
-        id: rel
-        run: |
-          set -euo pipefail
-          TAG="${{ inputs.release_tag }}"
-          if [ -z "$TAG" ]; then
-            TAG="v${{ inputs.module_version }}"
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Publish to GitHub Release
+      - name: Create Release
         if: ${{ inputs.publish_release }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.rel.outputs.tag }}
-          name: Danmu API Server ${{ inputs.module_version }}
+          tag_name: v${{ inputs.module_version }}
           files: build/out/*.zip
           generate_release_notes: true
