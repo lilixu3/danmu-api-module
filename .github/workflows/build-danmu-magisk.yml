@@ -82,74 +82,72 @@ jobs:
           
           mkdir -p build/tmp build/out
 
-          # --- 函数：下载并提取 Termux Node.js 及其完整依赖 ---
+          # --- 函数：下载并提取 Termux Node.js 及其依赖 ---
           fetch_termux_node() {
             local root="$1"
             local repo_url="https://packages.termux.dev/apt/termux-main"
             local arch="aarch64"
-            local tmp_dir="node_extract_tmp"
+            local work_dir="node_work"
             
-            echo "开始解析 Termux Node.js 依赖..."
-            mkdir -p "$tmp_dir" && cd "$tmp_dir"
+            echo ">>> 准备环境..."
+            mkdir -p "$work_dir" && cd "$work_dir"
+            mkdir -p "extracted"
             
-            # 获取包列表索引
+            echo ">>> 获取软件包索引..."
             curl -sL "${repo_url}/dists/stable/main/binary-${arch}/Packages" > Packages
-            
-            # 获取 nodejs 及其直接依赖
-            # 通常包括: libandroid-support, libc++, openssl, zlib, icu-libs, libuv, nghttp2, c-ares
-            local deps=$(grep -A 20 "Package: nodejs$" Packages | grep "Depends:" | cut -d: -f2 | tr ',' '\n' | awk '{print $1}')
-            local pkg_list="nodejs $deps"
-            
-            echo "待下载包列表: $pkg_list"
 
-            for pkg in $pkg_list; do
-                echo "正在获取软件包: $pkg"
-                local deb_path=$(grep -A 20 "Package: ${pkg}$" Packages | grep "Filename:" | awk '{print $2}' | head -n 1)
-                if [ -z "$deb_path" ]; then continue; fi
-                
-                curl -L -O "${repo_url}/${deb_path}"
-                ar x *.deb
-                
-                # 解压数据层 (可能为 .tar.xz 或 .tar.zst)
-                local data_tar=$(ls data.tar.* | head -n 1)
-                if [[ "$data_tar" == *.zst ]]; then
-                    tar --zstd -xf "$data_tar"
-                else
-                    tar -xf "$data_tar"
+            # 获取 nodejs 的依赖并清理括号中的版本号
+            local deps=$(grep -A 20 "Package: nodejs$" Packages | grep "Depends:" | sed 's/Depends://' | sed 's/([^)]*)//g' | tr ',' '\n' | awk '{print $1}')
+            local pkgs="nodejs $deps"
+
+            for pkg in $pkgs; do
+                echo ">>> 正在处理: $pkg"
+                local deb_rel_path=$(grep -A 20 "Package: ${pkg}$" Packages | grep "Filename:" | awk '{print $2}' | head -n 1)
+                if [ -z "$deb_rel_path" ]; then
+                    echo "跳过: 找不到 $pkg"
+                    continue
                 fi
-                # 清理临时 deb 文件，防止重名干扰
-                rm -f *.deb data.tar.* control.tar.* debian-binary
+
+                # 下载并解压到独立文件夹
+                mkdir -p "tmp_$pkg"
+                curl -L "${repo_url}/${deb_rel_path}" -o "tmp_$pkg/pkg.deb"
+                (
+                    cd "tmp_$pkg"
+                    ar x pkg.deb
+                    local data_tar=$(ls data.tar.*)
+                    if [[ "$data_tar" == *.zst ]]; then
+                        tar --zstd -xf "$data_tar" -C ../extracted/
+                    else
+                        tar -xf "$data_tar" -C ../extracted/
+                    fi
+                )
             done
 
-            # --- 整理文件到模块目录 ---
-            echo "正在整理文件到模块 node 目录..."
+            # --- 移动文件 ---
+            echo ">>> 正在将文件移动到模块目录..."
             mkdir -p "$root/node/bin"
             mkdir -p "$root/node/lib"
 
-            # 1. 移动 node 主程序
-            local bin_src=$(find . -type f -name "node" | grep "/bin/node" | head -n 1)
-            if [ -f "$bin_src" ]; then
-                cp "$bin_src" "$root/node/bin/"
-                chmod 0755 "$root/node/bin/node"
-            fi
+            # 提取 node 主程序
+            find extracted/ -type f -name "node" -path "*/bin/node" | head -n 1 | xargs -I {} cp {} "$root/node/bin/"
+            chmod 0755 "$root/node/bin/node"
 
-            # 2. 移动所有相关库文件 (.so)
-            # 使用 -d 保持符号链接（非常重要，否则 node 会找不到库）
-            find . -name "*.so*" -type f -o -type l | while read -r lib_file; do
-                if [[ "$lib_file" == *"usr/lib"* ]]; then
-                    cp -d "$lib_file" "$root/node/lib/"
-                fi
-            done
+            # 提取所有库文件 (包含符号链接)
+            # Termux 的库通常在 usr/lib 下
+            find extracted/ -name "*.so*" -path "*/usr/lib/*" -exec cp -d {} "$root/node/lib/" \;
+
+            echo ">>> 验证结果:"
+            ls -F "$root/node/bin/"
+            echo "库文件数量: $(ls "$root/node/lib/" | wc -l)"
 
             cd ..
-            rm -rf "$tmp_dir"
-            echo "Node.js 及其依赖提取完成。"
+            rm -rf "$work_dir"
 
-            # --- 自动修正 service.sh 环境 ---
+            # --- 修改 service.sh ---
             if [ -f "$root/service.sh" ]; then
-                echo "注入环境变量到 service.sh..."
-                # 在第2行插入环境定义，确保 MODDIR 和 LD_LIBRARY_PATH 正确
-                sed -i '2i # Env set by Build Script\nMODDIR=${0%/*}\nexport PATH=$MODDIR/node/bin:$PATH\nexport LD_LIBRARY_PATH=$MODDIR/node/lib:$LD_LIBRARY_PATH' "$root/service.sh"
+                echo ">>> 注入环境变量到 service.sh..."
+                # 注意：这里使用绝对路径的 MODDIR 变量
+                sed -i '2i # Env for Node\nMODDIR=${0%/*}\nexport PATH=$MODDIR/node/bin:$PATH\nexport LD_LIBRARY_PATH=$MODDIR/node/lib:$LD_LIBRARY_PATH' "$root/service.sh"
             fi
           }
 
@@ -180,7 +178,7 @@ jobs:
             
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
             
-            # 调用修复后的函数
+            # 调用更新后的下载函数
             fetch_termux_node "$MODULE_ROOT"
             
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
