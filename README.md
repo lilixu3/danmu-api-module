@@ -1,6 +1,6 @@
 # danmu-api Android Server（Magisk / KernelSU 模块）
 
-把 **danmu-api** 作为 Android 上的开机自启动服务运行，并提供持久化配置目录，方便配合 UI 端的「系统配置 / 环境变量」界面使用。
+把 **danmu-api** 作为 Android 上的开机自启动服务运行，并提供稳定的配置目录，方便配合 UI 端的「系统配置 / 环境变量」界面使用。
 
 > 默认端口：主服务 **9321**，代理端口 **5321**  
 > 默认鉴权：`TOKEN=87654321`，`ADMIN_TOKEN=admin`
@@ -20,25 +20,78 @@ https://github.com/huangxd-/danmu_api
 ## 适用人群 / 你需要什么
 
 * ✅ 已 Root 的设备（Magisk 或 KernelSU）
-* ✅ 设备上能找到 `node` 可执行文件（例如 Termux 安装 Node.js）
 * ✅ 想在本机长期跑 danmu-api 服务，并通过 UI 端配置页面稳定写入配置
 
 ---
 
 ## Magisk / KernelSU 是什么（简短说明）
 
-* **Magisk**：Android 上最常见的 Root 方案之一，支持刷入「模块」实现开机脚本、自启服务等能力。
-* **KernelSU（KSU）**：基于内核的 Root 方案，同样支持模块机制，使用体验与 Magisk 类似。
+* **Magisk**：Android 上常见的 Root 方案，支持刷入「模块」实现开机脚本、自启服务等能力。
+* **KernelSU（KSU）**：基于内核的 Root 方案，也支持模块机制，使用方式与 Magisk 类似。
 
 > 本仓库提供的是 **Magisk/KSU 模块**：需要 Root + 可刷模块环境。
 
 ---
 
+## 发行版（Releases）提供两个版本
+
+### 1) 轻量版：不内置 Node（需要 Termux 安装 Node.js）
+
+适合：你不想模块体积太大，或者已经在 Termux 里用 Node 的用户。
+
+* 你需要先在 Termux 安装 Node.js（教程见下文）
+* 刷入模块后即可运行
+
+### 2) 内置版：内置 Node（刷入就能用）
+
+适合：想要“刷入即用”、不想额外折腾 Termux 的用户。
+
+* 刷入模块 + 重启，服务自动启动
+* 不需要安装 Termux / Node
+
+> 两个版本的功能一致，区别仅在于 **Node.js 来源**（外置/内置）。
+
+---
+
 ## 安装（Magisk / KernelSU）
 
-1. 在 Magisk / KernelSU 的「模块」里刷入本仓库提供的模块 zip
+1. 在 Magisk / KernelSU 的「模块」里刷入对应版本的 zip
 2. **重启手机**
 3. 重启后服务会自动启动
+
+---
+
+## Termux 安装 Node.js（仅轻量版需要）
+
+### Termux 建议下载地址
+
+建议使用 F-Droid 或 GitHub Releases 获取最新版 Termux（不推荐 Play 商店旧版）：
+
+* F-Droid：`https://f-droid.org/packages/com.termux/`
+* Termux GitHub Releases：`https://github.com/termux/termux-app/releases`
+
+### 安装步骤（简单版）
+
+1. 安装 Termux 后打开，先更新源与软件包：
+
+```bash
+pkg update -y && pkg upgrade -y
+```
+
+2. 安装 Node.js（建议 LTS）：
+
+```bash
+pkg install -y nodejs-lts
+```
+
+3. 验证安装：
+
+```bash
+node -v
+npm -v
+```
+
+安装完成后再刷入「轻量版」模块即可正常运行。
 
 ---
 
@@ -57,31 +110,25 @@ curl http://127.0.0.1:9321/
 
 ## 配置文件（重点）
 
-为了解决「UI 端保存环境变量偶发失效 / 软链接不稳定」的问题，本模块把运行目录固定到了持久化路径：
+为了解决「UI 端保存环境变量偶发失效 / 软链接不稳定」的问题，本模块将配置目录固定到模块目录内（不会因上游更新覆盖模块外的内容；同时路径与 UI 端保持一致）。
 
-* 配置目录（持久化、不会因上游更新覆盖）：
+### 配置目录（以后都在这里）
 
 ```text
-/data/adb/danmu_api_server/app/config
+/data/adb/modules/danmu_api_server/app/config/
 ```
 
 常用文件：
 
-* `/data/adb/danmu_api_server/app/config/.env`
-* `/data/adb/danmu_api_server/app/config/config.yaml`
-
-### 配置优先级（从高到低）
-
-1. 系统环境变量
-2. `.env`
-3. `config.yaml`
+* `/data/adb/modules/danmu_api_server/app/config/.env`
+* `/data/adb/modules/danmu_api_server/app/config/config.yaml`
 
 ### 默认 Token（请按需修改）
 
 * `TOKEN=87654321`
 * `ADMIN_TOKEN=admin`
 
-> 如果你把服务暴露到局域网/公网，务必改掉默认 Token。
+> 如果你把服务暴露到局域网/公网，务必修改默认 Token。
 
 ---
 
@@ -102,10 +149,10 @@ su -c /data/adb/modules/danmu_api_server/scripts/danmu_control.sh stop
 su -c /data/adb/modules/danmu_api_server/scripts/danmu_control.sh start
 ```
 
-日志位置：
+日志位置（如模块内有日志输出）：
 
 ```text
-/data/adb/danmu_api_server/logs/service.log
+/data/adb/modules/danmu_api_server/logs/service.log
 ```
 
 ---
@@ -125,7 +172,4 @@ https://github.com/lilixu3/danmu-api-android
 ## 致谢
 
 * 上游 danmu-api：`huangxd- / danmu_api`
-* 本仓库：Android（Magisk/KSU）服务化打包与持久化配置适配
-
-```
-
+* 本仓库：Android（Magisk/KSU）服务化打包与配置路径适配
