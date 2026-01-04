@@ -25,16 +25,6 @@ on:
         required: true
         default: main
 
-      build_variant:
-        description: "构建版本"
-        type: choice
-        options:
-          - both
-          - no_node
-          - node
-        default: both
-        required: true
-
       module_version:
         description: "模块版本号"
         type: string
@@ -54,7 +44,6 @@ jobs:
       contents: write
 
     env:
-      TEMPLATE_NO_NODE: danmu_api_server.zip
       TEMPLATE_NODE: danmu_api_server_node.zip
       UPSTREAM_SUBDIR: danmu_api
 
@@ -80,7 +69,7 @@ jobs:
           git checkout -q "${{ inputs.repo_ref }}" 2>/dev/null || git checkout -q FETCH_HEAD
           cd ..
 
-      - name: Build modules
+      - name: Build module
         shell: bash
         run: |
           set -euo pipefail
@@ -382,37 +371,21 @@ jobs:
             (cd "$root" && zip -r "../../out/${out_name}" .)
           }
 
-          if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
-            echo ">>> [TASK] 构建 No-Node 版本..."
-            unzip -q "${TEMPLATE_NO_NODE}" -d build/tmp/no_node
-            MODULE_ROOT=$(find build/tmp/no_node -name "module.prop" | head -n 1 | xargs dirname)
+          echo ">>> [TASK] 构建 Node 完整版..."
+          unzip -q "${TEMPLATE_NODE}" -d build/tmp/node
+          MODULE_ROOT=$(find build/tmp/node -name "module.prop" | head -n 1 | xargs dirname)
 
-            mkdir -p "$MODULE_ROOT/app/danmu_api"
-            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
+          mkdir -p "$MODULE_ROOT/app/danmu_api"
+          rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
 
-            sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
-            sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
+          fetch_termux_node "$MODULE_ROOT"
 
-            finalize_zip "$MODULE_ROOT" "danmu_api_server_${VERSION}.zip"
-          fi
+          sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
+          sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
 
-          if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "node" ]]; then
-            echo ">>> [TASK] 构建 Node 完整版..."
-            unzip -q "${TEMPLATE_NODE}" -d build/tmp/node
-            MODULE_ROOT=$(find build/tmp/node -name "module.prop" | head -n 1 | xargs dirname)
+          finalize_zip "$MODULE_ROOT" "danmu_api_server_node_${VERSION}.zip"
 
-            mkdir -p "$MODULE_ROOT/app/danmu_api"
-            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
-
-            fetch_termux_node "$MODULE_ROOT"
-
-            sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
-            sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
-
-            finalize_zip "$MODULE_ROOT" "danmu_api_server_node_${VERSION}.zip"
-          fi
-
-      - name: Upload Flashable Modules
+      - name: Upload Flashable Module
         uses: actions/upload-artifact@v4
         with:
           name: Danmu_API_v${{ inputs.module_version }}
