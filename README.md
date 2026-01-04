@@ -1,19 +1,10 @@
-# danmu-api Android Server（Magisk / KernelSU 模块）
-
-把 **danmu-api** 作为 Android 上的开机自启动服务运行，并提供稳定的配置目录，方便配合 UI 端的「系统配置 / 环境变量」界面使用。
-
-> 默认端口：主服务 **9321**，代理端口 **5321**  
-> 默认鉴权：`TOKEN=87654321`，`ADMIN_TOKEN=admin`
-
----
-
 ## 基于项目
 
 本服务基于上游 danmu-api：
 
 ```text
 https://github.com/huangxd-/danmu_api
-````
+```
 
 ---
 
@@ -33,65 +24,19 @@ https://github.com/huangxd-/danmu_api
 
 ---
 
-## 发行版（Releases）提供两个版本
+## 特性
 
-### 1) 轻量版：不内置 Node（需要 Termux 安装 Node.js）
-
-适合：你不想模块体积太大，或者已经在 Termux 里用 Node 的用户。
-
-* 你需要先在 Termux 安装 Node.js（教程见下文）
-* 刷入模块后即可运行
-
-### 2) 内置版：内置 Node（刷入就能用）
-
-适合：想要“刷入即用”、不想额外折腾 Termux 的用户。
-
-* 刷入模块 + 重启，服务自动启动
-* 不需要安装 Termux / Node
-
-> 两个版本的功能一致，区别仅在于 **Node.js 来源**（外置/内置）。
+* ✅ **刷入即用**：内置 Node.js 运行时，无需额外安装依赖
+* ✅ **开机自启**：系统启动后自动运行 danmu-api 服务
+* ✅ **配置稳定**：配置目录固定在模块内，避免更新覆盖
 
 ---
 
 ## 安装（Magisk / KernelSU）
 
-1. 在 Magisk / KernelSU 的「模块」里刷入对应版本的 zip
+1. 在 Magisk / KernelSU 的「模块」里刷入 zip 文件
 2. **重启手机**
 3. 重启后服务会自动启动
-
----
-
-## Termux 安装 Node.js（仅轻量版需要）
-
-### Termux 建议下载地址
-
-建议使用 F-Droid 或 GitHub Releases 获取最新版 Termux（不推荐 Play 商店旧版）：
-
-* F-Droid：`https://f-droid.org/packages/com.termux/`
-* Termux GitHub Releases：`https://github.com/termux/termux-app/releases`
-
-### 安装步骤（简单版）
-
-1. 安装 Termux 后打开，先更新源与软件包：
-
-```bash
-pkg update -y && pkg upgrade -y
-```
-
-2. 安装 Node.js（建议 LTS）：
-
-```bash
-pkg install -y nodejs-lts
-```
-
-3. 验证安装：
-
-```bash
-node -v
-npm -v
-```
-
-安装完成后再刷入「轻量版」模块即可正常运行。
 
 ---
 
