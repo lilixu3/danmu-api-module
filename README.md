@@ -1,5 +1,3 @@
-# Danmu API Magisk Module（含管理器 App）
-
 把 `danmu-api` 核心打包成 **Magisk 可刷入模块**，并在系统里安装一个 **Danmu API 管理器 App**，用于：
 
 * 启动/停止/重启服务
