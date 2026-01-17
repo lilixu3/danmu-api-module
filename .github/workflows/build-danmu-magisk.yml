@@ -85,7 +85,36 @@ jobs:
           set -euo pipefail
 
           VERSION="${{ inputs.module_version }}"
-          VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9' | head -c 8)"
+
+          calc_version_code() {
+            local v="$1"
+            local major=0 minor=0 patch=0
+            if [[ "$v" =~ ^[vV]?([0-9]+)\.([0-9]+)(\.([0-9]+))? ]]; then
+              major="${BASH_REMATCH[1]}"
+              minor="${BASH_REMATCH[2]:-0}"
+              patch="${BASH_REMATCH[4]:-0}"
+              # normalize to integers
+              major=$((major))
+              minor=$((minor))
+              patch=$((patch))
+              local code=$(( major*1000000 + minor*1000 + patch ))
+              # clamp to signed 32-bit max
+              if [ "$code" -gt 2147483647 ]; then
+                code=2147483647
+              fi
+              echo "$code"
+              return 0
+            fi
+            # Fallback: digits only (best-effort)
+            local digits
+            digits="$(echo "$v" | tr -cd '0-9')"
+            [ -n "$digits" ] || digits=1
+            # Keep it in range
+            digits="${digits:0:9}"
+            echo "$digits"
+          }
+
+          VERSION_CODE="$(calc_version_code "$VERSION")"
           [ -z "$VERSION_CODE" ] && VERSION_CODE=1
 
           # Ensure required SDK packages
@@ -131,7 +160,36 @@ jobs:
           set -euo pipefail
 
           VERSION="${{ inputs.module_version }}"
-          VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9' | head -c 8)"
+
+          calc_version_code() {
+            local v="$1"
+            local major=0 minor=0 patch=0
+            if [[ "$v" =~ ^[vV]?([0-9]+)\.([0-9]+)(\.([0-9]+))? ]]; then
+              major="${BASH_REMATCH[1]}"
+              minor="${BASH_REMATCH[2]:-0}"
+              patch="${BASH_REMATCH[4]:-0}"
+              # normalize to integers
+              major=$((major))
+              minor=$((minor))
+              patch=$((patch))
+              local code=$(( major*1000000 + minor*1000 + patch ))
+              # clamp to signed 32-bit max
+              if [ "$code" -gt 2147483647 ]; then
+                code=2147483647
+              fi
+              echo "$code"
+              return 0
+            fi
+            # Fallback: digits only (best-effort)
+            local digits
+            digits="$(echo "$v" | tr -cd '0-9')"
+            [ -n "$digits" ] || digits=1
+            # Keep it in range
+            digits="${digits:0:9}"
+            echo "$digits"
+          }
+
+          VERSION_CODE="$(calc_version_code "$VERSION")"
           [ -z "$VERSION_CODE" ] && VERSION_CODE=1
 
           # Resolve selected upstream for core_source.txt
