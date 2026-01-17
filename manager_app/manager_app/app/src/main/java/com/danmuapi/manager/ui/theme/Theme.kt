@@ -43,6 +43,8 @@ fun DanmuManagerTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
-        content = content,
-    )
+    ) {
+        SystemBarsEffect(darkTheme = darkTheme)
+        content()
+    }
 }

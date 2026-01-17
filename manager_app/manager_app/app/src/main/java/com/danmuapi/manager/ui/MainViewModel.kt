@@ -40,6 +40,13 @@ class MainViewModel(
     var busy: Boolean by mutableStateOf(false)
         private set
 
+    /**
+     * A short message describing the current long-running operation.
+     * Shown under the global progress bar.
+     */
+    var busyMessage: String? by mutableStateOf(null)
+        private set
+
     // Per-core update status (id -> info)
     var updateInfo: Map<String, com.danmuapi.manager.data.CoreUpdateInfo> by mutableStateOf(emptyMap())
         private set
@@ -62,94 +69,128 @@ class MainViewModel(
         refreshAll()
     }
 
+    private suspend fun refreshAllInternal() {
+        rootAvailable = try {
+            RootShell.isRootAvailable()
+        } catch (_: Throwable) {
+            false
+        }
+        status = repo.getStatus()
+        cores = repo.listCores()
+        logs = repo.listLogs()
+    }
+
+    private suspend fun <T> withBusy(message: String? = null, block: suspend () -> T): T {
+        busy = true
+        busyMessage = message
+        return try {
+            block()
+        } finally {
+            busyMessage = null
+            busy = false
+        }
+    }
+
     fun refreshAll() {
         viewModelScope.launch {
-            busy = true
-            rootAvailable = try { RootShell.isRootAvailable() } catch (_: Throwable) { false }
-            status = repo.getStatus()
-            cores = repo.listCores()
-            logs = repo.listLogs()
-            busy = false
+            withBusy("刷新状态中…") {
+                refreshAllInternal()
+            }
         }
     }
 
     fun startService() {
         viewModelScope.launch {
-            busy = true
-            val ok = repo.startService()
-            busy = false
+            val ok = withBusy("正在启动服务…") {
+                val ok = repo.startService()
+                refreshAllInternal()
+                ok
+            }
             snackbars.tryEmit(if (ok) "服务已启动" else "启动失败（请检查 Root / 模块状态）")
-            refreshAll()
         }
     }
 
     fun stopService() {
         viewModelScope.launch {
-            busy = true
-            val ok = repo.stopService()
-            busy = false
+            val ok = withBusy("正在停止服务…") {
+                val ok = repo.stopService()
+                refreshAllInternal()
+                ok
+            }
             snackbars.tryEmit(if (ok) "服务已停止" else "停止失败")
-            refreshAll()
         }
     }
 
     fun restartService() {
         viewModelScope.launch {
-            busy = true
-            val ok = repo.restartService()
-            busy = false
+            val ok = withBusy("正在重启服务…") {
+                val ok = repo.restartService()
+                refreshAllInternal()
+                ok
+            }
             snackbars.tryEmit(if (ok) "服务已重启" else "重启失败")
-            refreshAll()
         }
     }
 
     fun setAutostart(enabled: Boolean) {
         viewModelScope.launch {
-            busy = true
-            val ok = repo.setAutostart(enabled)
-            busy = false
+            val ok = withBusy("正在更新自启动…") {
+                val ok = repo.setAutostart(enabled)
+                refreshAllInternal()
+                ok
+            }
             snackbars.tryEmit(if (ok) "已更新自启动" else "更新自启动失败")
-            refreshAll()
         }
     }
 
     fun installCore(repoUrlOrOwnerRepo: String, ref: String) {
         viewModelScope.launch {
-            busy = true
-            val ok = repo.installCore(repoUrlOrOwnerRepo, ref)
-            busy = false
+            val repoText = repoUrlOrOwnerRepo.trim().ifBlank { "(unknown)" }
+            val refText = ref.trim().ifBlank { "main" }
+
+            // Immediate feedback (otherwise users think nothing happened).
+            snackbars.tryEmit("开始下载核心：$repoText@$refText")
+
+            val ok = withBusy("正在下载/安装核心：$repoText@$refText（可能需要几分钟）") {
+                val ok = repo.installCore(repoText, refText)
+                refreshAllInternal()
+                ok
+            }
+
             snackbars.tryEmit(if (ok) "核心已下载并切换" else "下载/安装核心失败")
-            refreshAll()
         }
     }
 
     fun activateCore(id: String) {
         viewModelScope.launch {
-            busy = true
-            val ok = repo.activateCore(id)
-            busy = false
+            val ok = withBusy("正在切换核心…") {
+                val ok = repo.activateCore(id)
+                refreshAllInternal()
+                ok
+            }
             snackbars.tryEmit(if (ok) "已切换核心" else "切换核心失败")
-            refreshAll()
         }
     }
 
     fun deleteCore(id: String) {
         viewModelScope.launch {
-            busy = true
-            val ok = repo.deleteCore(id)
-            busy = false
+            val ok = withBusy("正在删除核心…") {
+                val ok = repo.deleteCore(id)
+                refreshAllInternal()
+                ok
+            }
             snackbars.tryEmit(if (ok) "已删除核心" else "删除核心失败")
-            refreshAll()
         }
     }
 
     fun clearLogs() {
         viewModelScope.launch {
-            busy = true
-            val ok = repo.clearLogs()
-            busy = false
+            val ok = withBusy("正在清空日志…") {
+                val ok = repo.clearLogs()
+                refreshAllInternal()
+                ok
+            }
             snackbars.tryEmit(if (ok) "日志已清空" else "清空日志失败")
-            refreshAll()
         }
     }
 
@@ -176,14 +217,17 @@ class MainViewModel(
                 return@launch
             }
 
-            busy = true
             val token = githubToken.value
-            val map = mutableMapOf<String, com.danmuapi.manager.data.CoreUpdateInfo>()
-            for (c in list) {
-                map[c.id] = repo.checkUpdate(c, token)
+
+            val map = withBusy("正在检查更新…") {
+                val m = mutableMapOf<String, com.danmuapi.manager.data.CoreUpdateInfo>()
+                for (c in list) {
+                    m[c.id] = repo.checkUpdate(c, token)
+                }
+                m.toMap()
             }
+
             updateInfo = map
-            busy = false
 
             val n = map.values.count { it.updateAvailable }
             snackbars.tryEmit(if (n > 0) "发现 ${n} 个核心可更新" else "已是最新")

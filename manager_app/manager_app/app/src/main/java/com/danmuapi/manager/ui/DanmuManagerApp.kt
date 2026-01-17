@@ -2,6 +2,7 @@ package com.danmuapi.manager.ui
 
 import android.content.Context
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -27,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -44,6 +46,10 @@ import com.danmuapi.manager.ui.screens.LogsScreen
 import com.danmuapi.manager.ui.screens.SettingsScreen
 import com.danmuapi.manager.worker.LogCleanupScheduler
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.unit.dp
 
 private enum class NavItem(
     val route: String,
@@ -151,16 +157,27 @@ fun DanmuManagerApp(applicationContext: Context) {
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { padding ->
-        val contentPadding = PaddingValues(
-            start = padding.calculateLeftPadding(layoutDirection = androidx.compose.ui.unit.LayoutDirection.Ltr),
-            top = padding.calculateTopPadding(),
-            end = padding.calculateRightPadding(layoutDirection = androidx.compose.ui.unit.LayoutDirection.Ltr),
-            bottom = padding.calculateBottomPadding(),
-        )
 
-        // Simple global progress bar (busy indicates root task running).
+        // Global progress indicator (root tasks can take a while, especially core downloads).
+        // NOTE: Scaffold content is laid out in a Box. Without an explicit offset, this bar may end up
+        // behind the TopAppBar. We offset it by the TopAppBar height so it is always visible.
         if (vm.busy) {
-            LinearProgressIndicator()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = padding.calculateTopPadding())
+                    .zIndex(1f),
+            ) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                val msg = vm.busyMessage
+                if (!msg.isNullOrBlank()) {
+                    Text(
+                        text = msg,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                }
+            }
         }
 
         NavHost(
