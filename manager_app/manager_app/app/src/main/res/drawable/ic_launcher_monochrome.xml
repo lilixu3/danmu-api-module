@@ -8,44 +8,62 @@
     <!--
       Monochrome icon for Material You / themed icons.
       The launcher will tint this drawable, so it must be single-color.
+
+      Design matches ic_launcher_foreground: danmaku bullets with trailing streaks.
     -->
+
     <group
         android:translateX="18"
         android:translateY="18">
 
+        <!-- Row 1 -->
         <path
-            android:pathData="M6,18 L66,12"
-            android:strokeWidth="8"
-            android:strokeColor="#FF000000"
-            android:strokeLineCap="round" />
-
-        <path
-            android:pathData="M12,32 L70,30"
-            android:strokeWidth="8"
-            android:strokeColor="#FF000000"
-            android:strokeLineCap="round" />
-
-        <path
-            android:pathData="M2,46 L60,52"
-            android:strokeWidth="8"
-            android:strokeColor="#FF000000"
-            android:strokeLineCap="round" />
-
-        <path
-            android:pathData="M16,60 L68,68"
-            android:strokeWidth="8"
-            android:strokeColor="#FF000000"
-            android:strokeLineCap="round" />
-
-        <path
-            android:pathData="M2,28 L16,26"
+            android:pathData="M2,18 L10,18"
             android:strokeWidth="6"
             android:strokeColor="#FF000000"
             android:strokeLineCap="round" />
-
         <path
-            android:pathData="M6,74 L20,76"
+            android:pathData="M6,18 L48,18"
+            android:strokeWidth="8"
+            android:strokeColor="#FF000000"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M56,18 L56,18"
+            android:strokeWidth="14"
+            android:strokeColor="#FF000000"
+            android:strokeLineCap="round" />
+
+        <!-- Row 2 -->
+        <path
+            android:pathData="M2,36 L8,36"
             android:strokeWidth="6"
+            android:strokeColor="#FF000000"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M12,36 L54,36"
+            android:strokeWidth="8"
+            android:strokeColor="#FF000000"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M62,36 L62,36"
+            android:strokeWidth="14"
+            android:strokeColor="#FF000000"
+            android:strokeLineCap="round" />
+
+        <!-- Row 3 -->
+        <path
+            android:pathData="M2,54 L6,54"
+            android:strokeWidth="6"
+            android:strokeColor="#FF000000"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M8,54 L44,54"
+            android:strokeWidth="8"
+            android:strokeColor="#FF000000"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M52,54 L52,54"
+            android:strokeWidth="14"
             android:strokeColor="#FF000000"
             android:strokeLineCap="round" />
 

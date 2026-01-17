@@ -1,8 +1,10 @@
 package com.danmuapi.manager.root
 
 import com.danmuapi.manager.data.model.CoreListResponse
+import com.danmuapi.manager.data.model.LogFileInfo
 import com.danmuapi.manager.data.model.LogsResponse
 import com.danmuapi.manager.data.model.StatusResponse
+import com.squareup.moshi.JsonAdapter
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 
@@ -15,18 +17,44 @@ class DanmuCli {
     private val coreListAdapter = moshi.adapter(CoreListResponse::class.java)
     private val logsAdapter = moshi.adapter(LogsResponse::class.java)
 
+    private fun extractJsonObject(text: String): String? {
+        val s = text.trim()
+        val start = s.indexOf('{')
+        val end = s.lastIndexOf('}')
+        if (start >= 0 && end > start) return s.substring(start, end + 1)
+        return null
+    }
+
+    private fun <T> parseJsonSafely(adapter: JsonAdapter<T>, raw: String): T? {
+        val direct = raw.trim()
+        if (direct.isNotBlank()) {
+            try {
+                adapter.fromJson(direct)?.let { return it }
+            } catch (_: Throwable) {
+                // fall through
+            }
+        }
+
+        val extracted = extractJsonObject(raw) ?: return null
+        return try {
+            adapter.fromJson(extracted)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     suspend fun getStatus(): StatusResponse? {
         val cmd = "${DanmuPaths.CORE_CLI} status --json"
         val res = RootShell.runSu(cmd)
         if (res.exitCode != 0) return null
-        return statusAdapter.fromJson(res.stdout.trim())
+        return parseJsonSafely(statusAdapter, res.stdout)
     }
 
     suspend fun listCores(): CoreListResponse? {
         val cmd = "${DanmuPaths.CORE_CLI} core list --json"
         val res = RootShell.runSu(cmd)
         if (res.exitCode != 0) return null
-        return coreListAdapter.fromJson(res.stdout.trim())
+        return parseJsonSafely(coreListAdapter, res.stdout)
     }
 
     suspend fun startService(): Boolean {
@@ -71,17 +99,11 @@ class DanmuCli {
 
     suspend fun listLogs(): LogsResponse? {
         // Primary: ask the module CLI for JSON.
-        val res = RootShell.runSu("${DanmuPaths.CORE_CLI} logs list --json", timeoutMs = 10_000)
+        // Note: keep compatibility with older scripts that do NOT support "--json" for logs.
+        val res = RootShell.runSu("${DanmuPaths.CORE_CLI} logs list", timeoutMs = 10_000)
         if (res.exitCode == 0) {
-            val txt = res.stdout.trim()
-            if (txt.isNotBlank()) {
-                try {
-                    val parsed = logsAdapter.fromJson(txt)
-                    if (parsed != null) return parsed
-                } catch (_: Throwable) {
-                    // fall through
-                }
-            }
+            val parsed = parseJsonSafely(logsAdapter, res.stdout)
+            if (parsed != null) return parsed
         }
 
         // Fallback: manual scan of the log directory.
@@ -92,11 +114,11 @@ class DanmuCli {
             append("for f in '")
             append(logDir)
             append("'/*; do ")
-            append("[ -f \"$f\" ] || continue; ")
-            append("name=\"$(basename \"$f\")\"; ")
-            append("size=\"$(wc -c < \"$f\" 2>/dev/null || echo 0)\"; ")
-            append("mtime=\"$(date -r \"$f\" '+%F %T' 2>/dev/null || echo '')\"; ")
-            append("printf '%s\t%s\t%s\t%s\n' \"$name\" \"$f\" \"$size\" \"$mtime\"; ")
+            append("[ -f \"\$f\" ] || continue; ")
+            append("name=\"\$(basename \"\$f\")\"; ")
+            append("size=\"\$(wc -c < \"\$f\" 2>/dev/null || echo 0)\"; ")
+            append("mtime=\"\$(date -r \"\$f\" '+%F %T' 2>/dev/null || echo '')\"; ")
+            append("printf '%s\t%s\t%s\t%s\n' \"\$name\" \"\$f\" \"\$size\" \"\$mtime\"; ")
             append("done")
         }
         val r2 = RootShell.runSu(cmd, timeoutMs = 10_000)
@@ -112,7 +134,7 @@ class DanmuCli {
                 val path = parts.getOrNull(1).orEmpty()
                 val size = parts.getOrNull(2)?.toLongOrNull() ?: 0L
                 val mtime = parts.getOrNull(3)?.takeIf { it.isNotBlank() }
-                com.danmuapi.manager.data.model.LogFileInfo(
+                LogFileInfo(
                     name = name,
                     path = path,
                     sizeBytes = size,
@@ -129,18 +151,28 @@ class DanmuCli {
     }
 
     suspend fun tailLog(path: String, lines: Int = 200): String? {
-        val safePath = path.replace("\"", "").trim().replace("\r", "")
+        val safePath = path
+            .replace("\"", "")
+            .replace("'", "")
+            .trim()
+            .replace("\r", "")
+            .replace("\n", "")
+
+        if (safePath.isBlank()) return null
+
         val n = lines.coerceIn(10, 2000)
+        val busybox = "${DanmuPaths.BIN_DIR}/busybox"
 
         // Keep the command single-line for maximum su compatibility.
-        // Prefer toybox (available on most Android builds). Fall back to tail/cat.
-        val cmd = "toybox tail -n $n '$safePath' 2>/dev/null" +
-            " || tail -n $n '$safePath' 2>/dev/null" +
-            " || cat '$safePath' 2>/dev/null"
+        val cmd = "p='$safePath'; n=$n; " +
+            "if [ ! -f \"\$p\" ]; then echo \"file not found: \$p\" 1>&2; exit 2; fi; " +
+            "if [ -x '$busybox' ]; then '$busybox' tail -n \$n \"\$p\"; " +
+            "elif command -v toybox >/dev/null 2>&1; then toybox tail -n \$n \"\$p\"; " +
+            "elif command -v tail >/dev/null 2>&1; then tail -n \$n \"\$p\"; " +
+            "else cat \"\$p\"; fi"
 
         val res = RootShell.runSu(cmd, timeoutMs = 15_000)
         if (res.exitCode != 0 && res.stdout.isBlank()) {
-            // Surface error details in the UI (helps users diagnose missing files, etc.)
             val err = res.stderr.trim().ifBlank { "exitCode=${res.exitCode}" }
             return "（读取失败：$err）"
         }
