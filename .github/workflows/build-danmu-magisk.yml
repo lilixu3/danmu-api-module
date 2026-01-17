@@ -57,8 +57,9 @@ jobs:
       TEMPLATE_NO_NODE: danmu_api_server.zip
       TEMPLATE_NODE: danmu_api_server_node.zip
       UPSTREAM_SUBDIR: danmu_api
-      MANAGER_APP_DIR: manager_app
-      MANAGER_APP_APK_PATH: manager_app/app/build/outputs/apk/release/app-release.apk
+      # Gradle project root lives in manager_app/manager_app in this repo layout
+      MANAGER_APP_DIR: manager_app/manager_app
+      MANAGER_APP_APK_PATH: manager_app/manager_app/app/build/outputs/apk/release/app-release.apk
 
     steps:
       - name: Checkout current repo
@@ -89,7 +90,10 @@ jobs:
 
           # Ensure required SDK packages
           sdkmanager "platforms;android-34" "build-tools;34.0.0" >/dev/null
-          yes | sdkmanager --licenses >/dev/null
+          # Accept licenses (avoid pipefail: "yes: Broken pipe")
+          set +o pipefail
+          yes 2>/dev/null | sdkmanager --licenses >/dev/null
+          set -o pipefail
 
           # Patch app version to match module version
           APP_GRADLE="$MANAGER_APP_DIR/app/build.gradle.kts"
