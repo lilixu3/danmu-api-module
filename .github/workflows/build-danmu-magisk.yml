@@ -91,12 +91,10 @@ jobs:
           # Ensure required SDK packages
           sdkmanager "platforms;android-34" "build-tools;34.0.0" >/dev/null
           # Accept licenses (avoid pipefail: "yes: Broken pipe")
-          set +o pipefail
           # sdkmanager closes stdin early after accepting all licenses, which makes "yes" exit
           # with SIGPIPE (non-zero). With pipefail enabled, that would fail the whole job.
           set +o pipefail
           yes 2>/dev/null | sdkmanager --licenses >/dev/null
-          set -o pipefail
           set -o pipefail
 
           # Patch app version to match module version
