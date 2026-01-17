@@ -118,6 +118,18 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Refresh only the log list.
+     * Useful when navigating to the Logs screen while the service is writing new files.
+     */
+    fun refreshLogs() {
+        viewModelScope.launch {
+            withBusy("刷新日志中…") {
+                logs = repo.listLogs()
+            }
+        }
+    }
+
     fun startService() {
         viewModelScope.launch {
             val ok = withBusy("正在启动服务…") {

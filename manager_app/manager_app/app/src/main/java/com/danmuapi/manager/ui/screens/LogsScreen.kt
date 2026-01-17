@@ -1,6 +1,7 @@
 package com.danmuapi.manager.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,6 +22,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,11 +71,17 @@ fun LogsScreen(
             onDismissRequest = { viewing = null },
             title = { Text(file.name) },
             text = {
-                Text(
-                    text = viewingText.ifBlank { "(空)" },
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                )
+                val scroll = rememberScrollState()
+                SelectionContainer {
+                    Text(
+                        text = viewingText.ifBlank { "(空)" },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(scroll),
+                    )
+                }
             },
             confirmButton = { TextButton(onClick = { viewing = null }) { Text("关闭") } },
         )

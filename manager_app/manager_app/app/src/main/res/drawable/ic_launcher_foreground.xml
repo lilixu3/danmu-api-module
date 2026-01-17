@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!--
+      Foreground: minimal danmaku "streak" lines.
+      - Pure solid color (tinted by the icon system when needed)
+      - No chat bubble / message tail
+      - Stays inside the adaptive icon safe area via 18dp inset
+    -->
+    <group
+        android:translateX="18"
+        android:translateY="18">
+
+        <!-- Main danmaku lines (slightly tilted for motion) -->
+        <path
+            android:pathData="M6,18 L66,12"
+            android:strokeWidth="8"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+
+        <path
+            android:pathData="M12,32 L70,30"
+            android:strokeWidth="8"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+
+        <path
+            android:pathData="M2,46 L60,52"
+            android:strokeWidth="8"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+
+        <path
+            android:pathData="M16,60 L68,68"
+            android:strokeWidth="8"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+
+        <!-- Short trailing speed lines (subtle) -->
+        <path
+            android:pathData="M2,28 L16,26"
+            android:strokeWidth="6"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+
+        <path
+            android:pathData="M6,74 L20,76"
+            android:strokeWidth="6"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+
+    </group>
+</vector>

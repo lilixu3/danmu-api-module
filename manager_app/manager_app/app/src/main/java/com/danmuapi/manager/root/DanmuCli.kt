@@ -70,9 +70,57 @@ class DanmuCli {
     }
 
     suspend fun listLogs(): LogsResponse? {
-        val res = RootShell.runSu("${DanmuPaths.CORE_CLI} logs list")
-        if (res.exitCode != 0) return null
-        return logsAdapter.fromJson(res.stdout.trim())
+        // Primary: ask the module CLI for JSON.
+        val res = RootShell.runSu("${DanmuPaths.CORE_CLI} logs list --json", timeoutMs = 10_000)
+        if (res.exitCode == 0) {
+            val txt = res.stdout.trim()
+            if (txt.isNotBlank()) {
+                try {
+                    val parsed = logsAdapter.fromJson(txt)
+                    if (parsed != null) return parsed
+                } catch (_: Throwable) {
+                    // fall through
+                }
+            }
+        }
+
+        // Fallback: manual scan of the log directory.
+        // Some devices/ROMs may have issues with JSON parsing if su adds extra output,
+        // or if the CLI script is temporarily unavailable.
+        val logDir = DanmuPaths.LOG_DIR
+        val cmd = buildString {
+            append("for f in '")
+            append(logDir)
+            append("'/*; do ")
+            append("[ -f \"$f\" ] || continue; ")
+            append("name=\"$(basename \"$f\")\"; ")
+            append("size=\"$(wc -c < \"$f\" 2>/dev/null || echo 0)\"; ")
+            append("mtime=\"$(date -r \"$f\" '+%F %T' 2>/dev/null || echo '')\"; ")
+            append("printf '%s\t%s\t%s\t%s\n' \"$name\" \"$f\" \"$size\" \"$mtime\"; ")
+            append("done")
+        }
+        val r2 = RootShell.runSu(cmd, timeoutMs = 10_000)
+
+        val files = r2.stdout
+            .split('\n')
+            .mapNotNull { line ->
+                val t = line.trimEnd()
+                if (t.isBlank()) return@mapNotNull null
+                val parts = t.split('\t')
+                if (parts.size < 2) return@mapNotNull null
+                val name = parts.getOrNull(0).orEmpty()
+                val path = parts.getOrNull(1).orEmpty()
+                val size = parts.getOrNull(2)?.toLongOrNull() ?: 0L
+                val mtime = parts.getOrNull(3)?.takeIf { it.isNotBlank() }
+                com.danmuapi.manager.data.model.LogFileInfo(
+                    name = name,
+                    path = path,
+                    sizeBytes = size,
+                    modifiedAt = mtime,
+                )
+            }
+
+        return LogsResponse(dir = logDir, files = files)
     }
 
     suspend fun clearLogs(): Boolean {
@@ -84,43 +132,18 @@ class DanmuCli {
         val safePath = path.replace("\"", "").trim().replace("\r", "")
         val n = lines.coerceIn(10, 2000)
 
-        // Try multiple implementations for maximum compatibility.
-        // - Some builds do NOT ship /data/adb/danmu_api_server/bin/busybox
-        // - Most Android ROMs have toybox tail, but not all.
-        val bb = "${DanmuPaths.BIN_DIR}/busybox"
-        val cmd = buildString {
-            append("if [ -x '")
-            append(bb)
-            append("' ]; then\n")
-            append("  '")
-            append(bb)
-            append("' tail -n ")
-            append(n)
-            append(" '")
-            append(safePath)
-            append("'\n")
-            append("elif command -v tail >/dev/null 2>&1; then\n")
-            append("  tail -n ")
-            append(n)
-            append(" '")
-            append(safePath)
-            append("'\n")
-            append("elif command -v toybox >/dev/null 2>&1; then\n")
-            append("  toybox tail -n ")
-            append(n)
-            append(" '")
-            append(safePath)
-            append("'\n")
-            append("else\n")
-            // Fallback (no tail available): cat entire file.
-            append("  cat '")
-            append(safePath)
-            append("'\n")
-            append("fi\n")
-        }
+        // Keep the command single-line for maximum su compatibility.
+        // Prefer toybox (available on most Android builds). Fall back to tail/cat.
+        val cmd = "toybox tail -n $n '$safePath' 2>/dev/null" +
+            " || tail -n $n '$safePath' 2>/dev/null" +
+            " || cat '$safePath' 2>/dev/null"
 
         val res = RootShell.runSu(cmd, timeoutMs = 15_000)
-        if (res.exitCode != 0 && res.stdout.isBlank()) return null
+        if (res.exitCode != 0 && res.stdout.isBlank()) {
+            // Surface error details in the UI (helps users diagnose missing files, etc.)
+            val err = res.stderr.trim().ifBlank { "exitCode=${res.exitCode}" }
+            return "（读取失败：$err）"
+        }
         return res.stdout
     }
 

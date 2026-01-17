@@ -212,6 +212,10 @@ fun DanmuManagerApp(applicationContext: Context) {
                 )
             }
             composable(NavItem.LOGS.route) {
+                // Keep the log list fresh when entering the Logs screen.
+                LaunchedEffect(Unit) {
+                    vm.refreshLogs()
+                }
                 LogsScreen(
                     paddingValues = padding,
                     logs = vm.logs,
