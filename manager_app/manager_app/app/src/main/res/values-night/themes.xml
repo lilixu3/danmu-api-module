@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DanmuManager" parent="Theme.Material3.DynamicColors.DayNight.NoActionBar">
+    <!-- Compose Material3 handles dynamic colors at runtime.
+         The XML theme parent must be a real style resource (provided by com.google.android.material:material). -->
+    <style name="Theme.DanmuManager" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
