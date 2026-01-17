@@ -343,7 +343,7 @@ class MainViewModel(
             val user = webDavUsername.value
             val pass = webDavPassword.value
 
-            val ok = withBusy("从 WebDAV 导入配置…") {
+            val result = withBusy("从 WebDAV 导入配置…") {
                 val download = webDavClient.downloadText(
                     baseUrl = baseUrl,
                     remotePath = remotePath,
@@ -351,16 +351,20 @@ class MainViewModel(
                     password = pass,
                 )
 
-                when (download.result) {
-                    is WebDavResult.Error -> return@withBusy false
-                    else -> {
-                        val text = download.text ?: return@withBusy false
-                        repo.writeEnvFile(text)
+                when (val r = download.result) {
+                    is WebDavResult.Error -> r
+                    is WebDavResult.Success -> {
+                        val text = download.text ?: return@withBusy WebDavResult.Error("下载内容为空")
+                        val ok = repo.writeEnvFile(text)
+                        if (ok) r else WebDavResult.Error("写入配置失败")
                     }
                 }
             }
 
-            snackbars.tryEmit(if (ok) "已从 WebDAV 导入配置（重启服务后生效）" else "WebDAV 导入失败")
+            when (result) {
+                is WebDavResult.Success -> snackbars.tryEmit("已从 WebDAV 导入配置（重启服务后生效）")
+                is WebDavResult.Error -> snackbars.tryEmit("WebDAV 导入失败：${result.message}")
+            }
         }
     }
 

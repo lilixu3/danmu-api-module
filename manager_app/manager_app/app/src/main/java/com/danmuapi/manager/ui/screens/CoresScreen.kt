@@ -26,7 +26,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,13 +55,6 @@ fun CoresScreen(
     var repoInput by remember { mutableStateOf("huangxd-/danmu_api") }
     var refInput by remember { mutableStateOf("main") }
     var deleteTarget by remember { mutableStateOf<CoreMeta?>(null) }
-
-    // Auto-check updates when user enters the core page (and cores are available).
-    LaunchedEffect(cores?.cores?.size) {
-        if (!cores?.cores.isNullOrEmpty()) {
-            onCheckUpdates()
-        }
-    }
 
     if (showSheet) {
         ModalBottomSheet(onDismissRequest = { showSheet = false }) {

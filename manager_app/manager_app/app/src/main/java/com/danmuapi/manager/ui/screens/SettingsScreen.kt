@@ -76,7 +76,7 @@ fun SettingsScreen(
     var davUrlInput by remember(webDavUrl) { mutableStateOf(webDavUrl) }
     var davUserInput by remember(webDavUsername) { mutableStateOf(webDavUsername) }
     var davPassInput by remember(webDavPassword) { mutableStateOf(webDavPassword) }
-    var davPathInput by remember(webDavPath) { mutableStateOf(webDavPath.ifBlank { "danmu_api_server/.env" }) }
+    var davPathInput by remember(webDavPath) { mutableStateOf(webDavPath.ifBlank { "danmuapi/danmu_api.env" }) }
 
     // Config editor
     var showEnvEditor by remember { mutableStateOf(false) }
@@ -425,10 +425,15 @@ fun SettingsScreen(
                     value = davPathInput,
                     onValueChange = { davPathInput = it },
                     singleLine = true,
-                    label = { Text("远程路径/文件") },
-                    placeholder = { Text("例如：backups/danmu_api.env（也可粘贴完整文件URL）") },
+                    label = { Text("远程路径（目录或文件）") },
+                    placeholder = { Text("例如：danmuapi/ 或 backups/danmu_api.env（也可粘贴完整文件URL）") },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Text(
+                    text = "提示：如果只填目录（如 danmuapi），将自动使用 danmu_api.env 作为文件名。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
                 OutlinedTextField(
                     value = davUserInput,
                     onValueChange = { davUserInput = it },
