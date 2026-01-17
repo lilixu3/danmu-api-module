@@ -246,15 +246,17 @@ private fun CoreItem(
             }
 
             if (update != null) {
-                val text = if (update.hasUpdate) {
-                    "有更新：${update.remoteVersion ?: "?"}"
+                val remoteShaShort = update.latestCommit?.sha?.take(7)
+                val remoteVer = update.latestVersion
+                val text = if (update.updateAvailable) {
+                    "有更新" + (remoteVer?.let { "：v$it" } ?: "")
                 } else {
                     "已是最新"
                 }
                 Text(text = text, style = MaterialTheme.typography.bodyMedium)
-                if (!update.remoteShaShort.isNullOrBlank()) {
+                if (!remoteShaShort.isNullOrBlank()) {
                     Text(
-                        text = "Remote: ${update.remoteShaShort}",
+                        text = "Remote: $remoteShaShort",
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
                     )

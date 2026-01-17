@@ -20,6 +20,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -55,6 +56,7 @@ private enum class NavItem(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun DanmuManagerApp(applicationContext: Context) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
@@ -191,14 +193,13 @@ fun DanmuManagerApp(applicationContext: Context) {
                 LogsScreen(
                     paddingValues = padding,
                     logs = vm.logs,
-                    onRefresh = { vm.refreshAll() },
                     onClearAll = { vm.clearLogs() },
-                    onViewLog = { path, lines, onResult ->
+                    onReadTail = { path, lines, onResult ->
                         scope.launch {
                             val text = repo.tailLog(path, lines) ?: "（无法读取日志）"
                             onResult(text)
                         }
-                    },
+                    }
                 )
             }
             composable(NavItem.SETTINGS.route) {
@@ -206,10 +207,10 @@ fun DanmuManagerApp(applicationContext: Context) {
                 SettingsScreen(
                     paddingValues = padding,
                     rootAvailable = vm.rootAvailable,
-                    logCleanIntervalDays = logIntervalDays,
                     githubToken = token,
-                    onSetLogIntervalDays = { vm.setLogCleanIntervalDays(it) },
-                    onSetGithubToken = { vm.setGithubToken(it) },
+                    logAutoCleanDays = logIntervalDays,
+                    onSetLogAutoCleanDays = { days -> vm.setLogCleanIntervalDays(days) },
+                    onSetGithubToken = { t -> vm.setGithubToken(t) },
                 )
             }
         }
