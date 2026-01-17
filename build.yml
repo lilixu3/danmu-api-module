@@ -57,8 +57,9 @@ jobs:
       TEMPLATE_NO_NODE: danmu_api_server.zip
       TEMPLATE_NODE: danmu_api_server_node.zip
       UPSTREAM_SUBDIR: danmu_api
-      MANAGER_APP_DIR: manager_app
-      MANAGER_APP_APK_PATH: manager_app/app/build/outputs/apk/release/app-release.apk
+      # Gradle project root lives in manager_app/manager_app in this repo layout
+      MANAGER_APP_DIR: manager_app/manager_app
+      MANAGER_APP_APK_PATH: manager_app/manager_app/app/build/outputs/apk/release/app-release.apk
 
     steps:
       - name: Checkout current repo
@@ -89,7 +90,14 @@ jobs:
 
           # Ensure required SDK packages
           sdkmanager "platforms;android-34" "build-tools;34.0.0" >/dev/null
-          yes | sdkmanager --licenses >/dev/null
+          # Accept licenses (avoid pipefail: "yes: Broken pipe")
+          set +o pipefail
+          # sdkmanager closes stdin early after accepting all licenses, which makes "yes" exit
+          # with SIGPIPE (non-zero). With pipefail enabled, that would fail the whole job.
+          set +o pipefail
+          yes 2>/dev/null | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          set -o pipefail
 
           # Patch app version to match module version
           APP_GRADLE="$MANAGER_APP_DIR/app/build.gradle.kts"
@@ -132,6 +140,17 @@ jobs:
           CORE_REPO="${{ inputs.repo_source }}"
           [ "$CORE_REPO" = "custom" ] && CORE_REPO="${{ inputs.custom_repo }}"
           CORE_REF="${{ inputs.repo_ref }}"
+
+          # Upstream commit SHA + core version (from globals.js)
+          CORE_SHA="$(git -C upstream rev-parse HEAD 2>/dev/null || true)"
+          CORE_VERSION=""
+          if [ -f "upstream/${UPSTREAM_SUBDIR}/configs/globals.js" ]; then
+            CORE_VERSION="$(grep -m1 -E "VERSION[[:space:]]*:" "upstream/${UPSTREAM_SUBDIR}/configs/globals.js" \
+              | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" \
+              | head -n 1 \
+              || true)"
+          fi
+          BUILD_TIME_UTC="$(date -u +%FT%TZ)"
 
           mkdir -p build/tmp build/out
 
@@ -178,6 +197,48 @@ jobs:
                   }
                 }
               }' "$pkg_index"
+          }
+
+          # =========================================================
+          # Prepare a static BusyBox for Android (Termux busybox)
+          # - Used for: inotifyd watcher (event-driven toggles), unzip/wget on minimal ROMs
+          # =========================================================
+          prepare_termux_busybox() {
+            if [ -f build/tmp/busybox/busybox ]; then
+              return 0
+            fi
+
+            mkdir -p build/tmp/busybox
+            local idx_dir
+            idx_dir="$(termux_prepare_index)"
+            local repo_base
+            repo_base="$(cat "$idx_dir/.repo_base")"
+            local pkg_index="$idx_dir/Packages"
+            local fname
+            fname="$(termux_pkg_filename "busybox" "$pkg_index" || true)"
+            if [ -z "$fname" ]; then
+              echo "!!! 错误: Termux Packages 索引中未找到 busybox"
+              exit 1
+            fi
+            echo ">>> [BusyBox] 下载: busybox ($fname)"
+
+            curl -fL --retry 3 "$repo_base/$fname" -o "$idx_dir/busybox.deb"
+            mkdir -p "$idx_dir/extract"
+            dpkg-deb -x "$idx_dir/busybox.deb" "$idx_dir/extract"
+
+            local bb
+            bb="$(find "$idx_dir/extract" -type f -path "*/files/usr/bin/busybox" | head -n 1 || true)"
+            if [ -z "$bb" ]; then
+              bb="$(find "$idx_dir/extract" -type f -path "*/usr/bin/busybox" | head -n 1 || true)"
+            fi
+            if [ -z "$bb" ]; then
+              echo "!!! 错误: 解压后未找到 busybox 可执行文件"
+              exit 1
+            fi
+
+            cp -f "$bb" build/tmp/busybox/busybox
+            chmod 0755 build/tmp/busybox/busybox
+            rm -rf "$idx_dir"
           }
 
           # =========================================================
@@ -513,15 +574,19 @@ jobs:
             {
               echo "repo=${CORE_REPO}"
               echo "ref=${CORE_REF}"
-              echo "built_at=$(date '+%F %T')"
+              echo "sha=${CORE_SHA}"
+              echo "version=${CORE_VERSION}"
+              echo "built_at=${BUILD_TIME_UTC}"
             } > "$MODULE_ROOT/defaults/core_source.txt"
 
             # Manager App (systemless)
             mkdir -p "$MODULE_ROOT/system/app/DanmuApiManager"
             cp -f "$MANAGER_APK" "$MODULE_ROOT/system/app/DanmuApiManager/DanmuApiManager.apk"
 
-            # Always ship BusyBox helpers
-            fetch_termux_busybox "$MODULE_ROOT"
+            # Always ship BusyBox helpers (for inotifyd / unzip / wget on minimal ROMs)
+            prepare_termux_busybox
+            mkdir -p "$MODULE_ROOT/bin"
+            cp -f build/tmp/busybox/busybox "$MODULE_ROOT/bin/busybox"
 
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
             sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
@@ -542,15 +607,19 @@ jobs:
             {
               echo "repo=${CORE_REPO}"
               echo "ref=${CORE_REF}"
-              echo "built_at=$(date '+%F %T')"
+              echo "sha=${CORE_SHA}"
+              echo "version=${CORE_VERSION}"
+              echo "built_at=${BUILD_TIME_UTC}"
             } > "$MODULE_ROOT/defaults/core_source.txt"
 
             # Manager App (systemless)
             mkdir -p "$MODULE_ROOT/system/app/DanmuApiManager"
             cp -f "$MANAGER_APK" "$MODULE_ROOT/system/app/DanmuApiManager/DanmuApiManager.apk"
 
-            # Always ship BusyBox helpers
-            fetch_termux_busybox "$MODULE_ROOT"
+            # Always ship BusyBox helpers (for inotifyd / unzip / wget on minimal ROMs)
+            prepare_termux_busybox
+            mkdir -p "$MODULE_ROOT/bin"
+            cp -f build/tmp/busybox/busybox "$MODULE_ROOT/bin/busybox"
 
             # Ship Node runtime
             fetch_termux_node "$MODULE_ROOT"

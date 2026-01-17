@@ -1,5 +1,0 @@
-<resources>
-    <style name="Theme.DanmuApiManager" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Keep it minimal -->
-    </style>
-</resources>
