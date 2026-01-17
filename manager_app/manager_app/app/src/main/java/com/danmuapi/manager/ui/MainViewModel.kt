@@ -44,6 +44,17 @@ class MainViewModel(
     var logs: LogsResponse? by mutableStateOf(null)
         private set
 
+    /**
+     * Parsed from /data/adb/danmu_api_server/config/.env
+     * (best-effort; falls back to sane defaults when unreadable).
+     */
+    var apiToken: String by mutableStateOf("87654321")
+        private set
+    var apiPort: Int by mutableStateOf(9321)
+        private set
+    var apiHost: String by mutableStateOf("0.0.0.0")
+        private set
+
     var busy: Boolean by mutableStateOf(false)
         private set
 
@@ -97,6 +108,49 @@ class MainViewModel(
         status = repo.getStatus()
         cores = repo.listCores()
         logs = repo.listLogs()
+
+        // Access info is useful on the dashboard: show URLs with token/port.
+        refreshAccessInfoInternal()
+    }
+
+    private fun parseDotEnv(envText: String): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        envText.lineSequence().forEach { raw ->
+            val line = raw.trim()
+            if (line.isBlank() || line.startsWith('#')) return@forEach
+            val idx = line.indexOf('=')
+            if (idx <= 0) return@forEach
+            val key = line.substring(0, idx).trim()
+            var value = line.substring(idx + 1).trim()
+            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
+                if (value.length >= 2) value = value.substring(1, value.length - 1)
+            }
+            if (key.isNotBlank()) out[key] = value
+        }
+        return out
+    }
+
+    private suspend fun refreshAccessInfoInternal() {
+        val env = try {
+            repo.readEnvFile()
+        } catch (_: Throwable) {
+            null
+        } ?: return
+
+        val kv = parseDotEnv(env)
+
+        // TOKEN
+        val token = kv["TOKEN"].orEmpty().trim()
+        apiToken = token.ifBlank { "87654321" }
+
+        // DANMU_API_PORT
+        val portText = kv["DANMU_API_PORT"].orEmpty().trim()
+        val port = portText.toIntOrNull()
+        apiPort = if (port != null && port in 1..65535) port else 9321
+
+        // DANMU_API_HOST (0.0.0.0 by default; if user sets 127.0.0.1 then LAN access is not possible)
+        val host = kv["DANMU_API_HOST"].orEmpty().trim()
+        apiHost = host.ifBlank { "0.0.0.0" }
     }
 
     private suspend fun <T> withBusy(message: String? = null, block: suspend () -> T): T {
@@ -267,7 +321,9 @@ class MainViewModel(
     fun saveEnvFile(content: String) {
         viewModelScope.launch {
             val ok = withBusy("保存配置中…") {
-                repo.writeEnvFile(content)
+                val ok = repo.writeEnvFile(content)
+                if (ok) refreshAccessInfoInternal()
+                ok
             }
             snackbars.tryEmit(if (ok) "配置已保存（重启服务后生效）" else "保存配置失败")
         }
@@ -305,7 +361,9 @@ class MainViewModel(
                     }
                 } ?: return@withBusy false
 
-                repo.writeEnvFile(text)
+                val ok = repo.writeEnvFile(text)
+                if (ok) refreshAccessInfoInternal()
+                ok
             }
             snackbars.tryEmit(if (ok) "已导入配置（重启服务后生效）" else "导入失败")
         }
@@ -368,6 +426,7 @@ class MainViewModel(
                     is WebDavResult.Success -> {
                         val text = download.text ?: return@withBusy WebDavResult.Error("下载内容为空")
                         val ok = repo.writeEnvFile(text)
+                        if (ok) refreshAccessInfoInternal()
                         if (ok) r else WebDavResult.Error("写入配置失败")
                     }
                 }

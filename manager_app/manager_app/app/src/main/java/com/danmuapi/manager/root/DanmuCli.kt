@@ -161,15 +161,32 @@ class DanmuCli {
         if (safePath.isBlank()) return null
 
         val n = lines.coerceIn(10, 2000)
-        val busybox = "${DanmuPaths.BIN_DIR}/busybox"
+        val busyboxPersist = "${DanmuPaths.BIN_DIR}/busybox"
+        val busyboxModule = "/data/adb/modules/danmu_api_server/bin/busybox"
 
         // Keep the command single-line for maximum su compatibility.
-        val cmd = "p='$safePath'; n=$n; " +
-            "if [ ! -f \"\$p\" ]; then echo \"file not found: \$p\" 1>&2; exit 2; fi; " +
-            "if [ -x '$busybox' ]; then '$busybox' tail -n \$n \"\$p\"; " +
-            "elif command -v toybox >/dev/null 2>&1; then toybox tail -n \$n \"\$p\"; " +
-            "elif command -v tail >/dev/null 2>&1; then tail -n \$n \"\$p\"; " +
-            "else cat \"\$p\"; fi"
+        // NOTE:
+        // - Some Termux BusyBox builds are dynamically linked (libbusybox.so.*).
+        // - If the library is missing, Android linker prints "CANNOT LINK EXECUTABLE...".
+        // - We try to run BusyBox only when it's actually runnable, otherwise fallback.
+        val cmd = (
+            "p='$safePath'; n=$n; " +
+                // Prefer a persistent copy for the app, but fallback to module-bundled busybox.
+                "bb=''; " +
+                "if [ -x '$busyboxPersist' ]; then bb='$busyboxPersist'; " +
+                "elif [ -x '$busyboxModule' ]; then bb='$busyboxModule'; fi; " +
+                // Best-effort library path for Termux-style layout.
+                "export LD_LIBRARY_PATH=" +
+                "'/data/adb/danmu_api_server/lib:/data/adb/danmu_api_server/bin/lib:/data/adb/modules/danmu_api_server/bin/lib:/data/adb/modules/danmu_api_server/lib:'" +
+                "${'$'}{LD_LIBRARY_PATH:-}; " +
+                // Validate file.
+                "if [ ! -f \"${'$'}p\" ]; then echo \"file not found: ${'$'}p\" 1>&2; exit 2; fi; " +
+                // Try BusyBox tail if BusyBox is runnable.
+                "if [ -n \"${'$'}bb\" ]; then \"${'$'}bb\" true >/dev/null 2>&1 && \"${'$'}bb\" tail -n \"${'$'}n\" \"${'$'}p\" 2>/dev/null && exit 0; fi; " +
+                // Fallbacks (toybox / tail / cat)
+                "if command -v toybox >/dev/null 2>&1; then toybox tail -n \"${'$'}n\" \"${'$'}p\" 2>/dev/null && exit 0; fi; " +
+                "tail -n \"${'$'}n\" \"${'$'}p\" 2>/dev/null || cat \"${'$'}p\""
+        )
 
         val res = RootShell.runSu(cmd, timeoutMs = 15_000)
         if (res.exitCode != 0 && res.stdout.isBlank()) {
