@@ -57,6 +57,8 @@ jobs:
       TEMPLATE_NO_NODE: danmu_api_server.zip
       TEMPLATE_NODE: danmu_api_server_node.zip
       UPSTREAM_SUBDIR: danmu_api
+      MANAGER_APP_DIR: manager_app
+      MANAGER_APP_APK_PATH: manager_app/app/build/outputs/apk/release/app-release.apk
 
     steps:
       - name: Checkout current repo
@@ -66,6 +68,43 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y zip unzip rsync curl jq binutils zstd xz-utils dpkg
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Manager App (APK)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ inputs.module_version }}"
+          VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9' | head -c 8)"
+          [ -z "$VERSION_CODE" ] && VERSION_CODE=1
+
+          # Ensure required SDK packages
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          yes | sdkmanager --licenses >/dev/null
+
+          # Patch app version to match module version
+          APP_GRADLE="$MANAGER_APP_DIR/app/build.gradle.kts"
+          sed -i -E "s/^\s*versionCode\s*=\s*[0-9]+\s*$/    versionCode = ${VERSION_CODE}/" "$APP_GRADLE"
+          sed -i -E "s/^\s*versionName\s*=\s*\"[^\"]*\"\s*$/    versionName = \"${VERSION}\"/" "$APP_GRADLE"
+
+          # Build with a downloaded Gradle distribution (no wrapper required)
+          GRADLE_VERSION="8.5"
+          curl -fL --retry 3 "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o gradle.zip
+          unzip -q gradle.zip -d "$HOME/gradle"
+
+          "$HOME/gradle/gradle-${GRADLE_VERSION}/bin/gradle" -p "$MANAGER_APP_DIR" assembleRelease
+
+          test -f "$MANAGER_APP_APK_PATH"
+          ls -l "$MANAGER_APP_APK_PATH"
 
       - name: Fetch upstream danmu_api
         run: |
@@ -84,14 +123,65 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           VERSION="${{ inputs.module_version }}"
           VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9' | head -c 8)"
           [ -z "$VERSION_CODE" ] && VERSION_CODE=1
 
+          # Resolve selected upstream for core_source.txt
+          CORE_REPO="${{ inputs.repo_source }}"
+          [ "$CORE_REPO" = "custom" ] && CORE_REPO="${{ inputs.custom_repo }}"
+          CORE_REF="${{ inputs.repo_ref }}"
+
           mkdir -p build/tmp build/out
 
           # =========================================================
-          # 函数：下载并提取 Termux Node.js（只拷贝真正需要的 .so 依赖，不再整包复制 usr/lib）
+          # Termux helper: fetch a single package (.deb) by name
+          # =========================================================
+          termux_prepare_index() {
+            local arch="aarch64"
+            local repo_base="https://packages.termux.dev/apt/termux-main"
+            local index_xz="${repo_base}/dists/stable/main/binary-${arch}/Packages.xz"
+            local index_plain="${repo_base}/dists/stable/main/binary-${arch}/Packages"
+
+            local work_dir
+            work_dir="$(mktemp -d)"
+            mkdir -p "$work_dir"
+
+            echo "$repo_base" > "$work_dir/.repo_base"
+
+            if curl -fL --retry 3 "$index_xz" -o "$work_dir/Packages.xz"; then
+              xz -dc "$work_dir/Packages.xz" > "$work_dir/Packages"
+            else
+              curl -fL --retry 3 "$index_plain" -o "$work_dir/Packages"
+            fi
+
+            echo "$work_dir"
+          }
+
+          termux_pkg_filename() {
+            local pkg="$1"
+            local pkg_index="$2"
+            awk -v pkg="$pkg" '
+              BEGIN{RS="";FS="\n"}
+              {
+                hit=0
+                for(i=1;i<=NF;i++){
+                  if($i == "Package: " pkg){ hit=1; break }
+                }
+                if(hit){
+                  for(i=1;i<=NF;i++){
+                    if(index($i,"Filename: ")==1){
+                      sub(/^Filename: /,"",$i);
+                      print $i; exit
+                    }
+                  }
+                }
+              }' "$pkg_index"
+          }
+
+          # =========================================================
+          # 下载并提取 Termux Node.js（只拷贝真正需要的 .so 依赖）
           # =========================================================
           fetch_termux_node() {
             local root="$1"
@@ -215,7 +305,7 @@ jobs:
               rm -f "${work_dir}/${pkg}.deb"
             }
 
-            # 递归拉取 nodejs 及其依赖包（只是为了把库/二进制都解出来）
+            # 递归拉取 nodejs 及其依赖包
             declare -A SEEN
             local queue=()
             local node_pkg="nodejs"
@@ -261,7 +351,6 @@ jobs:
             fi
             if [ -z "$NODE_BIN_PATH" ]; then
               echo "!!! 错误: 解压后未找到 node 可执行文件"
-              find "$extracted" -maxdepth 8 -type d -name bin -print || true
               exit 1
             fi
             echo "    Found: $NODE_BIN_PATH"
@@ -277,20 +366,14 @@ jobs:
             echo ">>> [Node构建] 写入模块目录: $root/node/{bin,lib}"
             mkdir -p "$root/node/bin" "$root/node/lib"
 
-            # 复制 node
             cp -f "$NODE_BIN_PATH" "$root/node/bin/node"
             chmod 0755 "$root/node/bin/node"
 
-            # ------------------------------
-            # 核心优化：只复制真正需要的动态库（传递依赖）
-            # ------------------------------
-            # 取 ELF NEEDED
             needed_of() {
               local f="$1"
               readelf -d "$f" 2>/dev/null | awk '/NEEDED/{gsub(/\[|\]/,"",$5); print $5}' || true
             }
 
-            # 从 termux 的 $LIB_DIR 找到一个库文件（只在顶层找，避免把 node_modules/ 等目录拉进来）
             find_lib_in_termux() {
               local soname="$1"
               if [ -e "$LIB_DIR/$soname" ] || [ -L "$LIB_DIR/$soname" ]; then
@@ -300,7 +383,6 @@ jobs:
               return 1
             }
 
-            # 复制库（保留软链，并确保软链目标也复制）
             copy_lib_to_module() {
               local src="$1"
               cp -a "$src" "$root/node/lib/"
@@ -314,7 +396,6 @@ jobs:
               fi
             }
 
-            # BFS：从 node 开始追依赖，把 termux 自己提供的 so 都捞出来
             declare -A DONE_LIB
             local file_q=()
             file_q+=("$NODE_BIN_PATH")
@@ -323,20 +404,16 @@ jobs:
               local cur="${file_q[0]}"
               file_q=("${file_q[@]:1}")
 
-              # 只处理 ELF 文件
               for so in $(needed_of "$cur"); do
-                # 已处理过
                 if [ "${DONE_LIB[$so]+x}" = "x" ]; then
                   continue
                 fi
 
-                # termux /usr/lib 里能找到就复制；找不到则认为是系统库（Android 自带）直接略过
                 local src
                 if src="$(find_lib_in_termux "$so")"; then
                   DONE_LIB["$so"]=1
                   copy_lib_to_module "$src"
 
-                  # 继续追这个库的依赖（用真实文件追）
                   local real_src
                   real_src="$(readlink -f "$src" 2>/dev/null || echo "$src")"
                   if [ -e "$real_src" ]; then
@@ -348,30 +425,63 @@ jobs:
               done
             done
 
-            # 强校验：避免 node/lib 为空
-            if [ ! -s "$root/node/bin/node" ]; then
-              echo "!!! 错误: node 写入失败（文件为空或不存在）"
-              exit 1
-            fi
-            local lib_items
-            lib_items="$(find "$root/node/lib" -mindepth 1 \( -type f -o -type l \) | wc -l | tr -d ' ')"
-            if [ "${lib_items:-0}" -eq 0 ]; then
-              echo "!!! 错误: node/lib 仍为空（未解析到任何 termux 动态库）"
-              exit 1
-            fi
-
-            # 可选：进一步减小体积（不需要可删）
-            # strip 不会动脚本/目录，只处理 ELF
             strip --strip-unneeded "$root/node/bin/node" 2>/dev/null || true
             find "$root/node/lib" -maxdepth 1 -type f -name "*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
 
-            echo ">>> [Node构建] 验证通过:"
-            echo "    node/lib files: $lib_items"
-            echo "    libs list:"
-            ls -1 "$root/node/lib" | sed 's/^/      - /'
             echo "---------------------------------------------------"
-
             rm -rf "$work_dir"
+          }
+
+          # =========================================================
+          # BusyBox: provide inotifyd + wget + unzip on devices without them
+          # =========================================================
+          fetch_termux_busybox() {
+            local root="$1"
+            local work_dir
+            work_dir="$(termux_prepare_index)"
+
+            local repo_base
+            repo_base="$(cat "$work_dir/.repo_base")"
+            local pkg_index="$work_dir/Packages"
+
+            local pkg="busybox"
+            echo "---------------------------------------------------"
+            echo ">>> [BusyBox] 开始拉取 Termux BusyBox..."
+
+            local fname
+            fname="$(termux_pkg_filename "$pkg" "$pkg_index" || true)"
+            if [ -z "$fname" ]; then
+              echo "!!! 错误: 在 Packages 索引中找不到包: $pkg"
+              exit 1
+            fi
+
+            local url="${repo_base}/${fname}"
+            mkdir -p "$work_dir/extracted"
+
+            echo ">>> [BusyBox] 下载: $pkg"
+            curl -fL --retry 3 "$url" -o "$work_dir/$pkg.deb"
+            dpkg-deb -x "$work_dir/$pkg.deb" "$work_dir/extracted"
+
+            local BB_BIN
+            BB_BIN="$(find "$work_dir/extracted" -type f -path "*/files/usr/bin/busybox" | head -n 1 || true)"
+            if [ -z "$BB_BIN" ]; then
+              BB_BIN="$(find "$work_dir/extracted" -type f -path "*/usr/bin/busybox" | head -n 1 || true)"
+            fi
+            if [ -z "$BB_BIN" ]; then
+              echo "!!! 错误: 解压后未找到 busybox 可执行文件"
+              exit 1
+            fi
+
+            mkdir -p "$root/bin"
+            cp -f "$BB_BIN" "$root/bin/busybox"
+            chmod 0755 "$root/bin/busybox"
+
+            # Optional: strip for size
+            strip --strip-unneeded "$root/bin/busybox" 2>/dev/null || true
+
+            echo ">>> [BusyBox] 写入: $root/bin/busybox"
+            rm -rf "$work_dir"
+            echo "---------------------------------------------------"
           }
 
           finalize_zip() {
@@ -379,8 +489,16 @@ jobs:
             local out_name="$2"
             echo ">>> 打包: $out_name"
             find "$root" -type f -name "*.sh" -exec chmod 0755 {} \;
+            [ -f "$root/bin/busybox" ] && chmod 0755 "$root/bin/busybox" || true
             (cd "$root" && zip -r "../../out/${out_name}" .)
           }
+
+          # Path to built Manager APK
+          MANAGER_APK="$MANAGER_APP_APK_PATH"
+          if [ ! -f "$MANAGER_APK" ]; then
+            echo "!!! 错误: 未找到 Manager APK: $MANAGER_APK"
+            exit 1
+          fi
 
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
             echo ">>> [TASK] 构建 No-Node 版本..."
@@ -389,6 +507,21 @@ jobs:
 
             mkdir -p "$MODULE_ROOT/app/danmu_api"
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
+
+            # Core source info for seeding persistent core
+            mkdir -p "$MODULE_ROOT/defaults"
+            {
+              echo "repo=${CORE_REPO}"
+              echo "ref=${CORE_REF}"
+              echo "built_at=$(date '+%F %T')"
+            } > "$MODULE_ROOT/defaults/core_source.txt"
+
+            # Manager App (systemless)
+            mkdir -p "$MODULE_ROOT/system/app/DanmuApiManager"
+            cp -f "$MANAGER_APK" "$MODULE_ROOT/system/app/DanmuApiManager/DanmuApiManager.apk"
+
+            # Always ship BusyBox helpers
+            fetch_termux_busybox "$MODULE_ROOT"
 
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
             sed -i "s|^versionCode=.*|versionCode=${VERSION_CODE}|g" "$MODULE_ROOT/module.prop"
@@ -404,6 +537,22 @@ jobs:
             mkdir -p "$MODULE_ROOT/app/danmu_api"
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
 
+            # Core source info for seeding persistent core
+            mkdir -p "$MODULE_ROOT/defaults"
+            {
+              echo "repo=${CORE_REPO}"
+              echo "ref=${CORE_REF}"
+              echo "built_at=$(date '+%F %T')"
+            } > "$MODULE_ROOT/defaults/core_source.txt"
+
+            # Manager App (systemless)
+            mkdir -p "$MODULE_ROOT/system/app/DanmuApiManager"
+            cp -f "$MANAGER_APK" "$MODULE_ROOT/system/app/DanmuApiManager/DanmuApiManager.apk"
+
+            # Always ship BusyBox helpers
+            fetch_termux_busybox "$MODULE_ROOT"
+
+            # Ship Node runtime
             fetch_termux_node "$MODULE_ROOT"
 
             sed -i "s|^version=.*|version=${VERSION}|g" "$MODULE_ROOT/module.prop"
