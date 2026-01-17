@@ -57,6 +57,13 @@ fun CoresScreen(
     var refInput by remember { mutableStateOf("main") }
     var deleteTarget by remember { mutableStateOf<CoreMeta?>(null) }
 
+    // Auto-check updates when user enters the core page (and cores are available).
+    LaunchedEffect(cores?.cores?.size) {
+        if (!cores?.cores.isNullOrEmpty()) {
+            onCheckUpdates()
+        }
+    }
+
     if (showSheet) {
         ModalBottomSheet(onDismissRequest = { showSheet = false }) {
             Column(

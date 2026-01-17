@@ -81,12 +81,110 @@ class DanmuCli {
     }
 
     suspend fun tailLog(path: String, lines: Int = 200): String? {
-        val safePath = path.replace("\"", "")
+        val safePath = path.replace("\"", "").trim().replace("\r", "")
         val n = lines.coerceIn(10, 2000)
-        // Prefer BusyBox tail for maximum compatibility.
-        val cmd = "${DanmuPaths.BIN_DIR}/busybox tail -n $n '$safePath'"
+
+        // Try multiple implementations for maximum compatibility.
+        // - Some builds do NOT ship /data/adb/danmu_api_server/bin/busybox
+        // - Most Android ROMs have toybox tail, but not all.
+        val bb = "${DanmuPaths.BIN_DIR}/busybox"
+        val cmd = buildString {
+            append("if [ -x '")
+            append(bb)
+            append("' ]; then\n")
+            append("  '")
+            append(bb)
+            append("' tail -n ")
+            append(n)
+            append(" '")
+            append(safePath)
+            append("'\n")
+            append("elif command -v tail >/dev/null 2>&1; then\n")
+            append("  tail -n ")
+            append(n)
+            append(" '")
+            append(safePath)
+            append("'\n")
+            append("elif command -v toybox >/dev/null 2>&1; then\n")
+            append("  toybox tail -n ")
+            append(n)
+            append(" '")
+            append(safePath)
+            append("'\n")
+            append("else\n")
+            // Fallback (no tail available): cat entire file.
+            append("  cat '")
+            append(safePath)
+            append("'\n")
+            append("fi\n")
+        }
+
         val res = RootShell.runSu(cmd, timeoutMs = 15_000)
+        if (res.exitCode != 0 && res.stdout.isBlank()) return null
+        return res.stdout
+    }
+
+    /**
+     * Reads the persistent config file (.env).
+     *
+     * Note: returns empty string if file does not exist.
+     */
+    suspend fun readEnvFile(): String? {
+        val f = DanmuPaths.ENV_FILE
+        val cmd = "if [ -f '$f' ]; then cat '$f'; else echo -n ''; fi"
+        val res = RootShell.runSu(cmd, timeoutMs = 10_000)
         if (res.exitCode != 0) return null
         return res.stdout
+    }
+
+    /**
+     * Atomically writes the persistent config file (.env) with a timestamped backup.
+     */
+    suspend fun writeEnvFile(content: String): Boolean {
+        val file = DanmuPaths.ENV_FILE
+        val dir = file.substringBeforeLast('/')
+        val ts = System.currentTimeMillis()
+        val tmp = "$file.tmp.$ts"
+        val bak = "$file.bak.$ts"
+        val marker = "__DANMU_ENV_EOF__$ts"
+
+        // Ensure the here-doc terminator is always on its own line.
+        val safeContent = if (content.endsWith("\n")) content else "$content\n"
+
+        val cmd = buildString {
+            append("mkdir -p '")
+            append(dir)
+            append("' || exit 1\n")
+
+            // Backup: best-effort (do not fail the write if backup fails).
+            append("if [ -f '")
+            append(file)
+            append("' ]; then cp -f '")
+            append(file)
+            append("' '")
+            append(bak)
+            append("' 2>/dev/null || true; fi\n")
+
+            // Write to tmp then move.
+            append("cat <<'")
+            append(marker)
+            append("' > '")
+            append(tmp)
+            append("'\n")
+            append(safeContent)
+            append(marker)
+            append("\n")
+            append("chmod 600 '")
+            append(tmp)
+            append("' 2>/dev/null || true\n")
+            append("mv -f '")
+            append(tmp)
+            append("' '")
+            append(file)
+            append("'\n")
+        }
+
+        val res = RootShell.runSu(cmd, timeoutMs = 15_000)
+        return res.exitCode == 0
     }
 }

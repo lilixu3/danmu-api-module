@@ -185,14 +185,19 @@ fun DanmuManagerApp(applicationContext: Context) {
             startDestination = NavItem.DASHBOARD.route,
         ) {
             composable(NavItem.DASHBOARD.route) {
+                val activeUpdate = vm.status?.activeCoreId?.let { vm.updateInfo[it] }
                 DashboardScreen(
                     paddingValues = padding,
                     rootAvailable = vm.rootAvailable,
                     status = vm.status,
+                    cores = vm.cores,
+                    activeUpdate = activeUpdate,
                     onStart = { vm.startService() },
                     onStop = { vm.stopService() },
                     onRestart = { vm.restartService() },
                     onAutostartChange = { vm.setAutostart(it) },
+                    onActivateCore = { id -> vm.activateCore(id) },
+                    onCheckActiveCoreUpdate = { vm.checkActiveCoreUpdate() },
                 )
             }
             composable(NavItem.CORES.route) {
@@ -221,13 +226,30 @@ fun DanmuManagerApp(applicationContext: Context) {
             }
             composable(NavItem.SETTINGS.route) {
                 val token by vm.githubToken.collectAsStateWithLifecycle()
+                val davUrl by vm.webDavUrl.collectAsStateWithLifecycle()
+                val davUser by vm.webDavUsername.collectAsStateWithLifecycle()
+                val davPass by vm.webDavPassword.collectAsStateWithLifecycle()
+                val davPath by vm.webDavPath.collectAsStateWithLifecycle()
                 SettingsScreen(
                     paddingValues = padding,
                     rootAvailable = vm.rootAvailable,
-                    githubToken = token,
                     logAutoCleanDays = logIntervalDays,
+                    githubToken = token,
+                    webDavUrl = davUrl,
+                    webDavUsername = davUser,
+                    webDavPassword = davPass,
+                    webDavPath = davPath,
                     onSetLogAutoCleanDays = { days -> vm.setLogCleanIntervalDays(days) },
                     onSetGithubToken = { t -> vm.setGithubToken(t) },
+                    onSetWebDavSettings = { url, user, pass, path ->
+                        vm.setWebDavSettings(url, user, pass, path)
+                    },
+                    onLoadEnv = { cb -> vm.loadEnvFile(cb) },
+                    onSaveEnv = { text -> vm.saveEnvFile(text) },
+                    onExportEnvToUri = { uri -> vm.exportEnvToUri(uri) },
+                    onImportEnvFromUri = { uri -> vm.importEnvFromUri(uri) },
+                    onExportEnvToWebDav = { vm.exportEnvToWebDav() },
+                    onImportEnvFromWebDav = { vm.importEnvFromWebDav() },
                 )
             }
         }

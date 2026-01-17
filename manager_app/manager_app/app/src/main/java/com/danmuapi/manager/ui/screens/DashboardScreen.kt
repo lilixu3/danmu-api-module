@@ -1,18 +1,25 @@
 package com.danmuapi.manager.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -21,14 +28,24 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.danmuapi.manager.data.CoreUpdateInfo
+import com.danmuapi.manager.data.model.CoreListResponse
+import com.danmuapi.manager.data.model.CoreMeta
 import com.danmuapi.manager.data.model.StatusResponse
 
 @Composable
@@ -36,22 +53,33 @@ fun DashboardScreen(
     paddingValues: PaddingValues,
     rootAvailable: Boolean?,
     status: StatusResponse?,
+    cores: CoreListResponse?,
+    activeUpdate: CoreUpdateInfo?,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit,
     onAutostartChange: (Boolean) -> Unit,
+    onActivateCore: (String) -> Unit,
+    onCheckActiveCoreUpdate: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .padding(paddingValues)
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         RootCard(rootAvailable = rootAvailable)
 
         ModuleCard(status = status)
         ServiceCard(status = status, onStart = onStart, onStop = onStop, onRestart = onRestart)
-        CoreCard(status = status)
+        CoreCard(
+            status = status,
+            cores = cores,
+            activeUpdate = activeUpdate,
+            onActivateCore = onActivateCore,
+            onCheckActiveUpdate = onCheckActiveCoreUpdate,
+        )
         AutostartCard(status = status, onAutostartChange = onAutostartChange)
     }
 }
@@ -174,14 +202,93 @@ private fun ServiceCard(
 }
 
 @Composable
-private fun CoreCard(status: StatusResponse?) {
+private fun CoreCard(
+    status: StatusResponse?,
+    cores: CoreListResponse?,
+    activeUpdate: CoreUpdateInfo?,
+    onActivateCore: (String) -> Unit,
+    onCheckActiveUpdate: () -> Unit,
+) {
     val core = status?.activeCore
+    val activeId = status?.activeCoreId
+
+    val list = cores?.cores.orEmpty()
+
+    var showSwitch by remember { mutableStateOf(false) }
+    var selectedId by remember(activeId, list.size) {
+        mutableStateOf(activeId ?: list.firstOrNull()?.id.orEmpty())
+    }
+
+    if (showSwitch) {
+        AlertDialog(
+            onDismissRequest = { showSwitch = false },
+            title = { Text("切换核心") },
+            text = {
+                if (list.isEmpty()) {
+                    Text("暂无已安装核心")
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        list.forEach { c ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedId = c.id }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                RadioButton(
+                                    selected = c.id == selectedId,
+                                    onClick = { selectedId = c.id },
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = c.repo,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    val ver = c.version?.takeIf { it.isNotBlank() } ?: "-"
+                                    Text(
+                                        text = "Ref: ${c.ref} · v$ver",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                if (c.id == activeId) {
+                                    AssistChip(onClick = {}, label = { Text("当前") })
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSwitch = false
+                        if (selectedId.isNotBlank()) onActivateCore(selectedId)
+                    },
+                    enabled = selectedId.isNotBlank() && selectedId != activeId,
+                ) { Text("切换") }
+            },
+            dismissButton = { TextButton(onClick = { showSwitch = false }) { Text("取消") } },
+        )
+    }
+
     Card {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(text = "当前核心", style = MaterialTheme.typography.titleMedium)
             if (core == null) {
@@ -197,10 +304,57 @@ private fun CoreCard(status: StatusResponse?) {
                 Text(text = "版本: ${core.version ?: "-"}", style = MaterialTheme.typography.bodyMedium)
                 val sha = core.shaShort ?: core.sha
                 if (!sha.isNullOrBlank()) {
-                    Text(text = "Commit: $sha", style = MaterialTheme.typography.bodySmall)
+                    Text(text = "Commit: $sha", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 }
                 if (!core.installedAt.isNullOrBlank()) {
                     Text(text = "安装时间: ${core.installedAt}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            // Active core update hint
+            if (core != null) {
+                if (activeUpdate == null) {
+                    Text(text = "尚未检查更新", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    val remoteVer = activeUpdate.latestVersion
+                    val remoteShaShort = activeUpdate.latestCommit?.sha?.take(7)
+                    val text = if (activeUpdate.updateAvailable) {
+                        "可更新" + (remoteVer?.let { "：v$it" } ?: "")
+                    } else {
+                        "已是最新"
+                    }
+                    Text(text = text, style = MaterialTheme.typography.bodyMedium)
+                    if (!remoteShaShort.isNullOrBlank()) {
+                        Text(
+                            text = "Remote: $remoteShaShort",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = { showSwitch = true },
+                    enabled = list.isNotEmpty(),
+                ) {
+                    Icon(Icons.Filled.SwapHoriz, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("切换")
+                }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = onCheckActiveUpdate,
+                    enabled = core != null,
+                ) {
+                    Icon(Icons.Filled.SystemUpdate, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("检查更新")
                 }
             }
         }

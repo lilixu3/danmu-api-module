@@ -42,6 +42,10 @@ class DanmuRepository(
 
     suspend fun tailLog(path: String, lines: Int = 200): String? = cli.tailLog(path, lines)
 
+    suspend fun readEnvFile(): String? = cli.readEnvFile()
+
+    suspend fun writeEnvFile(content: String): Boolean = cli.writeEnvFile(content)
+
     suspend fun checkUpdate(core: CoreMeta, token: String?): CoreUpdateInfo {
         if (core.repo.isBlank() || core.ref.isBlank()) {
             return CoreUpdateInfo()

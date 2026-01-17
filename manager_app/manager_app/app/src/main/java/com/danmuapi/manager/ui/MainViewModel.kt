@@ -1,6 +1,7 @@
 package com.danmuapi.manager.ui
 
 import android.content.Context
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -12,20 +13,26 @@ import com.danmuapi.manager.data.SettingsRepository
 import com.danmuapi.manager.data.model.CoreListResponse
 import com.danmuapi.manager.data.model.LogsResponse
 import com.danmuapi.manager.data.model.StatusResponse
+import com.danmuapi.manager.network.WebDavClient
+import com.danmuapi.manager.network.WebDavResult
 import com.danmuapi.manager.root.RootShell
 import com.danmuapi.manager.worker.LogCleanupScheduler
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel(
     private val appContext: Context,
     private val repo: DanmuRepository,
     private val settings: SettingsRepository,
 ) : ViewModel() {
+
+    private val webDavClient = WebDavClient()
 
     // UI state
     var rootAvailable: Boolean? by mutableStateOf(null)
@@ -55,6 +62,18 @@ class MainViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     val githubToken: StateFlow<String> = settings.githubToken
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    val webDavUrl: StateFlow<String> = settings.webDavUrl
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    val webDavUsername: StateFlow<String> = settings.webDavUsername
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    val webDavPassword: StateFlow<String> = settings.webDavPassword
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    val webDavPath: StateFlow<String> = settings.webDavPath
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     val snackbars = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -206,6 +225,164 @@ class MainViewModel(
         viewModelScope.launch {
             settings.setGithubToken(token)
             snackbars.tryEmit("Token 已保存")
+        }
+    }
+
+    fun setWebDavSettings(url: String, username: String, password: String, path: String) {
+        viewModelScope.launch {
+            settings.setWebDavUrl(url)
+            settings.setWebDavUsername(username)
+            settings.setWebDavPassword(password)
+            settings.setWebDavPath(path)
+            snackbars.tryEmit("WebDAV 设置已保存")
+        }
+    }
+
+    fun loadEnvFile(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val text = withBusy("读取配置中…") {
+                repo.readEnvFile()
+            }
+            if (text == null) {
+                snackbars.tryEmit("读取配置失败（请确认 Root / 模块状态）")
+                onResult("")
+            } else {
+                onResult(text)
+            }
+        }
+    }
+
+    fun saveEnvFile(content: String) {
+        viewModelScope.launch {
+            val ok = withBusy("保存配置中…") {
+                repo.writeEnvFile(content)
+            }
+            snackbars.tryEmit(if (ok) "配置已保存（重启服务后生效）" else "保存配置失败")
+        }
+    }
+
+    fun exportEnvToUri(uri: Uri) {
+        viewModelScope.launch {
+            val ok = withBusy("导出配置到本地…") {
+                val text = repo.readEnvFile() ?: return@withBusy false
+                withContext(Dispatchers.IO) {
+                    try {
+                        appContext.contentResolver.openOutputStream(uri)?.use { os ->
+                            os.write(text.toByteArray(Charsets.UTF_8))
+                            os.flush()
+                        } != null
+                    } catch (_: Throwable) {
+                        false
+                    }
+                }
+            }
+            snackbars.tryEmit(if (ok) "已导出配置" else "导出失败")
+        }
+    }
+
+    fun importEnvFromUri(uri: Uri) {
+        viewModelScope.launch {
+            val ok = withBusy("从本地导入配置…") {
+                val text = withContext(Dispatchers.IO) {
+                    try {
+                        appContext.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { br ->
+                            br.readText()
+                        }
+                    } catch (_: Throwable) {
+                        null
+                    }
+                } ?: return@withBusy false
+
+                repo.writeEnvFile(text)
+            }
+            snackbars.tryEmit(if (ok) "已导入配置（重启服务后生效）" else "导入失败")
+        }
+    }
+
+    fun exportEnvToWebDav() {
+        viewModelScope.launch {
+            val baseUrl = webDavUrl.value.trim()
+            val remotePath = webDavPath.value.trim()
+            val isFullUrl = remotePath.startsWith("http://") || remotePath.startsWith("https://")
+            if (remotePath.isBlank() || (!isFullUrl && baseUrl.isBlank())) {
+                snackbars.tryEmit("请先在设置中填写 WebDAV 地址与远程路径（或直接粘贴完整文件URL）")
+                return@launch
+            }
+
+            val user = webDavUsername.value
+            val pass = webDavPassword.value
+
+            val result = withBusy("上传配置到 WebDAV…") {
+                val text = repo.readEnvFile() ?: return@withBusy WebDavResult.Error("读取配置失败")
+                webDavClient.uploadText(
+                    baseUrl = baseUrl,
+                    remotePath = remotePath,
+                    username = user,
+                    password = pass,
+                    text = text,
+                )
+            }
+
+            when (result) {
+                is WebDavResult.Success -> snackbars.tryEmit("已上传到 WebDAV（HTTP ${result.code}）")
+                is WebDavResult.Error -> snackbars.tryEmit("WebDAV 上传失败：${result.message}")
+            }
+        }
+    }
+
+    fun importEnvFromWebDav() {
+        viewModelScope.launch {
+            val baseUrl = webDavUrl.value.trim()
+            val remotePath = webDavPath.value.trim()
+            val isFullUrl = remotePath.startsWith("http://") || remotePath.startsWith("https://")
+            if (remotePath.isBlank() || (!isFullUrl && baseUrl.isBlank())) {
+                snackbars.tryEmit("请先在设置中填写 WebDAV 地址与远程路径（或直接粘贴完整文件URL）")
+                return@launch
+            }
+
+            val user = webDavUsername.value
+            val pass = webDavPassword.value
+
+            val ok = withBusy("从 WebDAV 导入配置…") {
+                val download = webDavClient.downloadText(
+                    baseUrl = baseUrl,
+                    remotePath = remotePath,
+                    username = user,
+                    password = pass,
+                )
+
+                when (download.result) {
+                    is WebDavResult.Error -> return@withBusy false
+                    else -> {
+                        val text = download.text ?: return@withBusy false
+                        repo.writeEnvFile(text)
+                    }
+                }
+            }
+
+            snackbars.tryEmit(if (ok) "已从 WebDAV 导入配置（重启服务后生效）" else "WebDAV 导入失败")
+        }
+    }
+
+    fun checkActiveCoreUpdate() {
+        viewModelScope.launch {
+            val core = status?.activeCore
+            if (core == null || core.repo.isBlank() || core.ref.isBlank()) {
+                snackbars.tryEmit("未检测到当前核心")
+                return@launch
+            }
+
+            val token = githubToken.value
+            val info = withBusy("正在检查当前核心更新…") {
+                repo.checkUpdate(core, token)
+            }
+
+            val id = core.id
+            if (id.isNotBlank()) {
+                updateInfo = updateInfo.toMutableMap().apply { put(id, info) }.toMap()
+            }
+
+            snackbars.tryEmit(if (info.updateAvailable) "当前核心有更新" else "当前核心已是最新")
         }
     }
 
