@@ -38,9 +38,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
+import com.danmuapi.manager.ui.components.ManagerCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -143,10 +141,7 @@ private fun ServiceStatusCard(
     val moduleEnabled = status?.module?.enabled
     val version = status?.module?.version ?: "-"
 
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp),
-    ) {
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -346,7 +341,7 @@ private fun AccessInfoCard(
     val localUrl = buildHttpUrl(host = "127.0.0.1", port = port, token = token)
     val lanUrl = if (lanIp.isBlank()) "" else buildHttpUrl(host = lanIp, port = port, token = token)
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -603,7 +598,7 @@ private fun CurrentCoreCard(
         )
     }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -707,7 +702,7 @@ private fun AutostartCard(
 ) {
     val on = status?.autostart == "on"
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

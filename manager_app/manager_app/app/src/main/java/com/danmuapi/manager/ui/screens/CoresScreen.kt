@@ -16,7 +16,7 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
+import com.danmuapi.manager.ui.components.ManagerCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -169,7 +169,7 @@ fun CoresScreen(
         val activeId = cores?.activeCoreId
 
         if (list.isEmpty()) {
-            Card {
+            ManagerCard {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -207,7 +207,7 @@ private fun CoreItem(
     onUpdate: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card {
+    ManagerCard {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
