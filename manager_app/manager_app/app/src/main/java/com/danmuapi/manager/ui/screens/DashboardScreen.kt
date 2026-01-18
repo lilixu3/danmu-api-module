@@ -433,7 +433,7 @@ private fun AccessInfoCard(
                         modifier = Modifier.size(20.dp),
                     )
                     Text(
-                        text = "提示：服务当前已停止。请先在上方点击"启动"，再使用以上地址访问。",
+                        text = "提示：服务当前已停止。请先在上方点击\"启动\"，再使用以上地址访问。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
