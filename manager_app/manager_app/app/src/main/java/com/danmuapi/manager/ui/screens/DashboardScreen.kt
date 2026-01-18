@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import com.danmuapi.manager.ui.components.ManagerCard
@@ -645,7 +646,7 @@ private fun ModuleUpdateDialog(
                                 color = MaterialTheme.colorScheme.errorContainer,
                             ) {
                                 Text(
-                                    text = "未找到可下载的安装包，请点击下方"发布页"手动下载。",
+                                    text = "未找到可下载的安装包，请点击下方\"发布页\"手动下载。",
                                     modifier = Modifier.padding(12.dp),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
