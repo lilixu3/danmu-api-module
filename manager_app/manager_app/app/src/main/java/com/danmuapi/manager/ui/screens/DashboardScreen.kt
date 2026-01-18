@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import com.danmuapi.manager.ui.components.ManagerCard
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,6 +67,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.data.CoreUpdateInfo
 import com.danmuapi.manager.data.model.CoreListResponse
+import com.danmuapi.manager.data.model.ModuleUpdateInfo
+import com.danmuapi.manager.data.model.ReleaseAsset
 import com.danmuapi.manager.data.model.StatusResponse
 import com.danmuapi.manager.util.rememberLanIpv4Addresses
 
@@ -79,12 +82,16 @@ fun DashboardScreen(
     apiHost: String,
     cores: CoreListResponse?,
     activeUpdate: CoreUpdateInfo?,
+    moduleUpdateInfo: ModuleUpdateInfo?,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit,
     onAutostartChange: (Boolean) -> Unit,
     onActivateCore: (String) -> Unit,
     onCheckActiveCoreUpdate: () -> Unit,
+    onCheckModuleUpdate: () -> Unit,
+    onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
+    onInstallModuleZip: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -102,6 +109,10 @@ fun DashboardScreen(
             onStart = onStart,
             onStop = onStop,
             onRestart = onRestart,
+            moduleUpdateInfo = moduleUpdateInfo,
+            onCheckModuleUpdate = onCheckModuleUpdate,
+            onDownloadModuleZip = onDownloadModuleZip,
+            onInstallModuleZip = onInstallModuleZip,
         )
 
         AccessInfoCard(
@@ -135,11 +146,77 @@ private fun ServiceStatusCard(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit,
+    moduleUpdateInfo: ModuleUpdateInfo?,
+    onCheckModuleUpdate: () -> Unit,
+    onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
+    onInstallModuleZip: (String) -> Unit,
 ) {
     val running = status?.service?.running == true
     val pid = status?.service?.pid
     val moduleEnabled = status?.module?.enabled
     val version = status?.module?.version ?: "-"
+
+    val ctx = LocalContext.current
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var selectedAssetName by remember { mutableStateOf<String?>(null) }
+    var downloadProgress by remember { mutableStateOf(0) }
+    var downloadedPath by remember { mutableStateOf<String?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+
+    if (showUpdateDialog) {
+        ModuleUpdateDialog(
+            info = moduleUpdateInfo,
+            currentVersion = version,
+            selectedAssetName = selectedAssetName,
+            downloadProgress = downloadProgress,
+            downloading = downloading,
+            downloadedPath = downloadedPath,
+            onDismiss = {
+                showUpdateDialog = false
+                downloading = false
+                downloadProgress = 0
+                downloadedPath = null
+            },
+            onRefresh = {
+                // Reset stale download state when re-checking.
+                downloading = false
+                downloadProgress = 0
+                downloadedPath = null
+                onCheckModuleUpdate()
+            },
+            onSelectAsset = { selectedAssetName = it },
+            onOpenReleasePage = {
+                openUrl(ctx, "https://github.com/lilixu3/danmu-api-module/releases")
+            },
+            onDownload = { asset ->
+                if (downloading) return@ModuleUpdateDialog
+                downloading = true
+                downloadProgress = 0
+                downloadedPath = null
+                // NOTE: onDownloadModuleZip is a function type; Kotlin does not allow named arguments here.
+                onDownloadModuleZip(
+                    asset,
+                    { p -> downloadProgress = p.coerceIn(0, 100) },
+                    { path ->
+                        downloading = false
+                        downloadedPath = path
+                        if (path == null) {
+                            Toast.makeText(ctx, "下载失败", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                )
+            },
+            onInstall = {
+                val path = downloadedPath
+                if (path.isNullOrBlank()) {
+                    Toast.makeText(ctx, "请先下载安装包", Toast.LENGTH_SHORT).show()
+                } else {
+                    showUpdateDialog = false
+                    onInstallModuleZip(path)
+                }
+            },
+        )
+    }
 
     ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -154,11 +231,34 @@ private fun ServiceStatusCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "服务状态",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "服务状态",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        // A subtle update-check button next to the title.
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            IconButton(
+                                modifier = Modifier.size(34.dp),
+                                onClick = {
+                                    showUpdateDialog = true
+                                    onCheckModuleUpdate()
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Filled.SystemUpdate,
+                                    contentDescription = "检查模块更新",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
                     Text(
                         text = "模块 v$version",
                         style = MaterialTheme.typography.bodyMedium,
@@ -318,6 +418,210 @@ private fun StatusChip(
             )
         }
     }
+}
+
+@Composable
+private fun ModuleUpdateDialog(
+    info: ModuleUpdateInfo?,
+    currentVersion: String,
+    selectedAssetName: String?,
+    downloadProgress: Int,
+    downloading: Boolean,
+    downloadedPath: String?,
+    onDismiss: () -> Unit,
+    onRefresh: () -> Unit,
+    onSelectAsset: (String) -> Unit,
+    onOpenReleasePage: () -> Unit,
+    onDownload: (ReleaseAsset) -> Unit,
+    onInstall: () -> Unit,
+) {
+    val release = info?.latestRelease
+    val assets = release?.assets.orEmpty().let { list ->
+        val zips = list.filter { it.name.lowercase().endsWith(".zip") }
+        if (zips.isNotEmpty()) zips else list
+    }
+
+    // Pick a sensible default asset once we have release info.
+    androidx.compose.runtime.LaunchedEffect(release?.tagName, assets.size) {
+        if (selectedAssetName.isNullOrBlank() && assets.isNotEmpty()) {
+            onSelectAsset(assets.first().name)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("模块更新") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "当前版本：v${currentVersion}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+
+                if (info == null) {
+                    Text(
+                        text = "正在获取更新信息…（如果长时间没有响应，可点右下角刷新）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (release == null || release.tagName.isBlank()) {
+                    Text(
+                        text = "未获取到发布信息",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "最新版本：${release.tagName}",
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                        )
+                        val pub = release.publishedAt.takeIf { it.isNotBlank() }
+                        if (!pub.isNullOrBlank()) {
+                            Text(
+                                text = "发布时间：$pub",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (info.hasUpdate) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                    ) {
+                        Text(
+                            text = if (info.hasUpdate) "可更新" else "已是最新",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (info.hasUpdate) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                }
+
+                if (release.body.isNotBlank()) {
+                    Text(
+                        text = release.body.trim(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 14,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                if (info.hasUpdate) {
+                    if (assets.isEmpty()) {
+                        Text(
+                            text = "未找到可下载的安装包（请点“发布页”手动下载）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Text(
+                            text = "选择安装包",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            assets.forEach { a ->
+                                val checked = a.name == selectedAssetName
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onSelectAsset(a.name) }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    RadioButton(
+                                        selected = checked,
+                                        onClick = { onSelectAsset(a.name) },
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = a.name,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        val mb = (a.size / 1024.0 / 1024.0)
+                                        Text(
+                                            text = String.format("%.1f MB", mb),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (downloading) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            LinearProgressIndicator(progress = downloadProgress / 100f)
+                            Text(
+                                text = "下载中… ${downloadProgress.coerceIn(0, 100)}%",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else if (!downloadedPath.isNullOrBlank()) {
+                        Text(
+                            text = "安装包已下载，可点击右下角“安装”开始刷入。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                // (rest of dialog content continues)
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onOpenReleasePage) {
+                    Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("发布页")
+                }
+                TextButton(onClick = onRefresh) { Text("刷新") }
+
+                if (info?.hasUpdate == true && assets.isNotEmpty()) {
+                    val selected = assets.firstOrNull { it.name == selectedAssetName } ?: assets.firstOrNull()
+                    if (!downloadedPath.isNullOrBlank()) {
+                        FilledTonalButton(onClick = onInstall) { Text("安装") }
+                    } else {
+                        FilledTonalButton(
+                            onClick = { if (selected != null) onDownload(selected) },
+                            enabled = !downloading && selected != null,
+                        ) { Text("下载") }
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
 }
 
 @Composable

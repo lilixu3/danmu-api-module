@@ -195,12 +195,18 @@ fun DanmuManagerApp(applicationContext: Context) {
                     apiHost = vm.apiHost,
                     cores = vm.cores,
                     activeUpdate = activeUpdate,
+                    moduleUpdateInfo = vm.moduleUpdateInfo,
                     onStart = { vm.startService() },
                     onStop = { vm.stopService() },
                     onRestart = { vm.restartService() },
                     onAutostartChange = { vm.setAutostart(it) },
                     onActivateCore = { id -> vm.activateCore(id) },
                     onCheckActiveCoreUpdate = { vm.checkActiveCoreUpdate() },
+                    onCheckModuleUpdate = { vm.checkModuleUpdate() },
+                    onDownloadModuleZip = { asset, onProgress, onComplete ->
+                        vm.downloadModuleZip(asset, onProgress, onComplete)
+                    },
+                    onInstallModuleZip = { path -> vm.installModuleZip(path) },
                 )
             }
             composable(NavItem.CORES.route) {
