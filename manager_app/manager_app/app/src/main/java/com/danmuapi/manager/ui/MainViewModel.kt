@@ -12,6 +12,7 @@ import com.danmuapi.manager.data.DanmuRepository
 import com.danmuapi.manager.data.SettingsRepository
 import com.danmuapi.manager.data.model.CoreListResponse
 import com.danmuapi.manager.data.model.LogsResponse
+import com.danmuapi.manager.data.model.ModuleUpdateInfo  // 添加
 import com.danmuapi.manager.data.model.StatusResponse
 import com.danmuapi.manager.network.WebDavClient
 import com.danmuapi.manager.network.WebDavResult
@@ -53,6 +54,10 @@ class MainViewModel(
     var apiPort: Int by mutableStateOf(9321)
         private set
     var apiHost: String by mutableStateOf("0.0.0.0")
+        private set
+
+    // 添加以下内容
+    var moduleUpdateInfo: ModuleUpdateInfo? by mutableStateOf(null)
         private set
 
     var busy: Boolean by mutableStateOf(false)
@@ -483,6 +488,116 @@ class MainViewModel(
 
             val n = map.values.count { it.updateAvailable }
             snackbars.tryEmit(if (n > 0) "发现 ${n} 个核心可更新" else "已是最新")
+        }
+    }
+    fun checkModuleUpdate() {
+        viewModelScope.launch {
+            val currentVersion = status?.module?.version
+            moduleUpdateInfo = withBusy("检查模块更新中…") {
+                repo.checkModuleUpdate(currentVersion)
+            }
+            
+            val info = moduleUpdateInfo
+            if (info != null) {
+                if (info.hasUpdate) {
+                    snackbars.tryEmit("发现模块更新：${info.latestRelease?.tagName}")
+                } else {
+                    snackbars.tryEmit("模块已是最新版本")
+                }
+            } else {
+                snackbars.tryEmit("检查更新失败")
+            }
+        }
+    }
+
+    fun downloadModuleZip(asset: com.danmuapi.manager.data.model.ReleaseAsset, onProgress: (Int) -> Unit, onComplete: (String?) -> Unit) {
+        viewModelScope.launch {
+            withBusy("下载模块中：${asset.name}") {
+                try {
+                    val cacheDir = appContext.cacheDir
+                    val file = java.io.File(cacheDir, asset.name)
+                    
+                    withContext(Dispatchers.IO) {
+                        val client = okhttp3.OkHttpClient()
+                        val request = okhttp3.Request.Builder()
+                            .url(asset.downloadUrl)
+                            .build()
+                        
+                        client.newCall(request).execute().use { response ->
+                            if (!response.isSuccessful) {
+                                onComplete(null)
+                                return@withContext
+                            }
+                            
+                            val body = response.body ?: run {
+                                onComplete(null)
+                                return@withContext
+                            }
+                            
+                            val totalBytes = body.contentLength()
+                            var downloadedBytes = 0L
+                            
+                            file.outputStream().use { output ->
+                                body.byteStream().use { input ->
+                                    val buffer = ByteArray(8192)
+                                    var bytes: Int
+                                    while (input.read(buffer).also { bytes = it } != -1) {
+                                        output.write(buffer, 0, bytes)
+                                        downloadedBytes += bytes
+                                        if (totalBytes > 0) {
+                                            val progress = (downloadedBytes * 100 / totalBytes).toInt()
+                                            withContext(Dispatchers.Main) {
+                                                onProgress(progress)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            onComplete(file.absolutePath)
+                        }
+                    }
+                } catch (e: Exception) {
+                    snackbars.tryEmit("下载失败：${e.message}")
+                    onComplete(null)
+                }
+            }
+        }
+    }
+
+    fun installModuleZip(zipPath: String) {
+        viewModelScope.launch {
+            val ok = withBusy("安装模块中…") {
+                val cmd = """
+                    MODPATH="/data/adb/modules/danmu_api_server"
+                    rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
+                    if [ -d "${'$'}MODPATH" ]; then
+                        mv "${'$'}MODPATH" "${'$'}MODPATH.bak"
+                    fi
+                    mkdir -p "${'$'}MODPATH"
+                    unzip -o "$zipPath" -d "${'$'}MODPATH" >/dev/null 2>&1
+                    if [ ${'$'}? -eq 0 ]; then
+                        rm -rf "${'$'}MODPATH.bak"
+                        echo "success"
+                    else
+                        rm -rf "${'$'}MODPATH"
+                        if [ -d "${'$'}MODPATH.bak" ]; then
+                            mv "${'$'}MODPATH.bak" "${'$'}MODPATH"
+                        fi
+                        echo "failed"
+                    fi
+                """.trimIndent()
+                
+                val res = RootShell.runSu(cmd, timeoutMs = 120_000)
+                res.stdout.contains("success")
+            }
+            
+            if (ok) {
+                snackbars.tryEmit("模块安装成功！重启设备后生效。")
+                refreshAllInternal()
+            } else {
+                snackbars.tryEmit("模块安装失败")
+            }
         }
     }
 }
