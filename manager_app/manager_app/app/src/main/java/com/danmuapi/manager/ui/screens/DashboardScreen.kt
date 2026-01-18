@@ -4,9 +4,9 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -141,30 +141,15 @@ private fun OverviewCard(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                AssistChip(
-                    onClick = {},
-                    label = { Text(if (running) "运行中" else "已停止") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = if (running) Icons.Filled.CheckCircle else Icons.Filled.Error,
-                            contentDescription = null,
-                        )
-                    },
-                )
             }
 
-            // NOTE: “服务状态”已合并到右上角的运行状态 Chip。
-            // 这里保留 Root / 模块两个小卡片，并支持横向滚动以避免在小屏幕上被挤压变形。
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                StatusChip(label = "Root", ok = rootAvailable)
-                StatusChip(label = "模块", ok = moduleEnabled)
-            }
+            // 将“运行状态 / Root 状态 / 模块状态”放到同一行。
+            // 不换行：空间不足时三项会自适应变窄（文本省略），而不是换行或被挤压变形。
+            StatusChipsRow(
+                running = running,
+                rootAvailable = rootAvailable,
+                moduleEnabled = moduleEnabled,
+            )
 
             Text(
                 text = if (running) "PID: ${pid ?: "?"}" else "服务未运行",
@@ -197,9 +182,62 @@ private fun OverviewCard(
     }
 }
 
+@Composable
+private fun StatusChipsRow(
+    running: Boolean,
+    rootAvailable: Boolean?,
+    moduleEnabled: Boolean?,
+) {
+    // 不换行：空间不足时三项按比例“变小”（宽度变窄，文本省略），而不是换行或挤压变形。
+    // 宽度充足时保持自然紧凑尺寸，避免三项被拉得过宽。
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val compact = maxWidth < 360.dp
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val w = if (compact) Modifier.weight(1f) else Modifier
+
+            AssistChip(
+                modifier = w,
+                onClick = {},
+                label = {
+                    Text(
+                        text = if (running) "运行中" else "已停止",
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (running) Icons.Filled.CheckCircle else Icons.Filled.Error,
+                        contentDescription = null,
+                    )
+                },
+            )
+
+            StatusChip(
+                modifier = w,
+                label = "Root",
+                ok = rootAvailable,
+            )
+
+            StatusChip(
+                modifier = w,
+                label = "模块",
+                ok = moduleEnabled,
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StatusChip(label: String, ok: Boolean?) {
+private fun StatusChip(modifier: Modifier = Modifier, label: String, ok: Boolean?) {
     // Keep these chips compact to avoid squeezing on small screens.
     val statusText = when (ok) {
         null -> "…"
@@ -208,8 +246,17 @@ private fun StatusChip(label: String, ok: Boolean?) {
     }
     val text = "$label·$statusText"
     AssistChip(
+        modifier = modifier,
         onClick = {},
-        label = { Text(text) },
+        label = {
+            Text(
+                text = text,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        },
         leadingIcon = {
             val icon = when (ok) {
                 true -> Icons.Filled.CheckCircle
