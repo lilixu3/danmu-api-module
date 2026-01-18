@@ -162,26 +162,87 @@ private fun ServiceStatusCard(
     var downloadProgress by remember { mutableStateOf(0) }
     var downloadedPath by remember { mutableStateOf<String?>(null) }
     var downloading by remember { mutableStateOf(false) }
+    var showDownloadProgress by remember { mutableStateOf(false) }
+    var showDownloadSuccess by remember { mutableStateOf(false) }
+
+    // 下载进度弹窗
+    if (showDownloadProgress) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("下载中") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = selectedAssetName ?: "模块安装包",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    LinearProgressIndicator(
+                        progress = downloadProgress / 100f,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = "${downloadProgress}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = { },
+        )
+    }
+
+    // 下载成功弹窗
+    if (showDownloadSuccess) {
+        AlertDialog(
+            onDismissRequest = { showDownloadSuccess = false },
+            title = { Text("下载完成") },
+            text = {
+                Text("安装包已下载完成，是否立即安装？\n\n安装后建议重启设备使模块生效。")
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            showDownloadSuccess = false
+                            val path = downloadedPath
+                            if (!path.isNullOrBlank()) {
+                                onInstallModuleZip(path)
+                            }
+                        },
+                    ) {
+                        Text("安装")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDownloadSuccess = false }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
 
     if (showUpdateDialog) {
         ModuleUpdateDialog(
             info = moduleUpdateInfo,
             currentVersion = version,
             selectedAssetName = selectedAssetName,
-            downloadProgress = downloadProgress,
-            downloading = downloading,
-            downloadedPath = downloadedPath,
             onDismiss = {
                 showUpdateDialog = false
                 downloading = false
                 downloadProgress = 0
                 downloadedPath = null
+                selectedAssetName = null
             },
             onRefresh = {
                 // Reset stale download state when re-checking.
                 downloading = false
                 downloadProgress = 0
                 downloadedPath = null
+                selectedAssetName = null
                 onCheckModuleUpdate()
             },
             onSelectAsset = { selectedAssetName = it },
@@ -190,30 +251,27 @@ private fun ServiceStatusCard(
             },
             onDownload = { asset ->
                 if (downloading) return@ModuleUpdateDialog
+                selectedAssetName = asset.name
                 downloading = true
                 downloadProgress = 0
                 downloadedPath = null
-                // NOTE: onDownloadModuleZip is a function type; Kotlin does not allow named arguments here.
+                showUpdateDialog = false
+                showDownloadProgress = true
+                
                 onDownloadModuleZip(
                     asset,
                     { p -> downloadProgress = p.coerceIn(0, 100) },
                     { path ->
                         downloading = false
                         downloadedPath = path
+                        showDownloadProgress = false
                         if (path == null) {
                             Toast.makeText(ctx, "下载失败", Toast.LENGTH_SHORT).show()
+                        } else {
+                            showDownloadSuccess = true
                         }
                     },
                 )
-            },
-            onInstall = {
-                val path = downloadedPath
-                if (path.isNullOrBlank()) {
-                    Toast.makeText(ctx, "请先下载安装包", Toast.LENGTH_SHORT).show()
-                } else {
-                    showUpdateDialog = false
-                    onInstallModuleZip(path)
-                }
             },
         )
     }
@@ -237,33 +295,49 @@ private fun ServiceStatusCard(
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                         )
-                        Spacer(Modifier.width(8.dp))
-                        // A subtle update-check button next to the title.
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        Spacer(Modifier.width(12.dp))
+                        // 优化后的更新图标按钮 - 更小更低调
+                        val hasUpdate = moduleUpdateInfo?.hasUpdate == true
+                        IconButton(
+                            modifier = Modifier.size(28.dp),
+                            onClick = {
+                                showUpdateDialog = true
+                                onCheckModuleUpdate()
+                            },
                         ) {
-                            IconButton(
-                                modifier = Modifier.size(34.dp),
-                                onClick = {
-                                    showUpdateDialog = true
-                                    onCheckModuleUpdate()
+                            Icon(
+                                Icons.Filled.SystemUpdate,
+                                contentDescription = "检查模块更新",
+                                tint = if (hasUpdate) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                                 },
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "模块 v$version",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (moduleUpdateInfo?.hasUpdate == true) {
+                            Spacer(Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
                             ) {
-                                Icon(
-                                    Icons.Filled.SystemUpdate,
-                                    contentDescription = "检查模块更新",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp),
+                                Text(
+                                    text = "有更新",
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 )
                             }
                         }
                     }
-                    Text(
-                        text = "模块 v$version",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
                 
                 Surface(
@@ -425,15 +499,11 @@ private fun ModuleUpdateDialog(
     info: ModuleUpdateInfo?,
     currentVersion: String,
     selectedAssetName: String?,
-    downloadProgress: Int,
-    downloading: Boolean,
-    downloadedPath: String?,
     onDismiss: () -> Unit,
     onRefresh: () -> Unit,
     onSelectAsset: (String) -> Unit,
     onOpenReleasePage: () -> Unit,
     onDownload: (ReleaseAsset) -> Unit,
-    onInstall: () -> Unit,
 ) {
     val release = info?.latestRelease
     val assets = release?.assets.orEmpty().let { list ->
@@ -455,165 +525,213 @@ private fun ModuleUpdateDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp)
+                    .heightIn(max = 480.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    text = "当前版本：v${currentVersion}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                // 版本信息卡片
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = "当前版本：v${currentVersion}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        if (info != null && release != null && release.tagName.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "最新版本：${release.tagName}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (info.hasUpdate) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surface
+                                    },
+                                ) {
+                                    Text(
+                                        text = if (info.hasUpdate) "可更新" else "已是最新",
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (info.hasUpdate) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
 
                 if (info == null) {
-                    Text(
-                        text = "正在获取更新信息…（如果长时间没有响应，可点右下角刷新）",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        LinearProgressIndicator()
+                        Text(
+                            text = "正在获取更新信息…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 } else if (release == null || release.tagName.isBlank()) {
                     Text(
-                        text = "未获取到发布信息",
+                        text = "未获取到发布信息，请检查网络连接后重试。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    // 发布时间
+                    val pub = release.publishedAt.takeIf { it.isNotBlank() }
+                    if (!pub.isNullOrBlank()) {
                         Text(
-                            text = "最新版本：${release.tagName}",
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                        )
-                        val pub = release.publishedAt.takeIf { it.isNotBlank() }
-                        if (!pub.isNullOrBlank()) {
-                            Text(
-                                text = "发布时间：$pub",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = if (info.hasUpdate) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                    ) {
-                        Text(
-                            text = if (info.hasUpdate) "可更新" else "已是最新",
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (info.hasUpdate) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
-                }
-
-                if (release.body.isNotBlank()) {
-                    Text(
-                        text = release.body.trim(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 14,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-
-                if (info.hasUpdate) {
-                    if (assets.isEmpty()) {
-                        Text(
-                            text = "未找到可下载的安装包（请点“发布页”手动下载）",
+                            text = "发布时间：$pub",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    } else {
-                        Text(
-                            text = "选择安装包",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                        )
+                    }
+
+                    // 更新说明
+                    if (release.body.isNotBlank()) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            assets.forEach { a ->
-                                val checked = a.name == selectedAssetName
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onSelectAsset(a.name) }
-                                        .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    RadioButton(
-                                        selected = checked,
-                                        onClick = { onSelectAsset(a.name) },
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = a.name,
-                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        val mb = (a.size / 1024.0 / 1024.0)
-                                        Text(
-                                            text = String.format("%.1f MB", mb),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
+                            Text(
+                                text = "更新说明",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                            ) {
+                                Text(
+                                    text = release.body.trim(),
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 12,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+
+                    // 安装包选择
+                    if (info.hasUpdate) {
+                        if (assets.isEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.errorContainer,
+                            ) {
+                                Text(
+                                    text = "未找到可下载的安装包，请点击下方"发布页"手动下载。",
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "选择安装包",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    assets.forEach { a ->
+                                        val checked = a.name == selectedAssetName
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = if (checked) {
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.surfaceVariant
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .clickable { onSelectAsset(a.name) }
+                                                    .padding(12.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            ) {
+                                                RadioButton(
+                                                    selected = checked,
+                                                    onClick = { onSelectAsset(a.name) },
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = a.name,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                    val mb = (a.size / 1024.0 / 1024.0)
+                                                    Text(
+                                                        text = String.format("%.1f MB", mb),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-
-                    if (downloading) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            LinearProgressIndicator(progress = downloadProgress / 100f)
-                            Text(
-                                text = "下载中… ${downloadProgress.coerceIn(0, 100)}%",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    } else if (!downloadedPath.isNullOrBlank()) {
-                        Text(
-                            text = "安装包已下载，可点击右下角“安装”开始刷入。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                // (rest of dialog content continues)
                 }
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onOpenReleasePage) {
-                    Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("发布页")
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (info != null && release != null) {
+                    OutlinedButton(onClick = onOpenReleasePage) {
+                        Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("发布页", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
-                TextButton(onClick = onRefresh) { Text("刷新") }
+                
+                TextButton(onClick = onRefresh) {
+                    Text("刷新")
+                }
 
                 if (info?.hasUpdate == true && assets.isNotEmpty()) {
                     val selected = assets.firstOrNull { it.name == selectedAssetName } ?: assets.firstOrNull()
-                    if (!downloadedPath.isNullOrBlank()) {
-                        FilledTonalButton(onClick = onInstall) { Text("安装") }
-                    } else {
-                        FilledTonalButton(
-                            onClick = { if (selected != null) onDownload(selected) },
-                            enabled = !downloading && selected != null,
-                        ) { Text("下载") }
+                    FilledTonalButton(
+                        onClick = { if (selected != null) onDownload(selected) },
+                        enabled = selected != null,
+                    ) {
+                        Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("下载")
                     }
                 }
             }
