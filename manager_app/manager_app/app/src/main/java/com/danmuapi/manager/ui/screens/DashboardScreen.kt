@@ -39,11 +39,16 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.CircularProgressIndicator
 import com.danmuapi.manager.ui.components.ManagerCard
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -120,7 +125,7 @@ fun DashboardScreen(
             apiToken = apiToken,
             apiPort = apiPort,
             apiHost = apiHost,
-            serviceRunning = status?.service?.running == true,
+            serviceRunning = status?.service?.running,
         )
 
         CurrentCoreCard(
@@ -152,7 +157,7 @@ private fun ServiceStatusCard(
     onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
     onInstallModuleZip: (String) -> Unit,
 ) {
-    val running = status?.service?.running == true
+    val running: Boolean? = status?.service?.running
     val pid = status?.service?.pid
     val moduleEnabled = status?.module?.enabled
     val version = status?.module?.version ?: "-"
@@ -297,25 +302,34 @@ private fun ServiceStatusCard(
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.width(12.dp))
-                        // 优化后的更新图标按钮 - 更小更低调
+                        // 检查模块更新：更显眼但不过分突出（带图标 + 有更新时的小徽标提示）
                         val hasUpdate = moduleUpdateInfo?.hasUpdate == true
-                        IconButton(
-                            modifier = Modifier.size(28.dp),
+                        FilledTonalIconButton(
+                            modifier = Modifier.size(34.dp),
                             onClick = {
                                 showUpdateDialog = true
                                 onCheckModuleUpdate()
                             },
-                        ) {
-                            Icon(
-                                Icons.Filled.SystemUpdate,
-                                contentDescription = "检查模块更新",
-                                tint = if (hasUpdate) {
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = if (hasUpdate) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                },
+                                contentColor = if (hasUpdate) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    MaterialTheme.colorScheme.onSurfaceVariant
                                 },
-                                modifier = Modifier.size(16.dp),
-                            )
+                            ),
+                        ) {
+                            BadgedBox(badge = { if (hasUpdate) Badge() }) {
+                                Icon(
+                                    imageVector = Icons.Filled.SystemUpdate,
+                                    contentDescription = "检查模块更新",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -340,41 +354,57 @@ private fun ServiceStatusCard(
                         }
                     }
                 }
-                
+
+                val statusContainerColor = when (running) {
+                    true -> MaterialTheme.colorScheme.primaryContainer
+                    false -> MaterialTheme.colorScheme.errorContainer
+                    null -> MaterialTheme.colorScheme.surfaceVariant
+                }
+                val statusText = when (running) {
+                    true -> "运行中"
+                    false -> "已停止"
+                    null -> "检测中"
+                }
+                val statusTextColor = when (running) {
+                    true -> MaterialTheme.colorScheme.onPrimaryContainer
+                    false -> MaterialTheme.colorScheme.onErrorContainer
+                    null -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = if (running) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.errorContainer
-                    },
+                    color = statusContainerColor,
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (running) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.error
-                                    }
-                                ),
-                        )
+                        if (running == null) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (running) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.error
+                                        }
+                                    ),
+                            )
+                        }
                         Text(
-                            text = if (running) "运行中" else "已停止",
+                            text = statusText,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (running) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onErrorContainer
-                            },
+                            color = statusTextColor,
                         )
                     }
                 }
@@ -396,7 +426,7 @@ private fun ServiceStatusCard(
                 )
             }
 
-            if (running && !pid.isNullOrBlank()) {
+            if (running == true && !pid.isNullOrBlank()) {
                 Text(
                     text = "进程 ID: $pid",
                     style = MaterialTheme.typography.bodyMedium,
@@ -411,7 +441,8 @@ private fun ServiceStatusCard(
             ) {
                 FilledTonalButton(
                     modifier = Modifier.weight(1f),
-                    onClick = if (running) onStop else onStart,
+                    onClick = if (running == true) onStop else onStart,
+                    enabled = running != null,
                 ) {
                     Icon(
                         Icons.Filled.PowerSettingsNew,
@@ -419,12 +450,12 @@ private fun ServiceStatusCard(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(if (running) "停止" else "启动")
+                    Text(if (running == true) "停止" else "启动")
                 }
                 OutlinedButton(
                     modifier = Modifier.weight(1f),
                     onClick = onRestart,
-                    enabled = running,
+                    enabled = running == true,
                 ) {
                     Icon(
                         Icons.Filled.RestartAlt,
@@ -748,7 +779,7 @@ private fun AccessInfoCard(
     apiToken: String,
     apiPort: Int,
     apiHost: String,
-    serviceRunning: Boolean,
+    serviceRunning: Boolean?,
 ) {
     val ctx = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -798,8 +829,12 @@ private fun AccessInfoCard(
                 title = "本机（127.0.0.1）",
                 url = localUrl,
                 displayUrl = if (revealToken) localUrl else maskTokenInUrl(localUrl, token),
-                enabled = serviceRunning,
-                subtitle = if (!serviceRunning) "服务未运行，启动后才可访问" else null,
+                enabled = serviceRunning == true,
+                subtitle = when (serviceRunning) {
+                    null -> "正在获取服务状态…"
+                    false -> "服务未运行，启动后才可访问"
+                    true -> null
+                },
                 onCopy = {
                     clipboard.setText(AnnotatedString(localUrl))
                     Toast.makeText(ctx, "已复制本机地址", Toast.LENGTH_SHORT).show()
@@ -813,9 +848,10 @@ private fun AccessInfoCard(
                 title = "局域网（LAN）",
                 url = lanUrl,
                 displayUrl = if (revealToken) lanUrl else maskTokenInUrl(lanUrl, token),
-                enabled = serviceRunning && lanUrl.isNotBlank(),
+                enabled = (serviceRunning == true) && lanUrl.isNotBlank(),
                 subtitle = when {
-                    !serviceRunning -> "服务未运行，启动后才可访问"
+                    serviceRunning == null -> "正在获取服务状态…"
+                    serviceRunning == false -> "服务未运行，启动后才可访问"
                     lanUrl.isBlank() -> "未获取到局域网 IPv4（请连接 Wi-Fi / 有线网络）"
                     else -> null
                 },
@@ -829,7 +865,7 @@ private fun AccessInfoCard(
             )
 
             AnimatedVisibility(
-                visible = !serviceRunning,
+                visible = serviceRunning == false,
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically(),
             ) {
@@ -919,15 +955,15 @@ private fun UrlRow(
 private fun buildHttpUrl(host: String, port: Int, token: String): String {
     val t = token.trim().trim('/').ifBlank { "" }
     return if (t.isBlank()) {
-        "http://$host:$port/"
+        "http://$host:$port"
     } else {
-        "http://$host:$port/$t/"
+        "http://$host:$port/$t"
     }
 }
 
 private fun maskTokenInUrl(url: String, token: String): String {
     val t = token.trim().trim('/').ifBlank { return url }
-    return url.replace("/$t/", "/******/")
+    return url.replace("/$t", "/******")
 }
 
 private fun openUrl(context: android.content.Context, url: String) {
@@ -1123,7 +1159,11 @@ private fun AutostartCard(
     status: StatusResponse?,
     onAutostartChange: (Boolean) -> Unit,
 ) {
-    val on = status?.autostart == "on"
+    val on: Boolean? = when (status?.autostart) {
+        "on" -> true
+        "off" -> false
+        else -> null
+    }
 
     ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -1140,14 +1180,19 @@ private fun AutostartCard(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = if (on) "设备重启后自动启动服务" else "不会自动启动（更省电）",
+                    text = when (on) {
+                        true -> "设备重启后自动启动服务"
+                        false -> "不会自动启动（更省电）"
+                        null -> "正在获取状态…"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Switch(
-                checked = on,
+                checked = on == true,
                 onCheckedChange = { onAutostartChange(it) },
+                enabled = on != null,
             )
         }
     }

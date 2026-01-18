@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Adaptive icon background color -->
-    <color name="ic_launcher_background">#0B1B2B</color>
+    <!-- Kept for compatibility; adaptive icon now uses a gradient drawable. -->
+    <color name="ic_launcher_background">#F0F7FF</color>
 </resources>

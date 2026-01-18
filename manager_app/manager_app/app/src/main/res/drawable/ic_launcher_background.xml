@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <!--
+      Light pastel gradient background for the launcher icon.
+      Chosen to match the new light colorful foreground.
+    -->
+    <gradient
+        android:angle="135"
+        android:startColor="#FFF0F7FF"
+        android:centerColor="#FFF1FFF6"
+        android:endColor="#FFFFF1F6"
+        android:type="linear" />
+</shape>

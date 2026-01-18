@@ -21,52 +21,52 @@
         <path
             android:pathData="M2,18 L10,18"
             android:strokeWidth="6"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FF5B8CFF"
             android:strokeLineCap="round" />
         <path
             android:pathData="M6,18 L48,18"
             android:strokeWidth="8"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FF5B8CFF"
             android:strokeLineCap="round" />
         <!-- Bullet (dot) -->
         <path
             android:pathData="M56,18 L56,18"
             android:strokeWidth="14"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FF7C5CFF"
             android:strokeLineCap="round" />
 
         <!-- Row 2 -->
         <path
             android:pathData="M2,36 L8,36"
             android:strokeWidth="6"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FF2EC5A3"
             android:strokeLineCap="round" />
         <path
             android:pathData="M12,36 L54,36"
             android:strokeWidth="8"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FF2EC5A3"
             android:strokeLineCap="round" />
         <path
             android:pathData="M62,36 L62,36"
             android:strokeWidth="14"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FF00B8D9"
             android:strokeLineCap="round" />
 
         <!-- Row 3 -->
         <path
             android:pathData="M2,54 L6,54"
             android:strokeWidth="6"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FFFFA24B"
             android:strokeLineCap="round" />
         <path
             android:pathData="M8,54 L44,54"
             android:strokeWidth="8"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FFFFA24B"
             android:strokeLineCap="round" />
         <path
             android:pathData="M52,54 L52,54"
             android:strokeWidth="14"
-            android:strokeColor="#FFFFFFFF"
+            android:strokeColor="#FFFF5C8A"
             android:strokeLineCap="round" />
 
     </group>

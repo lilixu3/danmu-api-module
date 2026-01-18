@@ -82,10 +82,6 @@ fun DanmuManagerApp(applicationContext: Context) {
     }
 
     LaunchedEffect(Unit) {
-        vm.refreshAll()
-    }
-
-    LaunchedEffect(Unit) {
         vm.snackbars.collect { msg ->
             snackbarHostState.showSnackbar(msg)
         }
