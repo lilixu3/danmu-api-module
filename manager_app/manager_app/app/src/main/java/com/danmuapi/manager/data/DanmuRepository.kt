@@ -70,8 +70,11 @@ class DanmuRepository(
         )
     }
     suspend fun checkModuleUpdate(currentVersion: String?): ModuleUpdateInfo {
-        val release = releaseApi.getLatestRelease("lilixu3", "danmu-api-module")
-            ?: return ModuleUpdateInfo()
+        val release = try {
+            releaseApi.getLatestRelease("lilixu3", "danmu-api-module")
+        } catch (_: Throwable) {
+            null
+        } ?: return ModuleUpdateInfo()
 
         val latestTag = release.tagName.orEmpty()
         val hasUpdate = if (currentVersion.isNullOrBlank() || latestTag.isBlank()) {

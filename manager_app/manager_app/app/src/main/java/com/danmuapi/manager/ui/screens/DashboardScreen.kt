@@ -470,17 +470,13 @@ private fun ModuleUpdateDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    return@Column
-                }
-
-                if (release == null || release.tagName.isBlank()) {
+                } else if (release == null || release.tagName.isBlank()) {
                     Text(
                         text = "未获取到发布信息",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    return@Column
-                }
+                } else {
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -594,6 +590,9 @@ private fun ModuleUpdateDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+
+                // (rest of dialog content continues)
                 }
             }
         },

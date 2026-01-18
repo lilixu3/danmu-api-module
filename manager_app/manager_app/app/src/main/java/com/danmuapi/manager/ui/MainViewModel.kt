@@ -492,20 +492,22 @@ class MainViewModel(
     }
     fun checkModuleUpdate() {
         viewModelScope.launch {
-            val currentVersion = status?.module?.version
-            moduleUpdateInfo = withBusy("检查模块更新中…") {
-                repo.checkModuleUpdate(currentVersion)
-            }
-            
-            val info = moduleUpdateInfo
-            if (info != null) {
+            try {
+                val currentVersion = status?.module?.version
+                val info = withBusy("检查模块更新中…") {
+                    repo.checkModuleUpdate(currentVersion)
+                }
+                moduleUpdateInfo = info
+
                 if (info.hasUpdate) {
                     snackbars.tryEmit("发现模块更新：${info.latestRelease?.tagName}")
                 } else {
                     snackbars.tryEmit("模块已是最新版本")
                 }
-            } else {
-                snackbars.tryEmit("检查更新失败")
+            } catch (t: Throwable) {
+                // Never crash the app due to an update-check failure.
+                moduleUpdateInfo = null
+                snackbars.tryEmit("检查更新失败：${t.message ?: t::class.java.simpleName}")
             }
         }
     }
