@@ -193,10 +193,11 @@ private fun ServiceStatusCard(
                 downloading = true
                 downloadProgress = 0
                 downloadedPath = null
+                // NOTE: onDownloadModuleZip is a function type; Kotlin does not allow named arguments here.
                 onDownloadModuleZip(
                     asset,
-                    onProgress = { p -> downloadProgress = p.coerceIn(0, 100) },
-                    onComplete = { path ->
+                    { p -> downloadProgress = p.coerceIn(0, 100) },
+                    { path ->
                         downloading = false
                         downloadedPath = path
                         if (path == null) {
