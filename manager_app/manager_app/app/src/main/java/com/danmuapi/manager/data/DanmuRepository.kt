@@ -3,8 +3,12 @@ package com.danmuapi.manager.data
 import com.danmuapi.manager.data.model.CoreListResponse
 import com.danmuapi.manager.data.model.CoreMeta
 import com.danmuapi.manager.data.model.LogsResponse
+import com.danmuapi.manager.data.model.ModuleRelease
+import com.danmuapi.manager.data.model.ModuleUpdateInfo
+import com.danmuapi.manager.data.model.ReleaseAsset
 import com.danmuapi.manager.data.model.StatusResponse
 import com.danmuapi.manager.network.GitHubApi
+import com.danmuapi.manager.network.GitHubReleaseApi
 import com.danmuapi.manager.network.LatestCommitInfo
 import com.danmuapi.manager.root.DanmuCli
 
@@ -18,6 +22,7 @@ class DanmuRepository(
     private val cli: DanmuCli,
     private val gitHubApi: GitHubApi,
 ) {
+    private val releaseApi = GitHubReleaseApi()  // 添加这一行
     suspend fun getStatus(): StatusResponse? = cli.getStatus()
 
     suspend fun listCores(): CoreListResponse? = cli.listCores()
@@ -63,5 +68,53 @@ class DanmuRepository(
             latestVersion = latestVer,
             updateAvailable = update,
         )
+    }
+    suspend fun checkModuleUpdate(currentVersion: String?): ModuleUpdateInfo {
+        val release = releaseApi.getLatestRelease("lilixu3", "danmu-api-module")
+            ?: return ModuleUpdateInfo()
+
+        val latestTag = release.tagName.orEmpty()
+        val hasUpdate = if (currentVersion.isNullOrBlank() || latestTag.isBlank()) {
+            false
+        } else {
+            compareVersions(latestTag, currentVersion) > 0
+        }
+
+        val assets = release.assets?.mapNotNull { asset ->
+            val name = asset.name ?: return@mapNotNull null
+            val url = asset.browserDownloadUrl ?: return@mapNotNull null
+            ReleaseAsset(
+                name = name,
+                downloadUrl = url,
+                size = asset.size ?: 0L,
+            )
+        } ?: emptyList()
+
+        return ModuleUpdateInfo(
+            hasUpdate = hasUpdate,
+            currentVersion = currentVersion,
+            latestRelease = ModuleRelease(
+                tagName = latestTag,
+                name = release.name.orEmpty(),
+                body = release.body.orEmpty(),
+                publishedAt = release.publishedAt.orEmpty(),
+                assets = assets,
+            ),
+        )
+    }
+    private fun compareVersions(v1: String, v2: String): Int {
+        val clean1 = v1.removePrefix("v").trim()
+        val clean2 = v2.removePrefix("v").trim()
+        
+        val parts1 = clean1.split(".").mapNotNull { it.toIntOrNull() }
+        val parts2 = clean2.split(".").mapNotNull { it.toIntOrNull() }
+        
+        val maxLen = maxOf(parts1.size, parts2.size)
+        for (i in 0 until maxLen) {
+            val p1 = parts1.getOrNull(i) ?: 0
+            val p2 = parts2.getOrNull(i) ?: 0
+            if (p1 != p2) return p1.compareTo(p2)
+        }
+        return 0
     }
 }

@@ -3,23 +3,34 @@ package com.danmuapi.manager.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RestartAlt
@@ -27,15 +38,14 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
+import com.danmuapi.manager.ui.components.ManagerCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -55,7 +66,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.data.CoreUpdateInfo
 import com.danmuapi.manager.data.model.CoreListResponse
-import com.danmuapi.manager.data.model.CoreMeta
 import com.danmuapi.manager.data.model.StatusResponse
 import com.danmuapi.manager.util.rememberLanIpv4Addresses
 
@@ -78,41 +88,50 @@ fun DashboardScreen(
 ) {
     Column(
         modifier = Modifier
+            .fillMaxSize()
             .padding(paddingValues)
-            .padding(16.dp)
+            .padding(horizontal = 16.dp)
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        OverviewCard(
-            rootAvailable = rootAvailable,
+        Spacer(Modifier.size(8.dp))
+        
+        ServiceStatusCard(
             status = status,
+            rootAvailable = rootAvailable,
             onStart = onStart,
             onStop = onStop,
             onRestart = onRestart,
         )
 
-        AccessCard(
+        AccessInfoCard(
             apiToken = apiToken,
             apiPort = apiPort,
             apiHost = apiHost,
             serviceRunning = status?.service?.running == true,
         )
 
-        CoreCard(
+        CurrentCoreCard(
             status = status,
             cores = cores,
             activeUpdate = activeUpdate,
             onActivateCore = onActivateCore,
             onCheckActiveUpdate = onCheckActiveCoreUpdate,
         )
-        AutostartCard(status = status, onAutostartChange = onAutostartChange)
+
+        AutostartCard(
+            status = status,
+            onAutostartChange = onAutostartChange,
+        )
+
+        Spacer(Modifier.size(8.dp))
     }
 }
 
 @Composable
-private fun OverviewCard(
-    rootAvailable: Boolean?,
+private fun ServiceStatusCard(
     status: StatusResponse?,
+    rootAvailable: Boolean?,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit,
@@ -122,49 +141,108 @@ private fun OverviewCard(
     val moduleEnabled = status?.module?.enabled
     val version = status?.module?.version ?: "-"
 
-    Card {
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "运行概览", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "服务状态",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
                     Text(
                         text = "模块 v$version",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (running) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.errorContainer
+                    },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (running) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.error
+                                    }
+                                ),
+                        )
+                        Text(
+                            text = if (running) "运行中" else "已停止",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (running) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            },
+                        )
+                    }
                 }
             }
 
-            // 将“运行状态 / Root 状态 / 模块状态”放到同一行。
-            // 不换行：空间不足时三项会自适应变窄（文本省略），而不是换行或被挤压变形。
-            StatusChipsRow(
-                running = running,
-                rootAvailable = rootAvailable,
-                moduleEnabled = moduleEnabled,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusChip(
+                    modifier = Modifier.weight(1f),
+                    label = "Root",
+                    ok = rootAvailable,
+                )
+                StatusChip(
+                    modifier = Modifier.weight(1f),
+                    label = "模块",
+                    ok = moduleEnabled,
+                )
+            }
 
-            Text(
-                text = if (running) "PID: ${pid ?: "?"}" else "服务未运行",
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            if (running && !pid.isNullOrBlank()) {
+                Text(
+                    text = "进程 ID: $pid",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 FilledTonalButton(
                     modifier = Modifier.weight(1f),
                     onClick = if (running) onStop else onStart,
                 ) {
-                    Icon(Icons.Filled.PowerSettingsNew, contentDescription = null)
+                    Icon(
+                        Icons.Filled.PowerSettingsNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
                     Spacer(Modifier.width(8.dp))
                     Text(if (running) "停止" else "启动")
                 }
@@ -173,7 +251,11 @@ private fun OverviewCard(
                     onClick = onRestart,
                     enabled = running,
                 ) {
-                    Icon(Icons.Filled.RestartAlt, contentDescription = null)
+                    Icon(
+                        Icons.Filled.RestartAlt,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
                     Spacer(Modifier.width(8.dp))
                     Text("重启")
                 }
@@ -183,93 +265,63 @@ private fun OverviewCard(
 }
 
 @Composable
-private fun StatusChipsRow(
-    running: Boolean,
-    rootAvailable: Boolean?,
-    moduleEnabled: Boolean?,
+private fun StatusChip(
+    modifier: Modifier = Modifier,
+    label: String,
+    ok: Boolean?,
 ) {
-    // 不换行：空间不足时三项按比例“变小”（宽度变窄，文本省略），而不是换行或挤压变形。
-    // 宽度充足时保持自然紧凑尺寸，避免三项被拉得过宽。
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val compact = maxWidth < 360.dp
+    val statusText = when (ok) {
+        null -> "检测中"
+        true -> "正常"
+        false -> "异常"
+    }
+    
+    val containerColor = when (ok) {
+        true -> MaterialTheme.colorScheme.primaryContainer
+        false -> MaterialTheme.colorScheme.errorContainer
+        null -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    
+    val contentColor = when (ok) {
+        true -> MaterialTheme.colorScheme.onPrimaryContainer
+        false -> MaterialTheme.colorScheme.onErrorContainer
+        null -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = containerColor,
+    ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val w = if (compact) Modifier.weight(1f) else Modifier
-
-            AssistChip(
-                modifier = w,
-                onClick = {},
-                label = {
-                    Text(
-                        text = if (running) "运行中" else "已停止",
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
+            Icon(
+                imageVector = when (ok) {
+                    true -> Icons.Filled.CheckCircle
+                    false -> Icons.Filled.Error
+                    null -> Icons.Filled.Info
                 },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (running) Icons.Filled.CheckCircle else Icons.Filled.Error,
-                        contentDescription = null,
-                    )
-                },
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = contentColor,
             )
-
-            StatusChip(
-                modifier = w,
-                label = "Root",
-                ok = rootAvailable,
-            )
-
-            StatusChip(
-                modifier = w,
-                label = "模块",
-                ok = moduleEnabled,
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "$label·$statusText",
+                style = MaterialTheme.typography.labelMedium,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StatusChip(modifier: Modifier = Modifier, label: String, ok: Boolean?) {
-    // Keep these chips compact to avoid squeezing on small screens.
-    val statusText = when (ok) {
-        null -> "…"
-        true -> "正常"
-        false -> "异常"
-    }
-    val text = "$label·$statusText"
-    AssistChip(
-        modifier = modifier,
-        onClick = {},
-        label = {
-            Text(
-                text = text,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelSmall,
-            )
-        },
-        leadingIcon = {
-            val icon = when (ok) {
-                true -> Icons.Filled.CheckCircle
-                false -> Icons.Filled.Error
-                null -> Icons.Filled.SwapHoriz
-            }
-            Icon(icon, contentDescription = null)
-        },
-    )
-}
-
-@Composable
-private fun AccessCard(
+private fun AccessInfoCard(
     apiToken: String,
     apiPort: Int,
     apiHost: String,
@@ -289,7 +341,7 @@ private fun AccessCard(
     val localUrl = buildHttpUrl(host = "127.0.0.1", port = port, token = token)
     val lanUrl = if (lanIp.isBlank()) "" else buildHttpUrl(host = lanIp, port = port, token = token)
 
-    Card {
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -302,10 +354,15 @@ private fun AccessCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "访问地址", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "访问地址",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                     Text(
                         text = "端口：$port · Token：${if (revealToken) token else "******"}",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 AssistChip(
@@ -348,16 +405,32 @@ private fun AccessCard(
                 },
             )
 
-            if (!serviceRunning) {
+            AnimatedVisibility(
+                visible = !serviceRunning,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                        .padding(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Filled.Error, contentDescription = null)
+                    Icon(
+                        Icons.Filled.Error,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(20.dp),
+                    )
                     Text(
-                        text = "提示：服务当前已停止。请先在上方点击“启动”，再使用以上地址访问。",
+                        text = "提示：服务当前已停止。请先在上方点击\"启动\"，再使用以上地址访问。",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
                     )
                 }
             }
@@ -366,6 +439,7 @@ private fun AccessCard(
                 Text(
                     text = "提示：当前 DANMU_API_HOST=$apiHost（仅本机可访问）。如需局域网访问，请在 .env 中设置 DANMU_API_HOST=0.0.0.0 后重启服务。",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -386,9 +460,16 @@ private fun UrlRow(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(text = title, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+        )
         if (!subtitle.isNullOrBlank()) {
-            Text(text = subtitle, style = MaterialTheme.typography.bodySmall)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -436,126 +517,8 @@ private fun openUrl(context: android.content.Context, url: String) {
     }
 }
 
-
 @Composable
-private fun RootCard(rootAvailable: Boolean?) {
-    Card {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            val ok = rootAvailable == true
-            Icon(
-                imageVector = if (ok) Icons.Filled.CheckCircle else Icons.Filled.Error,
-                contentDescription = null,
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = "Root 权限", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = when (rootAvailable) {
-                        null -> "检测中…"
-                        true -> "已获取 Root（Magisk su）"
-                        false -> "未获取 Root / su 不可用"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ModuleCard(status: StatusResponse?) {
-    Card {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = "Magisk 模块", style = MaterialTheme.typography.titleMedium)
-                val enabled = status?.module?.enabled
-                Text(
-                    text = when (enabled) {
-                        null -> "未知"
-                        true -> "已启用"
-                        false -> "已禁用（请在 Magisk 中启用后重启）"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            val version = status?.module?.version ?: "-"
-            AssistChip(onClick = {}, label = { Text("v$version") })
-        }
-    }
-}
-
-@Composable
-private fun ServiceCard(
-    status: StatusResponse?,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    onRestart: () -> Unit,
-) {
-    val running = status?.service?.running == true
-    val pid = status?.service?.pid
-
-    Card {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(text = "核心服务", style = MaterialTheme.typography.titleMedium)
-                AssistChip(
-                    onClick = {},
-                    label = { Text(if (running) "运行中" else "已停止") },
-                )
-            }
-
-            Text(
-                text = if (running) "PID: ${pid ?: "?"}" else "当前未运行",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                FilledTonalButton(
-                    modifier = Modifier.weight(1f),
-                    onClick = if (running) onStop else onStart,
-                ) {
-                    Icon(Icons.Filled.PowerSettingsNew, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (running) "停止" else "启动")
-                }
-                OutlinedButton(
-                    modifier = Modifier.weight(1f),
-                    onClick = onRestart,
-                    enabled = running,
-                ) {
-                    Icon(Icons.Filled.RestartAlt, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("重启")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CoreCard(
+private fun CurrentCoreCard(
     status: StatusResponse?,
     cores: CoreListResponse?,
     activeUpdate: CoreUpdateInfo?,
@@ -564,7 +527,6 @@ private fun CoreCard(
 ) {
     val core = status?.activeCore
     val activeId = status?.activeCoreId
-
     val list = cores?.cores.orEmpty()
 
     var showSwitch by remember { mutableStateOf(false) }
@@ -636,16 +598,24 @@ private fun CoreCard(
         )
     }
 
-    Card {
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(text = "当前核心", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "当前核心",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
             if (core == null) {
-                Text(text = "未检测到核心（请先下载/安装）", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = "未检测到核心（请先下载/安装）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             } else {
                 Text(
                     text = core.repo,
@@ -657,17 +627,28 @@ private fun CoreCard(
                 Text(text = "版本: ${core.version ?: "-"}", style = MaterialTheme.typography.bodyMedium)
                 val sha = core.shaShort ?: core.sha
                 if (!sha.isNullOrBlank()) {
-                    Text(text = "Commit: $sha", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    Text(
+                        text = "Commit: $sha",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
                 }
                 if (!core.installedAt.isNullOrBlank()) {
-                    Text(text = "安装时间: ${core.installedAt}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = "安装时间: ${core.installedAt}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
-            // Active core update hint
             if (core != null) {
                 if (activeUpdate == null) {
-                    Text(text = "尚未检查更新", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = "尚未检查更新",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 } else {
                     val remoteVer = activeUpdate.latestVersion
                     val remoteShaShort = activeUpdate.latestCommit?.sha?.take(7)
@@ -714,7 +695,6 @@ private fun CoreCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AutostartCard(
     status: StatusResponse?,
@@ -722,11 +702,7 @@ private fun AutostartCard(
 ) {
     val on = status?.autostart == "on"
 
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-    ) {
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -735,10 +711,15 @@ private fun AutostartCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(text = "开机自启动", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "开机自启动",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
                 Text(
                     text = if (on) "设备重启后自动启动服务" else "不会自动启动（更省电）",
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Switch(
