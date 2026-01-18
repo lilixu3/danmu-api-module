@@ -8,12 +8,10 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -30,15 +28,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
@@ -46,14 +41,11 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -72,13 +64,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.data.CoreUpdateInfo
 import com.danmuapi.manager.data.model.CoreListResponse
-import com.danmuapi.manager.data.model.ModuleUpdateInfo
-import com.danmuapi.manager.data.model.ReleaseAsset
 import com.danmuapi.manager.data.model.StatusResponse
 import com.danmuapi.manager.util.rememberLanIpv4Addresses
 
@@ -109,7 +98,6 @@ fun DashboardScreen(
     ) {
         Spacer(Modifier.size(8.dp))
         
-        // 服务状态卡片（大卡片，视觉重心）
         ServiceStatusCard(
             status = status,
             rootAvailable = rootAvailable,
@@ -118,7 +106,6 @@ fun DashboardScreen(
             onRestart = onRestart,
         )
 
-        // 访问地址卡片
         AccessInfoCard(
             apiToken = apiToken,
             apiPort = apiPort,
@@ -126,7 +113,6 @@ fun DashboardScreen(
             serviceRunning = status?.service?.running == true,
         )
 
-        // 当前核心卡片
         CurrentCoreCard(
             status = status,
             cores = cores,
@@ -135,7 +121,6 @@ fun DashboardScreen(
             onCheckActiveUpdate = onCheckActiveCoreUpdate,
         )
 
-        // 自启动开关
         AutostartCard(
             status = status,
             onAutostartChange = onAutostartChange,
@@ -168,7 +153,6 @@ private fun ServiceStatusCard(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // 标题行
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -185,9 +169,8 @@ private fun ServiceStatusCard(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                </Column>
+                }
                 
-                // 运行状态指示器
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = if (running) {
@@ -227,7 +210,6 @@ private fun ServiceStatusCard(
                 }
             }
 
-            // 状态芯片行
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -244,7 +226,6 @@ private fun ServiceStatusCard(
                 )
             }
 
-            // PID 信息
             if (running && !pid.isNullOrBlank()) {
                 Text(
                     text = "进程 ID: $pid",
@@ -254,7 +235,6 @@ private fun ServiceStatusCard(
                 )
             }
 
-            // 操作按钮
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -552,7 +532,6 @@ private fun CurrentCoreCard(
 ) {
     val core = status?.activeCore
     val activeId = status?.activeCoreId
-
     val list = cores?.cores.orEmpty()
 
     var showSwitch by remember { mutableStateOf(false) }
@@ -668,7 +647,6 @@ private fun CurrentCoreCard(
                 }
             }
 
-            // Active core update hint
             if (core != null) {
                 if (activeUpdate == null) {
                     Text(
