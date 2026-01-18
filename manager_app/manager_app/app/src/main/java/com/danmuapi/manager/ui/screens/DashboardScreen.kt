@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -143,17 +144,26 @@ private fun OverviewCard(
                 AssistChip(
                     onClick = {},
                     label = { Text(if (running) "运行中" else "已停止") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = if (running) Icons.Filled.CheckCircle else Icons.Filled.Error,
+                            contentDescription = null,
+                        )
+                    },
                 )
             }
 
+            // NOTE: “服务状态”已合并到右上角的运行状态 Chip。
+            // 这里保留 Root / 模块两个小卡片，并支持横向滚动以避免在小屏幕上被挤压变形。
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 StatusChip(label = "Root", ok = rootAvailable)
                 StatusChip(label = "模块", ok = moduleEnabled)
-                StatusChip(label = "服务", ok = running)
             }
 
             Text(
@@ -190,11 +200,13 @@ private fun OverviewCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun StatusChip(label: String, ok: Boolean?) {
-    val text = when (ok) {
-        null -> "$label: 检测中"
-        true -> "$label: 正常"
-        false -> "$label: 异常"
+    // Keep these chips compact to avoid squeezing on small screens.
+    val statusText = when (ok) {
+        null -> "…"
+        true -> "正常"
+        false -> "异常"
     }
+    val text = "$label·$statusText"
     AssistChip(
         onClick = {},
         label = { Text(text) },
@@ -202,7 +214,7 @@ private fun StatusChip(label: String, ok: Boolean?) {
             val icon = when (ok) {
                 true -> Icons.Filled.CheckCircle
                 false -> Icons.Filled.Error
-                null -> Icons.Filled.Error
+                null -> Icons.Filled.SwapHoriz
             }
             Icon(icon, contentDescription = null)
         },
