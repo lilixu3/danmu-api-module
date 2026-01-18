@@ -57,8 +57,7 @@ import com.danmuapi.manager.data.CoreUpdateInfo
 import com.danmuapi.manager.data.model.CoreListResponse
 import com.danmuapi.manager.data.model.CoreMeta
 import com.danmuapi.manager.data.model.StatusResponse
-import java.net.Inet4Address
-import java.net.NetworkInterface
+import com.danmuapi.manager.util.rememberLanIpv4Addresses
 
 @Composable
 fun DashboardScreen(
@@ -96,6 +95,7 @@ fun DashboardScreen(
             apiToken = apiToken,
             apiPort = apiPort,
             apiHost = apiHost,
+            serviceRunning = status?.service?.running == true,
         )
 
         CoreCard(
@@ -273,6 +273,7 @@ private fun AccessCard(
     apiToken: String,
     apiPort: Int,
     apiHost: String,
+    serviceRunning: Boolean,
 ) {
     val ctx = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -280,7 +281,7 @@ private fun AccessCard(
     val token = apiToken.trim().ifBlank { "87654321" }
     val port = apiPort.coerceIn(1, 65535)
 
-    val lanIps = remember { getLanIpv4Addresses() }
+    val lanIps = rememberLanIpv4Addresses()
     val lanIp = lanIps.firstOrNull().orEmpty()
 
     var revealToken by remember { mutableStateOf(false) }
@@ -317,6 +318,8 @@ private fun AccessCard(
                 title = "本机（127.0.0.1）",
                 url = localUrl,
                 displayUrl = if (revealToken) localUrl else maskTokenInUrl(localUrl, token),
+                enabled = serviceRunning,
+                subtitle = if (!serviceRunning) "服务未运行，启动后才可访问" else null,
                 onCopy = {
                     clipboard.setText(AnnotatedString(localUrl))
                     Toast.makeText(ctx, "已复制本机地址", Toast.LENGTH_SHORT).show()
@@ -330,8 +333,12 @@ private fun AccessCard(
                 title = "局域网（LAN）",
                 url = lanUrl,
                 displayUrl = if (revealToken) lanUrl else maskTokenInUrl(lanUrl, token),
-                enabled = lanUrl.isNotBlank(),
-                subtitle = if (lanUrl.isBlank()) "未获取到局域网 IPv4（请连接 Wi-Fi / 有线网络）" else null,
+                enabled = serviceRunning && lanUrl.isNotBlank(),
+                subtitle = when {
+                    !serviceRunning -> "服务未运行，启动后才可访问"
+                    lanUrl.isBlank() -> "未获取到局域网 IPv4（请连接 Wi-Fi / 有线网络）"
+                    else -> null
+                },
                 onCopy = {
                     clipboard.setText(AnnotatedString(lanUrl))
                     Toast.makeText(ctx, "已复制局域网地址", Toast.LENGTH_SHORT).show()
@@ -340,6 +347,20 @@ private fun AccessCard(
                     openUrl(ctx, lanUrl)
                 },
             )
+
+            if (!serviceRunning) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.Filled.Error, contentDescription = null)
+                    Text(
+                        text = "提示：服务当前已停止。请先在上方点击“启动”，再使用以上地址访问。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
 
             if (apiHost.trim() == "127.0.0.1" || apiHost.trim().equals("localhost", ignoreCase = true)) {
                 Text(
@@ -415,40 +436,6 @@ private fun openUrl(context: android.content.Context, url: String) {
     }
 }
 
-private fun getLanIpv4Addresses(): List<String> {
-    return try {
-        val result = mutableListOf<String>()
-        val ifaces = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
-        for (iface in ifaces) {
-            // Skip down interfaces / loopback / tunnels.
-            if (!iface.isUp || iface.isLoopback) continue
-            val name = iface.name ?: ""
-            if (name.startsWith("lo") || name.startsWith("tun") || name.startsWith("dummy")) continue
-
-            val addrs = iface.inetAddresses
-            while (addrs.hasMoreElements()) {
-                val addr = addrs.nextElement()
-                if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                    val ip = addr.hostAddress ?: continue
-                    // Skip link-local (169.254.x.x)
-                    if (ip.startsWith("169.254.")) continue
-                    result.add(ip)
-                }
-            }
-        }
-        // Prefer common interfaces first.
-        result.distinct().sortedWith(compareBy({
-            when {
-                it.startsWith("192.168.") -> 0
-                it.startsWith("10.") -> 1
-                it.startsWith("172.16.") -> 2
-                else -> 3
-            }
-        }, { it }))
-    } catch (_: Throwable) {
-        emptyList()
-    }
-}
 
 @Composable
 private fun RootCard(rootAvailable: Boolean?) {
