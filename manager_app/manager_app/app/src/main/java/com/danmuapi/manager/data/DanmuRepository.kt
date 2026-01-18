@@ -105,9 +105,18 @@ class DanmuRepository(
     private fun compareVersions(v1: String, v2: String): Int {
         val clean1 = v1.removePrefix("v").trim()
         val clean2 = v2.removePrefix("v").trim()
-        
-        val parts1 = clean1.split(".").mapNotNull { it.toIntOrNull() }
-        val parts2 = clean2.split(".").mapNotNull { it.toIntOrNull() }
+
+        fun parseParts(v: String): List<Int> {
+            return v.split(".")
+                .mapNotNull { part ->
+                    // Accept things like "1", "1-beta", "1_rc1" by taking the leading digits.
+                    val m = Regex("^(\\d+)").find(part.trim()) ?: return@mapNotNull null
+                    m.groupValues.getOrNull(1)?.toIntOrNull()
+                }
+        }
+
+        val parts1 = parseParts(clean1)
+        val parts2 = parseParts(clean2)
         
         val maxLen = maxOf(parts1.size, parts2.size)
         for (i in 0 until maxLen) {

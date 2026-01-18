@@ -515,22 +515,32 @@ class MainViewModel(
             withBusy("下载模块中：${asset.name}") {
                 try {
                     val cacheDir = appContext.cacheDir
-                    val file = java.io.File(cacheDir, asset.name)
+                    // Avoid path traversal and keep filenames stable.
+                    val safeName = asset.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                    val file = java.io.File(cacheDir, safeName)
                     
                     withContext(Dispatchers.IO) {
-                        val client = okhttp3.OkHttpClient()
+                        val client = okhttp3.OkHttpClient.Builder()
+                            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                            .callTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
+                            .build()
                         val request = okhttp3.Request.Builder()
                             .url(asset.downloadUrl)
+                            .header("Accept", "application/octet-stream")
                             .build()
                         
                         client.newCall(request).execute().use { response ->
                             if (!response.isSuccessful) {
-                                onComplete(null)
+                                try { file.delete() } catch (_: Throwable) {}
+                                withContext(Dispatchers.Main) { onComplete(null) }
                                 return@withContext
                             }
                             
                             val body = response.body ?: run {
-                                onComplete(null)
+                                try { file.delete() } catch (_: Throwable) {}
+                                withContext(Dispatchers.Main) { onComplete(null) }
                                 return@withContext
                             }
                             
@@ -554,12 +564,12 @@ class MainViewModel(
                                 }
                             }
                             
-                            onComplete(file.absolutePath)
+                            withContext(Dispatchers.Main) { onComplete(file.absolutePath) }
                         }
                     }
                 } catch (e: Exception) {
                     snackbars.tryEmit("下载失败：${e.message}")
-                    onComplete(null)
+                    withContext(Dispatchers.Main) { onComplete(null) }
                 }
             }
         }
@@ -567,25 +577,60 @@ class MainViewModel(
 
     fun installModuleZip(zipPath: String) {
         viewModelScope.launch {
+            val wasRunning = status?.service?.running == true
             val ok = withBusy("安装模块中…") {
+                // Best-effort: stop service first to avoid half-written files.
+                try {
+                    repo.stopService()
+                } catch (_: Throwable) {
+                    // ignore
+                }
                 val cmd = """
                     MODPATH="/data/adb/modules/danmu_api_server"
+                    TMPDIR="/data/local/tmp/danmu_api_module_update"
+                    rm -rf "${'$'}TMPDIR" 2>/dev/null || true
+                    mkdir -p "${'$'}TMPDIR" || exit 1
                     rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
-                    if [ -d "${'$'}MODPATH" ]; then
-                        mv "${'$'}MODPATH" "${'$'}MODPATH.bak"
-                    fi
-                    mkdir -p "${'$'}MODPATH"
-                    unzip -o "$zipPath" -d "${'$'}MODPATH" >/dev/null 2>&1
-                    if [ ${'$'}? -eq 0 ]; then
-                        rm -rf "${'$'}MODPATH.bak"
-                        echo "success"
-                    else
-                        rm -rf "${'$'}MODPATH"
-                        if [ -d "${'$'}MODPATH.bak" ]; then
-                            mv "${'$'}MODPATH.bak" "${'$'}MODPATH"
+                    unzip -o "$zipPath" -d "${'$'}TMPDIR" >/dev/null 2>&1 || {
+                        rm -rf "${'$'}TMPDIR" 2>/dev/null || true
+                        echo "failed"; exit 0;
+                    }
+
+                    # Locate module root (support both flat zip and zip-with-top-dir)
+                    SRC="${'$'}TMPDIR"
+                    if [ ! -f "${'$'}SRC/module.prop" ]; then
+                        MP="$(find "${'$'}TMPDIR" -maxdepth 3 -type f -name module.prop 2>/dev/null | head -n 1)"
+                        if [ -n "${'$'}MP" ]; then
+                            SRC="$(dirname "${'$'}MP")"
                         fi
-                        echo "failed"
                     fi
+
+                    if [ ! -f "${'$'}SRC/module.prop" ]; then
+                        rm -rf "${'$'}TMPDIR" 2>/dev/null || true
+                        echo "failed"; exit 0;
+                    fi
+
+                    if [ -d "${'$'}MODPATH" ]; then
+                        mv "${'$'}MODPATH" "${'$'}MODPATH.bak" || {
+                            rm -rf "${'$'}TMPDIR" 2>/dev/null || true
+                            echo "failed"; exit 0;
+                        }
+                    fi
+                    mkdir -p "${'$'}MODPATH" || {
+                        rm -rf "${'$'}TMPDIR" 2>/dev/null || true
+                        echo "failed"; exit 0;
+                    }
+
+                    # Copy files (try preserve metadata when possible).
+                    cp -a "${'$'}SRC"/. "${'$'}MODPATH"/ 2>/dev/null || cp -r "${'$'}SRC"/. "${'$'}MODPATH"/
+
+                    # Ensure scripts are executable.
+                    find "${'$'}MODPATH" -type f -name "*.sh" -exec chmod 0755 {} \; 2>/dev/null || true
+                    chmod 0755 "${'$'}MODPATH/action.sh" 2>/dev/null || true
+
+                    rm -rf "${'$'}TMPDIR" 2>/dev/null || true
+                    rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
+                    echo "success"
                 """.trimIndent()
                 
                 val res = RootShell.runSu(cmd, timeoutMs = 120_000)
@@ -593,8 +638,12 @@ class MainViewModel(
             }
             
             if (ok) {
-                snackbars.tryEmit("模块安装成功！重启设备后生效。")
+                snackbars.tryEmit("模块安装成功！建议重启设备后生效。")
                 refreshAllInternal()
+                // Restore previous running state (best-effort).
+                if (wasRunning) {
+                    startService()
+                }
             } else {
                 snackbars.tryEmit("模块安装失败")
             }
