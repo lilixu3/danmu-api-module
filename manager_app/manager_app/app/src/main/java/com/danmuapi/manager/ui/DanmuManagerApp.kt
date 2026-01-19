@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -22,6 +23,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,12 +46,14 @@ import com.danmuapi.manager.ui.screens.CoresScreen
 import com.danmuapi.manager.ui.screens.DashboardScreen
 import com.danmuapi.manager.ui.screens.LogsScreen
 import com.danmuapi.manager.ui.screens.SettingsScreen
+import com.danmuapi.manager.ui.screens.AboutScreen
 import com.danmuapi.manager.worker.LogCleanupScheduler
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.ArrowBack
 
 private enum class NavItem(
     val route: String,
@@ -59,6 +63,7 @@ private enum class NavItem(
     CORES("cores", com.danmuapi.manager.R.string.nav_cores),
     LOGS("logs", com.danmuapi.manager.R.string.nav_logs),
     SETTINGS("settings", com.danmuapi.manager.R.string.nav_settings),
+    ABOUT("about", com.danmuapi.manager.R.string.nav_about),
 }
 
 @Composable
@@ -95,6 +100,7 @@ fun DanmuManagerApp(applicationContext: Context) {
         NavItem.CORES.route -> "核心管理"
         NavItem.LOGS.route -> "日志"
         NavItem.SETTINGS.route -> "设置"
+        NavItem.ABOUT.route -> "关于"
         else -> "Danmu API"
     }
 
@@ -102,6 +108,13 @@ fun DanmuManagerApp(applicationContext: Context) {
         modifier = Modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    if (currentRoute == NavItem.ABOUT.route) {
+                        IconButton(onClick = { navController.popBackStack() }) {
+                            Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
+                },
                 title = { Text(title) },
                 actions = {
                     IconButton(
@@ -114,7 +127,7 @@ fun DanmuManagerApp(applicationContext: Context) {
             )
         },
         bottomBar = {
-            NavigationBar {
+            if (currentRoute != NavItem.ABOUT.route) NavigationBar {
                 fun navTo(item: NavItem) {
                     navController.navigate(item.route) {
                         popUpTo(navController.graph.findStartDestination().id) {
@@ -259,7 +272,16 @@ fun DanmuManagerApp(applicationContext: Context) {
                     onImportEnvFromUri = { uri -> vm.importEnvFromUri(uri) },
                     onExportEnvToWebDav = { vm.exportEnvToWebDav() },
                     onImportEnvFromWebDav = { vm.importEnvFromWebDav() },
+                    themeMode = vm.themeMode.collectAsStateWithLifecycle().value,
+                    dynamicColor = vm.dynamicColor.collectAsStateWithLifecycle().value,
+                    onSetThemeMode = { m -> vm.setThemeMode(m) },
+                    onSetDynamicColor = { e -> vm.setDynamicColor(e) },
+                    onOpenAbout = { navController.navigate(NavItem.ABOUT.route) },
                 )
+            }
+
+            composable(NavItem.ABOUT.route) {
+                com.danmuapi.manager.ui.screens.AboutScreen(paddingValues = padding)
             }
         }
     }

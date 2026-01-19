@@ -6,4 +6,9 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <!--
+      Note: Android 12+ always shows a brief system splash screen.
+      We intentionally avoid a custom splash theme here to keep launch smooth and consistent.
+    -->
 </resources>
