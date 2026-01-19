@@ -52,6 +52,9 @@ android {
 
     buildFeatures {
         compose = true
+        // AboutScreen references BuildConfig.VERSION_NAME / VERSION_CODE
+        // (AGP 8+ allows disabling this; keep it explicitly enabled.)
+        buildConfig = true
     }
     composeOptions {
         // Kotlin 1.9.22 compatible

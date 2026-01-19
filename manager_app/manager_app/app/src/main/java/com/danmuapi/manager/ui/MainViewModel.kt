@@ -327,18 +327,6 @@ class MainViewModel(
         }
     }
 
-    fun setThemeMode(mode: Int) {
-        viewModelScope.launch {
-            settings.setThemeMode(mode)
-        }
-    }
-
-    fun setDynamicColor(enabled: Boolean) {
-        viewModelScope.launch {
-            settings.setDynamicColor(enabled)
-        }
-    }
-
     fun loadEnvFile(onResult: (String) -> Unit) {
         viewModelScope.launch {
             val text = withBusy("读取配置中…") {
