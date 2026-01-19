@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Security
@@ -60,6 +61,11 @@ fun SettingsScreen(
     webDavUsername: String,
     webDavPassword: String,
     webDavPath: String,
+    themeMode: Int,
+    dynamicColor: Boolean,
+    onSetThemeMode: (Int) -> Unit,
+    onSetDynamicColor: (Boolean) -> Unit,
+    onOpenAbout: () -> Unit,
     onSetLogAutoCleanDays: (Int) -> Unit,
     onSetGithubToken: (String) -> Unit,
     onSetWebDavSettings: (url: String, username: String, password: String, path: String) -> Unit,
@@ -253,6 +259,111 @@ fun SettingsScreen(
                     text = "模块数据目录：${DanmuPaths.PERSIST_DIR}",
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+
+        // Appearance
+        ManagerCard {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.BatterySaver, contentDescription = null)
+                    Text(text = "外观", style = MaterialTheme.typography.titleMedium)
+                }
+
+                // Theme mode dropdown
+                var themeMenuExpanded by remember { mutableStateOf(false) }
+                val themeLabel = when (themeMode) {
+                    1 -> "浅色"
+                    2 -> "深色"
+                    else -> "跟随系统"
+                }
+
+                ExposedDropdownMenuBox(
+                    expanded = themeMenuExpanded,
+                    onExpandedChange = { themeMenuExpanded = !themeMenuExpanded },
+                ) {
+                    OutlinedTextField(
+                        value = themeLabel,
+                        onValueChange = { },
+                        readOnly = true,
+                        label = { Text("主题") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = themeMenuExpanded) },
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth(),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = themeMenuExpanded,
+                        onDismissRequest = { themeMenuExpanded = false },
+                    ) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("跟随系统") },
+                            onClick = {
+                                themeMenuExpanded = false
+                                onSetThemeMode(0)
+                            },
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("浅色") },
+                            onClick = {
+                                themeMenuExpanded = false
+                                onSetThemeMode(1)
+                            },
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("深色") },
+                            onClick = {
+                                themeMenuExpanded = false
+                                onSetThemeMode(2)
+                            },
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("动态取色", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Android 12+ 会根据壁纸生成配色",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = dynamicColor,
+                        onCheckedChange = { onSetDynamicColor(it) },
+                    )
+                }
+            }
+        }
+
+        // About
+        ManagerCard {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.Info, contentDescription = null)
+                    Text(text = "关于", style = MaterialTheme.typography.titleMedium)
+                }
+                OutlinedButton(
+                    onClick = onOpenAbout,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("查看版本与说明")
+                }
             }
         }
 

@@ -92,6 +92,12 @@ class MainViewModel(
     val webDavPath: StateFlow<String> = settings.webDavPath
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
+    val themeMode: StateFlow<Int> = settings.themeMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val dynamicColor: StateFlow<Boolean> = settings.dynamicColor
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     val snackbars = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
     init {
@@ -174,6 +180,18 @@ class MainViewModel(
             withBusy("刷新状态中…") {
                 refreshAllInternal()
             }
+        }
+    }
+
+    fun setThemeMode(mode: Int) {
+        viewModelScope.launch {
+            settings.setThemeMode(mode)
+        }
+    }
+
+    fun setDynamicColor(enabled: Boolean) {
+        viewModelScope.launch {
+            settings.setDynamicColor(enabled)
         }
     }
 
@@ -306,6 +324,18 @@ class MainViewModel(
             settings.setWebDavPassword(password)
             settings.setWebDavPath(path)
             snackbars.tryEmit("WebDAV 设置已保存")
+        }
+    }
+
+    fun setThemeMode(mode: Int) {
+        viewModelScope.launch {
+            settings.setThemeMode(mode)
+        }
+    }
+
+    fun setDynamicColor(enabled: Boolean) {
+        viewModelScope.launch {
+            settings.setDynamicColor(enabled)
         }
     }
 
