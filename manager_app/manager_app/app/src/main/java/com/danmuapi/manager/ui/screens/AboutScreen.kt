@@ -73,7 +73,10 @@ fun AboutScreen(
 
                 FilledTonalButton(
                     onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com"))
+                        val intent = Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("https://github.com/lilixu3/danmu-api-module"),
+                        )
                         ctx.startActivity(intent)
                     },
                     modifier = Modifier.fillMaxWidth(),

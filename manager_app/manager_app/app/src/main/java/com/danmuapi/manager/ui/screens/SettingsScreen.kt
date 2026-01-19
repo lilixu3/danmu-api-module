@@ -346,27 +346,6 @@ fun SettingsScreen(
             }
         }
 
-        // About
-        ManagerCard {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Filled.Info, contentDescription = null)
-                    Text(text = "关于", style = MaterialTheme.typography.titleMedium)
-                }
-                OutlinedButton(
-                    onClick = onOpenAbout,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("查看版本与说明")
-                }
-            }
-        }
-
         // Config file
         ManagerCard {
             Column(
@@ -605,6 +584,27 @@ fun SettingsScreen(
                     text = "提示：WebDAV 密码将保存在应用私有目录（DataStore）中，属于明文存储。",
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+
+        // About (move to the bottom)
+        ManagerCard {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.Info, contentDescription = null)
+                    Text(text = "关于", style = MaterialTheme.typography.titleMedium)
+                }
+                OutlinedButton(
+                    onClick = onOpenAbout,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("查看版本与说明")
+                }
             }
         }
     }

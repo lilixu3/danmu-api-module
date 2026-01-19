@@ -17,7 +17,7 @@
             android:name="com.danmuapi.manager.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.DanmuManager.Splash">
+            android:theme="@style/Theme.DanmuManager">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

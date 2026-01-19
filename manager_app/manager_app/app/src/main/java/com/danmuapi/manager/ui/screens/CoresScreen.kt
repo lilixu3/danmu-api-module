@@ -5,24 +5,33 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import com.danmuapi.manager.ui.components.ManagerCard
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.data.CoreUpdateInfo
 import com.danmuapi.manager.data.model.CoreListResponse
 import com.danmuapi.manager.data.model.CoreMeta
+import com.danmuapi.manager.ui.components.ManagerCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,19 +69,17 @@ fun CoresScreen(
     if (showSheet) {
         ModalBottomSheet(onDismissRequest = { showSheet = false }) {
             Column(
-                modifier = Modifier
-                    .padding(16.dp),
+                modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                Text(text = "下载/更新核心", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    text = "下载/更新核心",
-                    style = MaterialTheme.typography.titleLarge,
+                    text = "建议优先使用稳定分支或 Release Tag。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                Text(
-                    text = "推荐仓库",
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                Text(text = "快速选择", style = MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AssistChip(onClick = { repoInput = "huangxd-/danmu_api" }, label = { Text("huangxd-") })
                     AssistChip(onClick = { repoInput = "lilixu3/danmu_api" }, label = { Text("lilixu3") })
@@ -103,9 +111,7 @@ fun CoresScreen(
                             showSheet = false
                             onInstall(repoInput.trim(), refInput.trim().ifBlank { "main" })
                         },
-                    ) {
-                        Text("开始下载")
-                    }
+                    ) { Text("开始下载") }
                 }
             }
         }
@@ -117,9 +123,7 @@ fun CoresScreen(
             onDismissRequest = { deleteTarget = null },
             title = { Text("删除核心？") },
             text = {
-                Text(
-                    "将删除：\n${t.repo}@${t.ref}\n${t.version ?: "-"} (${t.shaShort ?: t.sha ?: ""})",
-                )
+                Text("将删除：\n${t.repo}@${t.ref}\n${t.version ?: "-"} (${t.shaShort ?: t.sha ?: ""})")
             },
             confirmButton = {
                 TextButton(
@@ -133,73 +137,110 @@ fun CoresScreen(
         )
     }
 
+    val list = cores?.cores ?: emptyList()
+    val activeId = cores?.activeCoreId
+    val sorted = list.sortedWith(
+        compareByDescending<CoreMeta> { it.id == activeId }
+            .thenBy { it.repo.lowercase() }
+            .thenBy { it.ref.lowercase() },
+    )
+
     Column(
         modifier = Modifier
+            .fillMaxSize()
             .padding(paddingValues)
-            .padding(16.dp),
+            .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = "已安装核心", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    text = "下载后可切换/删除；如需省电，建议在仪表盘关闭自启动并停止服务。",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { showSheet = true }) {
-                    Icon(Icons.Filled.SystemUpdate, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("下载核心")
+        // Header (cleaner, less clutter)
+        ManagerCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "核心管理", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "下载、切换、更新与清理已安装核心。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(onClick = { showSheet = true }) {
+                            Icon(Icons.Filled.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("下载")
+                        }
+                        FilledTonalIconButton(
+                            onClick = onCheckUpdates,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        ) {
+                            BadgedBox(
+                                badge = {
+                                    // If any core has update available, show a small dot.
+                                    val hasUpdate = sorted.any { updateInfo[it.id]?.updateAvailable == true }
+                                    if (hasUpdate) Badge()
+                                },
+                            ) {
+                                Icon(Icons.Filled.SystemUpdate, contentDescription = "检查更新", modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
                 }
-                OutlinedButton(onClick = onCheckUpdates) {
-                    Icon(Icons.Filled.SystemUpdate, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("检查更新")
+
+                if (sorted.isEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = "暂无已安装核心，点击右上角“下载”获取一个核心。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
 
-        val list = cores?.cores ?: emptyList()
-        val activeId = cores?.activeCoreId
-
-        if (list.isEmpty()) {
-            ManagerCard {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(text = "暂无已安装核心", style = MaterialTheme.typography.titleMedium)
-                    Text(text = "点击右上角“下载核心”获取一个核心。", style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(list, key = { it.id }) { core ->
-                    CoreItem(
-                        core = core,
-                        isActive = core.id == activeId,
-                        update = updateInfo[core.id],
-                        onActivate = { onActivate(core.id) },
-                        onUpdate = { onInstall(core.repo, core.ref) },
-                        onDelete = { deleteTarget = core },
-                    )
-                }
+        // List
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
+            items(sorted, key = { it.id }) { core ->
+                CoreItemNew(
+                    core = core,
+                    isActive = core.id == activeId,
+                    update = updateInfo[core.id],
+                    onActivate = { onActivate(core.id) },
+                    onUpdate = { onInstall(core.repo, core.ref) },
+                    onDelete = { deleteTarget = core },
+                )
             }
         }
     }
-
 }
 
 @Composable
-private fun CoreItem(
+private fun CoreItemNew(
     core: CoreMeta,
     isActive: Boolean,
     update: CoreUpdateInfo?,
@@ -207,12 +248,19 @@ private fun CoreItem(
     onUpdate: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    ManagerCard {
+    val sha = core.shaShort ?: core.sha
+    val version = core.version ?: "-"
+
+    val updateAvailable = update?.updateAvailable == true
+    val latestVer = update?.latestVersion
+    val latestShaShort = update?.latestCommit?.sha?.take(7)
+
+    ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -222,74 +270,111 @@ private fun CoreItem(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = core.repo,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "Ref: ${core.ref}",
+                        text = "${core.ref} · v$version" + (if (!sha.isNullOrBlank()) " · ${sha.take(7)}" else ""),
                         style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = if (sha.isNullOrBlank()) FontFamily.Default else FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
+
                 if (isActive) {
-                    AssistChip(onClick = {}, label = { Text("当前") })
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Done,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            Text(
+                                text = "当前",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(onClick = {}, label = { Text("v${core.version ?: "-"}") })
-                val sha = core.shaShort ?: core.sha
-                if (!sha.isNullOrBlank()) {
-                    AssistChip(onClick = {}, label = { Text(sha, fontFamily = FontFamily.Monospace) })
-                }
+            // Update info (single, clean line)
+            val updateLine = when {
+                update == null -> "未检查更新"
+                updateAvailable -> "发现更新" + (latestVer?.let { " · v$it" } ?: "") + (latestShaShort?.let { " · $it" } ?: "")
+                else -> "已是最新" + (latestVer?.let { " · v$it" } ?: "")
+            }
+            val updateContainer = when {
+                update == null -> MaterialTheme.colorScheme.surfaceVariant
+                updateAvailable -> MaterialTheme.colorScheme.tertiaryContainer
+                else -> MaterialTheme.colorScheme.secondaryContainer
+            }
+            val updateContent = when {
+                update == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                updateAvailable -> MaterialTheme.colorScheme.onTertiaryContainer
+                else -> MaterialTheme.colorScheme.onSecondaryContainer
             }
 
-            if (update != null) {
-                val remoteShaShort = update.latestCommit?.sha?.take(7)
-                val remoteVer = update.latestVersion
-                val text = if (update.updateAvailable) {
-                    "有更新" + (remoteVer?.let { "：v$it" } ?: "")
-                } else {
-                    "已是最新"
-                }
-                Text(text = text, style = MaterialTheme.typography.bodyMedium)
-                if (!remoteShaShort.isNullOrBlank()) {
-                    Text(
-                        text = "Remote: $remoteShaShort",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                }
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = updateContainer,
+            ) {
+                Text(
+                    text = updateLine,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = updateContent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
 
+            // Actions
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedButton(
+                FilledTonalButton(
                     modifier = Modifier.weight(1f),
                     onClick = onActivate,
                     enabled = !isActive,
                 ) {
-                    Icon(Icons.Filled.Done, contentDescription = null)
+                    Icon(Icons.Filled.Done, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("切换")
+                    Text(if (isActive) "已启用" else "启用")
                 }
+
                 OutlinedButton(
                     modifier = Modifier.weight(1f),
                     onClick = onUpdate,
                 ) {
-                    Icon(Icons.Filled.SystemUpdate, contentDescription = null)
+                    Icon(Icons.Filled.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("更新")
+                    Text(if (updateAvailable) "更新" else "重装")
                 }
-                OutlinedButton(
-                    modifier = Modifier.weight(1f),
+
+                FilledTonalIconButton(
                     onClick = onDelete,
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    ),
                 ) {
-                    Icon(Icons.Filled.Delete, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("删除")
+                    Icon(Icons.Filled.Delete, contentDescription = "删除", modifier = Modifier.size(20.dp))
                 }
             }
         }

@@ -7,10 +7,8 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 
-    <!-- Splash theme for Android 12+ (core-splashscreen). -->
-    <style name="Theme.DanmuManager.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@android:color/black</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
-        <item name="postSplashScreenTheme">@style/Theme.DanmuManager</item>
-    </style>
+    <!--
+      Note: Android 12+ always shows a brief system splash screen.
+      We intentionally avoid a custom splash theme here to keep launch smooth and consistent.
+    -->
 </resources>

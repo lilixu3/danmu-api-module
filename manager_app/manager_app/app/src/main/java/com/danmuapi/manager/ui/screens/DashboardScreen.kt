@@ -51,6 +51,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -393,7 +394,9 @@ private fun ServiceStatusCard(
                                     .clip(CircleShape)
                                     .background(
                                         if (running) {
-                                            MaterialTheme.colorScheme.primary
+                                            // Use a success-like color so it won't look out of place
+                                            // when dynamic color is turned off.
+                                            MaterialTheme.colorScheme.secondary
                                         } else {
                                             MaterialTheme.colorScheme.error
                                         }
@@ -456,6 +459,11 @@ private fun ServiceStatusCard(
                     modifier = Modifier.weight(1f),
                     onClick = onRestart,
                     enabled = running == true,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        // Keep the restart button visually consistent with other controls
+                        // when dynamic color is disabled.
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
                 ) {
                     Icon(
                         Icons.Filled.RestartAlt,
