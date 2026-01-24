@@ -13,9 +13,16 @@ import com.danmuapi.manager.data.SettingsRepository
 import com.danmuapi.manager.data.model.CoreListResponse
 import com.danmuapi.manager.data.model.LogsResponse
 import com.danmuapi.manager.data.model.ModuleUpdateInfo  // 添加
+import com.danmuapi.manager.data.model.EnvVarItem
+import com.danmuapi.manager.data.model.EnvVarMeta
+import com.danmuapi.manager.data.model.ServerConfigResponse
+import com.danmuapi.manager.data.model.ServerLogEntry
 import com.danmuapi.manager.data.model.StatusResponse
+import com.danmuapi.manager.network.DanmuApiClient
+import com.danmuapi.manager.network.HttpResult
 import com.danmuapi.manager.network.WebDavClient
 import com.danmuapi.manager.network.WebDavResult
+import com.danmuapi.manager.root.DanmuPaths
 import com.danmuapi.manager.root.RootShell
 import com.danmuapi.manager.worker.LogCleanupScheduler
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +33,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainViewModel(
     private val appContext: Context,
@@ -34,6 +43,8 @@ class MainViewModel(
 ) : ViewModel() {
 
     private val webDavClient = WebDavClient()
+
+    private val danmuApiClient = DanmuApiClient()
 
     // UI state
     var rootAvailable: Boolean? by mutableStateOf(null)
@@ -54,6 +65,28 @@ class MainViewModel(
     var apiPort: Int by mutableStateOf(9321)
         private set
     var apiHost: String by mutableStateOf("0.0.0.0")
+        private set
+
+    /**
+     * Optional ADMIN_TOKEN from .env.
+     * Used by the server UI for system settings.
+     */
+    var adminToken: String by mutableStateOf("")
+        private set
+
+    // ===== danmu-api Console (Compose replica of Web UI) =====
+    var serverConfig: ServerConfigResponse? by mutableStateOf(null)
+        private set
+    var serverConfigError: String? by mutableStateOf(null)
+        private set
+    var serverConfigLoading: Boolean by mutableStateOf(false)
+        private set
+
+    var serverLogs: List<ServerLogEntry> by mutableStateOf(emptyList())
+        private set
+    var serverLogsError: String? by mutableStateOf(null)
+        private set
+    var serverLogsLoading: Boolean by mutableStateOf(false)
         private set
 
     // 添加以下内容
@@ -162,6 +195,9 @@ class MainViewModel(
         // DANMU_API_HOST (0.0.0.0 by default; if user sets 127.0.0.1 then LAN access is not possible)
         val host = kv["DANMU_API_HOST"].orEmpty().trim()
         apiHost = host.ifBlank { "0.0.0.0" }
+
+        // ADMIN_TOKEN (optional)
+        adminToken = kv["ADMIN_TOKEN"].orEmpty().trim()
     }
 
     private suspend fun <T> withBusy(message: String? = null, block: suspend () -> T): T {
@@ -350,6 +386,287 @@ class MainViewModel(
             }
             snackbars.tryEmit(if (ok) "配置已保存（重启服务后生效）" else "保存配置失败")
         }
+    }
+
+    // ====== danmu-api Console ======
+
+    private fun pickTokenSegment(useAdminToken: Boolean): String {
+        return if (useAdminToken && adminToken.isNotBlank()) adminToken else apiToken
+    }
+
+    /**
+     * Low-level request helper for the built-in console (Compose replica of Web UI).
+     */
+    suspend fun requestDanmuApi(
+        method: String,
+        path: String,
+        query: Map<String, String?> = emptyMap(),
+        bodyJson: String? = null,
+        useAdminToken: Boolean = false,
+    ): HttpResult {
+        return danmuApiClient.request(
+            method = method,
+            host = apiHost,
+            port = apiPort,
+            tokenSegment = pickTokenSegment(useAdminToken),
+            path = path,
+            query = query,
+            bodyJson = bodyJson,
+        )
+    }
+
+    fun refreshServerConfig(useAdminToken: Boolean = false) {
+        viewModelScope.launch {
+            serverConfigLoading = true
+            serverConfigError = null
+
+            val res = requestDanmuApi("GET", "/api/config", useAdminToken = useAdminToken)
+            if (res.isSuccessful) {
+                val parsed = parseServerConfig(res.body)
+                if (parsed != null) {
+                    serverConfig = parsed
+                } else {
+                    serverConfigError = "解析配置失败"
+                }
+            } else {
+                serverConfigError = res.error ?: "请求失败（HTTP ${res.code}）"
+            }
+            serverConfigLoading = false
+        }
+    }
+
+    fun refreshServerLogs() {
+        viewModelScope.launch {
+            serverLogsLoading = true
+            serverLogsError = null
+            val res = requestDanmuApi("GET", "/api/logs")
+            if (res.isSuccessful) {
+                serverLogs = parseServerLogs(res.body)
+            } else {
+                serverLogsError = res.error ?: "请求失败（HTTP ${res.code}）"
+            }
+            serverLogsLoading = false
+        }
+    }
+
+    fun clearServerLogs() {
+        viewModelScope.launch {
+            if (adminToken.isBlank()) {
+                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行清空服务日志")
+                return@launch
+            }
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/logs/clear",
+                bodyJson = "{}",
+                useAdminToken = true,
+            )
+            if (res.isSuccessful) {
+                snackbars.tryEmit("已清空服务日志")
+                refreshServerLogs()
+            } else {
+                snackbars.tryEmit(res.error ?: "清空失败（HTTP ${res.code}）")
+            }
+        }
+    }
+
+    fun clearServerCache() {
+        viewModelScope.launch {
+            if (adminToken.isBlank()) {
+                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行清理缓存")
+                return@launch
+            }
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/cache/clear",
+                bodyJson = "{}",
+                useAdminToken = true,
+            )
+            snackbars.tryEmit(
+                if (res.isSuccessful) "缓存已清理" else (res.error ?: "清理失败（HTTP ${res.code}）")
+            )
+        }
+    }
+
+    fun deployServer() {
+        viewModelScope.launch {
+            if (adminToken.isBlank()) {
+                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行重新部署")
+                return@launch
+            }
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/deploy",
+                bodyJson = "{}",
+                useAdminToken = true,
+            )
+            snackbars.tryEmit(
+                if (res.isSuccessful) "已触发部署" else (res.error ?: "操作失败（HTTP ${res.code}）")
+            )
+        }
+    }
+
+    fun setServerEnvVar(key: String, value: String) {
+        viewModelScope.launch {
+            val tokenIsAdmin = adminToken.isNotBlank()
+            val body = JSONObject().apply {
+                put("key", key)
+                put("value", value)
+            }.toString()
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/env/set",
+                bodyJson = body,
+                useAdminToken = tokenIsAdmin,
+            )
+            if (res.isSuccessful) {
+                snackbars.tryEmit("已更新：$key")
+                // Re-fetch access info in case TOKEN/PORT/HOST changes.
+                refreshAccessInfoInternal()
+                refreshServerConfig(useAdminToken = tokenIsAdmin)
+            } else {
+                snackbars.tryEmit(res.error ?: "更新失败（HTTP ${res.code}）")
+            }
+        }
+    }
+
+    fun deleteServerEnvVar(key: String) {
+        viewModelScope.launch {
+            val tokenIsAdmin = adminToken.isNotBlank()
+            val body = JSONObject().apply {
+                put("key", key)
+            }.toString()
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/env/del",
+                bodyJson = body,
+                useAdminToken = tokenIsAdmin,
+            )
+            if (res.isSuccessful) {
+                snackbars.tryEmit("已删除：$key")
+                refreshAccessInfoInternal()
+                refreshServerConfig(useAdminToken = tokenIsAdmin)
+            } else {
+                snackbars.tryEmit(res.error ?: "删除失败（HTTP ${res.code}）")
+            }
+        }
+    }
+
+    private fun parseServerConfig(body: String): ServerConfigResponse? {
+        return try {
+            val obj = JSONObject(body)
+
+            val categorized = mutableMapOf<String, List<EnvVarItem>>()
+            val categorizedObj = obj.optJSONObject("categorizedEnvVars")
+            if (categorizedObj != null) {
+                val iter = categorizedObj.keys()
+                while (iter.hasNext()) {
+                    val category = iter.next()
+                    val arr = categorizedObj.optJSONArray(category) ?: JSONArray()
+                    val list = mutableListOf<EnvVarItem>()
+                    for (i in 0 until arr.length()) {
+                        val it = arr.optJSONObject(i) ?: continue
+                        val key = it.optString("key")
+                        val valueAny = it.opt("value")
+                        val value = when (valueAny) {
+                            is JSONArray -> (0 until valueAny.length()).joinToString(",") { idx -> valueAny.optString(idx) }
+                            null -> ""
+                            else -> valueAny.toString()
+                        }
+                        val type = it.optString("type").ifBlank { "text" }
+                        val desc = it.optString("description")
+                        val options = mutableListOf<String>()
+                        val optAny = it.opt("options")
+                        if (optAny is JSONArray) {
+                            for (j in 0 until optAny.length()) options.add(optAny.optString(j))
+                        }
+                        list.add(
+                            EnvVarItem(
+                                key = key,
+                                value = value,
+                                type = type,
+                                description = desc,
+                                options = options,
+                            )
+                        )
+                    }
+                    categorized[category] = list
+                }
+            }
+
+            val metaMap = mutableMapOf<String, EnvVarMeta>()
+            val metaObj = obj.optJSONObject("envVarConfig")
+            if (metaObj != null) {
+                val iter = metaObj.keys()
+                while (iter.hasNext()) {
+                    val k = iter.next()
+                    val m = metaObj.optJSONObject(k) ?: continue
+                    val options = mutableListOf<String>()
+                    val optAny = m.opt("options")
+                    if (optAny is JSONArray) {
+                        for (j in 0 until optAny.length()) options.add(optAny.optString(j))
+                    }
+                    val minVal = if (m.has("min")) m.optDouble("min") else Double.NaN
+                    val maxVal = if (m.has("max")) m.optDouble("max") else Double.NaN
+                    metaMap[k] = EnvVarMeta(
+                        category = m.optString("category").ifBlank { "system" },
+                        type = m.optString("type").ifBlank { "text" },
+                        description = m.optString("description"),
+                        options = options,
+                        min = if (!minVal.isNaN()) minVal else null,
+                        max = if (!maxVal.isNaN()) maxVal else null,
+                    )
+                }
+            }
+
+            val originalMap = mutableMapOf<String, String>()
+            val origObj = obj.optJSONObject("originalEnvVars")
+            if (origObj != null) {
+                val iter = origObj.keys()
+                while (iter.hasNext()) {
+                    val k = iter.next()
+                    val v = origObj.opt(k)
+                    originalMap[k] = v?.toString().orEmpty()
+                }
+            }
+
+            ServerConfigResponse(
+                message = obj.optString("message"),
+                version = obj.optString("version").ifBlank { null },
+                categorizedEnvVars = categorized,
+                envVarConfig = metaMap,
+                originalEnvVars = originalMap,
+                hasAdminToken = obj.optBoolean("hasAdminToken", false),
+                repository = obj.optString("repository").ifBlank { null },
+                description = obj.optString("description").ifBlank { null },
+                notice = obj.optString("notice").ifBlank { null },
+            )
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun parseServerLogs(text: String): List<ServerLogEntry> {
+        // Expected format per line: "[2024-01-01 12:00:00] info: message"
+        val regex = Regex("^\\[(.+?)]\\s+(\\w+):\\s+(.*)")
+        return text
+            .lineSequence()
+            .mapNotNull { raw ->
+                val line = raw.trim()
+                if (line.isBlank()) return@mapNotNull null
+
+                val m = regex.find(line)
+                if (m == null) {
+                    // Keep unknown format lines (rare, but happens on some deployments).
+                    return@mapNotNull ServerLogEntry("", "", line)
+                }
+
+                val ts = m.groupValues.getOrNull(1).orEmpty()
+                val level = m.groupValues.getOrNull(2).orEmpty()
+                val msg = m.groupValues.getOrNull(3).orEmpty()
+                ServerLogEntry(ts, level, msg)
+            }
+            .toList()
     }
 
     fun exportEnvToUri(uri: Uri) {
@@ -595,7 +912,7 @@ class MainViewModel(
         }
     }
 
-    fun installModuleZip(zipPath: String) {
+    fun installModuleZip(zipPath: String, preserveCore: Boolean = true) {
         viewModelScope.launch {
             val wasRunning = status?.service?.running == true
             val ok = withBusy("安装模块中…") {
@@ -658,6 +975,26 @@ class MainViewModel(
             }
             
             if (ok) {
+                if (!preserveCore) {
+                    // User requested to drop existing cores and switch to the bundled core shipped in the new module.
+                    // We do a safe backup instead of deleting outright.
+                    val ts = System.currentTimeMillis()
+                    val resetCmd = """
+                        PERSIST_DIR='/data/adb/danmu_api_server'
+                        CORE_CLI='${DanmuPaths.CORE_CLI}'
+                        TS='${ts}'
+
+                        if [ -d "${'$'}PERSIST_DIR/cores" ]; then
+                          mv "${'$'}PERSIST_DIR/cores" "${'$'}PERSIST_DIR/cores.bak.${'$'}TS" 2>/dev/null || true
+                        fi
+                        rm -f "${'$'}PERSIST_DIR/core" "${'$'}PERSIST_DIR/active_core_id" 2>/dev/null || true
+
+                        # Re-seed / fix symlinks based on the newly installed module.
+                        sh "${'$'}CORE_CLI" ensure >/dev/null 2>&1 || true
+                        echo "reset_core_ok"
+                    """.trimIndent()
+                    RootShell.runSu(resetCmd)
+                }
                 snackbars.tryEmit("模块安装成功！建议重启设备后生效。")
                 refreshAllInternal()
                 // Restore previous running state (best-effort).

@@ -409,10 +409,10 @@ fun SettingsScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.BatterySaver, contentDescription = null)
-                    Text(text = "日志自动清理", style = MaterialTheme.typography.titleMedium)
+                    Text(text = "日志自动修剪", style = MaterialTheme.typography.titleMedium)
                 }
                 Text(
-                    text = "使用 WorkManager 定时执行（无轮询）。建议设置为 3/7 天，既省电也不占空间。",
+                    text = "使用 WorkManager 定时执行（无轮询）。会将模块日志修剪到最后 1MB（不会全部清空），建议设置为 3/7 天。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
 

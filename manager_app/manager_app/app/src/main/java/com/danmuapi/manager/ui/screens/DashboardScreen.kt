@@ -42,6 +42,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import com.danmuapi.manager.ui.components.ManagerCard
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.FilledTonalIconButton
@@ -98,7 +99,7 @@ fun DashboardScreen(
     onCheckActiveCoreUpdate: () -> Unit,
     onCheckModuleUpdate: () -> Unit,
     onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
-    onInstallModuleZip: (String) -> Unit,
+    onInstallModuleZip: (String, Boolean) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -156,7 +157,7 @@ private fun ServiceStatusCard(
     moduleUpdateInfo: ModuleUpdateInfo?,
     onCheckModuleUpdate: () -> Unit,
     onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
-    onInstallModuleZip: (String) -> Unit,
+    onInstallModuleZip: (String, Boolean) -> Unit,
 ) {
     val running: Boolean? = status?.service?.running
     val pid = status?.service?.pid
@@ -203,11 +204,51 @@ private fun ServiceStatusCard(
 
     // 下载成功弹窗
     if (showDownloadSuccess) {
+        var preserveCore by remember { mutableStateOf(true) }
         AlertDialog(
             onDismissRequest = { showDownloadSuccess = false },
             title = { Text("下载完成") },
             text = {
-                Text("安装包已下载完成，是否立即安装？\n\n安装后建议重启设备使模块生效。")
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("安装包已下载完成，是否立即安装？")
+                    Text(
+                        text = "安装后建议重启设备使模块生效。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    HorizontalDivider()
+
+                    Text(
+                        text = "核心处理",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { preserveCore = true }
+                    ) {
+                        RadioButton(selected = preserveCore, onClick = { preserveCore = true })
+                        Text("保留旧版核心（推荐）")
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { preserveCore = false }
+                    ) {
+                        RadioButton(selected = !preserveCore, onClick = { preserveCore = false })
+                        Text("不保留：安装后切换到新模块自带核心")
+                    }
+
+                    Text(
+                        text = "提示：选择“不保留”不会直接删除旧核心，会将 cores 目录备份为 cores.bak.*，便于回退。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -216,7 +257,7 @@ private fun ServiceStatusCard(
                             showDownloadSuccess = false
                             val path = downloadedPath
                             if (!path.isNullOrBlank()) {
-                                onInstallModuleZip(path)
+                                onInstallModuleZip(path, preserveCore)
                             }
                         },
                     ) {
