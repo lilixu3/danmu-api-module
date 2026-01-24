@@ -234,7 +234,7 @@ fun DanmuManagerApp(applicationContext: Context) {
                 // Entering console: keep module logs fresh; backend features are loaded lazily inside ConsoleScreen.
                 LaunchedEffect(Unit) {
                     vm.refreshLogs()
-                    if (vm.status?.isRunning == true) {
+                    if (vm.status?.service?.running == true) {
                         vm.refreshServerConfig(useAdminToken = false)
                         vm.refreshServerLogs()
                     }
@@ -243,7 +243,7 @@ fun DanmuManagerApp(applicationContext: Context) {
                 ConsoleScreen(
                     paddingValues = padding,
                     rootAvailable = vm.rootAvailable,
-                    serviceRunning = (vm.status?.isRunning == true),
+                    serviceRunning = (vm.status?.service?.running == true),
                     apiToken = vm.apiToken,
                     apiPort = vm.apiPort,
                     apiHost = vm.apiHost,

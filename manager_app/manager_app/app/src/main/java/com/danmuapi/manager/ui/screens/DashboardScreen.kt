@@ -42,6 +42,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import com.danmuapi.manager.ui.components.ManagerCard
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.FilledTonalIconButton

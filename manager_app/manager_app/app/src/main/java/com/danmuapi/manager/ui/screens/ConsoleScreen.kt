@@ -1098,11 +1098,11 @@ private fun PushDanmuTab(
 
         scope.launch {
             val res = requestApi(
-                method = "GET",
-                path = "/api/v2/search/anime",
-                query = mapOf("keyword" to kw),
-                bodyJson = null,
-                useAdminToken = false,
+                "GET",
+                "/api/v2/search/anime",
+                mapOf("keyword" to kw),
+                null,
+                false,
             )
             searching = false
             if (!res.isSuccessful) {
@@ -1138,11 +1138,11 @@ private fun PushDanmuTab(
         loadingEpisodes = true
         scope.launch {
             val res = requestApi(
-                method = "GET",
-                path = "/api/v2/bangumi/${anime.animeId}",
-                query = emptyMap(),
-                bodyJson = null,
-                useAdminToken = false,
+                "GET",
+                "/api/v2/bangumi/${anime.animeId}",
+                emptyMap<String, String?>(),
+                null,
+                false,
             )
             loadingEpisodes = false
             if (!res.isSuccessful) {
