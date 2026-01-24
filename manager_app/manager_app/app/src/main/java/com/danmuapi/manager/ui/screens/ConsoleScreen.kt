@@ -114,6 +114,10 @@ fun ConsoleScreen(
     var loading by remember { mutableStateOf(false) }
     var lastError by remember { mutableStateOf<String?>(null) }
 
+    // WebView 深色模式需要读取 MaterialTheme。
+    // 注意：MaterialTheme.* 属于 @Composable 读取，不能放在 remember { } 的计算块里。
+    val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
     // Keep a single WebView instance to preserve state across recompositions.
     val webView = remember {
         WebView(ctx).apply {
@@ -129,13 +133,6 @@ fun ConsoleScreen(
                 displayZoomControls = false
                 setSupportZoom(true)
                 mediaPlaybackRequiresUserGesture = true
-            }
-
-            // Dark mode for WebView if supported.
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
-                val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-                val forceDark = if (isDark) WebSettingsCompat.FORCE_DARK_ON else WebSettingsCompat.FORCE_DARK_OFF
-                WebSettingsCompat.setForceDark(settings, forceDark)
             }
 
             webChromeClient = object : WebChromeClient() {
@@ -179,6 +176,14 @@ fun ConsoleScreen(
                     }
                 }
             }
+        }
+    }
+
+    // Apply dark mode based on current Compose theme (updates when theme changes).
+    LaunchedEffect(isDarkTheme) {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+            val forceDark = if (isDarkTheme) WebSettingsCompat.FORCE_DARK_ON else WebSettingsCompat.FORCE_DARK_OFF
+            WebSettingsCompat.setForceDark(webView.settings, forceDark)
         }
     }
 
