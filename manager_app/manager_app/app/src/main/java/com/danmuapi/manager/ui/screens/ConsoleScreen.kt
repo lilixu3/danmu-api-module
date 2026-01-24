@@ -1,15 +1,20 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.danmuapi.manager.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -17,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -24,6 +30,8 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
@@ -33,6 +41,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -65,6 +74,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -320,9 +330,11 @@ private fun ConfigPreviewTab(
                 }
 
                 items(filtered, key = { it.key }) { item ->
+                    val accent = categoryAccentColor(category)
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
                     ) {
                         Column(Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -375,6 +387,20 @@ private fun categoryLabel(category: String): String {
         "cache" -> "缓存"
         "system" -> "系统"
         else -> category
+    }
+}
+
+@Composable
+private fun categoryAccentColor(category: String): androidx.compose.ui.graphics.Color {
+    val c = category.lowercase(Locale.getDefault())
+    return when {
+        c.contains("api") -> MaterialTheme.colorScheme.primary
+        c.contains("source") -> MaterialTheme.colorScheme.secondary
+        c.contains("match") -> MaterialTheme.colorScheme.tertiary
+        c.contains("cache") -> MaterialTheme.colorScheme.secondary
+        c.contains("system") -> MaterialTheme.colorScheme.tertiary
+        c.contains("danmu") -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.primary
     }
 }
 
@@ -452,8 +478,10 @@ private fun ServerLogsView(
 ) {
     val clipboard = LocalClipboardManager.current
     var autoRefresh by remember { mutableStateOf(false) }
+    var followTail by remember { mutableStateOf(true) }
     var filter by remember { mutableStateOf("all") }
     var keyword by remember { mutableStateOf("") }
+    var confirmCopyAll by remember { mutableStateOf(false) }
 
     LaunchedEffect(autoRefresh, serviceRunning) {
         if (!serviceRunning) return@LaunchedEffect
@@ -480,6 +508,50 @@ private fun ServerLogsView(
         }
     }
 
+    // Avoid rendering thousands of cards: show as a single, selectable text panel.
+    // Also cap the visible lines to keep the UI smooth.
+    val maxDisplayLines = 1200
+    val displayLogs = remember(filtered) {
+        if (filtered.size > maxDisplayLines) filtered.takeLast(maxDisplayLines) else filtered
+    }
+    val truncated = filtered.size > displayLogs.size
+    val displayText = remember(displayLogs) {
+        displayLogs.joinToString("\n") { it.toLine() }
+    }
+
+    val scrollState = rememberScrollState()
+    LaunchedEffect(displayText, followTail) {
+        if (!followTail) return@LaunchedEffect
+        // Let layout calculate maxValue.
+        delay(10)
+        try {
+            scrollState.scrollTo(scrollState.maxValue)
+        } catch (_: Throwable) {
+        }
+    }
+
+    if (confirmCopyAll) {
+        AlertDialog(
+            onDismissRequest = { confirmCopyAll = false },
+            title = { Text("复制全部日志？") },
+            text = {
+                Text(
+                    "当前筛选结果共 ${filtered.size} 条。复制全部可能较大，部分机型会变慢。\n\n" +
+                        "建议优先复制“当前显示”。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmCopyAll = false
+                        clipboard.setText(AnnotatedString(filtered.joinToString("\n") { it.toLine() }))
+                    }
+                ) { Text("仍要复制") }
+            },
+            dismissButton = { TextButton(onClick = { confirmCopyAll = false }) { Text("取消") } }
+        )
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -494,21 +566,31 @@ private fun ServerLogsView(
 
                 Spacer(Modifier.height(8.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     OutlinedButton(onClick = onRefresh, enabled = serviceRunning && !loading) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("刷新")
                     }
                     OutlinedButton(
-                        onClick = {
-                            clipboard.setText(AnnotatedString(filtered.joinToString("\n") { it.toLine() }))
-                        },
-                        enabled = filtered.isNotEmpty()
+                        onClick = { clipboard.setText(AnnotatedString(displayText)) },
+                        enabled = displayText.isNotBlank()
                     ) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("复制")
+                        Text(if (truncated) "复制当前显示" else "复制")
+                    }
+                    if (truncated && filtered.isNotEmpty()) {
+                        OutlinedButton(
+                            onClick = { confirmCopyAll = true },
+                        ) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("复制全部")
+                        }
                     }
                     if (adminToken.isNotBlank()) {
                         OutlinedButton(
@@ -530,7 +612,17 @@ private fun ServerLogsView(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = followTail, onCheckedChange = { followTail = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text("跟随底部")
+                }
+
+                Spacer(Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     FilterChip(selected = filter == "all", onClick = { filter = "all" }, label = { Text("全部") })
                     FilterChip(selected = filter == "info", onClick = { filter = "info" }, label = { Text("Info") })
                     FilterChip(selected = filter == "warn", onClick = { filter = "warn" }, label = { Text("Warn") })
@@ -545,6 +637,13 @@ private fun ServerLogsView(
                     singleLine = true,
                     label = { Text("筛选") },
                     placeholder = { Text("关键词/时间/级别") }
+                )
+
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "当前：${displayLogs.size}${if (truncated) "（已截断显示最后 $maxDisplayLines 条/共 ${filtered.size} 条）" else " 条"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
                 if (!serviceRunning) {
@@ -564,33 +663,25 @@ private fun ServerLogsView(
                     }
                 }
                 error != null -> Text("加载失败：$error", color = MaterialTheme.colorScheme.error)
-                filtered.isEmpty() -> Text("暂无日志")
-            }
-        }
-
-        items(filtered.reversed(), key = { it.timestamp + it.level + it.message.hashCode() }) { entry ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        entry.timestamp.ifBlank { "-" },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        entry.level.ifBlank { "" }.uppercase(Locale.getDefault()),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = when {
-                            entry.level.equals("error", true) -> MaterialTheme.colorScheme.error
-                            entry.level.equals("warn", true) -> MaterialTheme.colorScheme.tertiary
-                            else -> MaterialTheme.colorScheme.primary
+                displayLogs.isEmpty() -> Text("暂无日志")
+                else -> {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = displayText,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 220.dp, max = 520.dp)
+                                    .verticalScroll(scrollState)
+                                    .padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
                         }
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(entry.message, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
         }
@@ -796,10 +887,15 @@ private fun ApiTestTab(
         bodyText = selected.bodyTemplate.orEmpty()
     }
 
-    var responseText by remember { mutableStateOf("") }
+    // Raw response may be large; keep UI rendering as a bounded preview.
+    var responseRaw by remember { mutableStateOf("") }
+    var responsePreview by remember { mutableStateOf("") }
+    var responseHint by remember { mutableStateOf<String?>(null) }
     var responseMeta by remember { mutableStateOf("") }
+    var responseTruncatedByClient by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var confirmCopyFull by remember { mutableStateOf(false) }
 
     fun send() {
         if (!serviceRunning) {
@@ -808,7 +904,10 @@ private fun ApiTestTab(
         }
         error = null
         loading = true
-        responseText = ""
+        responseRaw = ""
+        responsePreview = ""
+        responseHint = null
+        responseTruncatedByClient = false
         responseMeta = ""
 
         scope.launch {
@@ -851,14 +950,62 @@ private fun ApiTestTab(
             loading = false
 
             if (result.isSuccessful) {
-                responseMeta = "HTTP ${result.code} • ${result.durationMs}ms" + (result.contentType?.let { " • $it" } ?: "")
-                responseText = prettifyIfJson(result.body)
+                responseRaw = result.body
+                responseTruncatedByClient = result.truncated
+
+                val sizeInfo = result.bodyBytesKept.takeIf { it > 0L }?.let { " • ${humanBytes(it)}" }.orEmpty()
+                val ctInfo = result.contentType?.let { " • $it" }.orEmpty()
+                val truncInfo = if (result.truncated) " • 已截断" else ""
+                responseMeta = "HTTP ${result.code} • ${result.durationMs}ms$ctInfo$sizeInfo$truncInfo"
+
+                // Pretty print JSON only when it's small enough and not truncated.
+                val pretty = if (!result.truncated) prettifyIfJson(result.body, maxChars = 160_000) else result.body
+
+                // UI preview cap: large text layout can still ANR on some devices.
+                val previewMaxChars = 60_000
+                responsePreview = if (pretty.length > previewMaxChars) {
+                    responseHint = "响应较大：仅预览前 ${previewMaxChars} 字符（可复制完整响应）。"
+                    pretty.take(previewMaxChars) + "\n\n…（预览已截断）"
+                } else {
+                    responseHint = if (result.truncated) {
+                        "响应过大：已被客户端限制读取约 ${humanBytes(result.bodyBytesKept)}，用于避免卡死/闪退。"
+                    } else null
+                    pretty
+                }
             } else {
                 responseMeta = "HTTP ${result.code} • ${result.durationMs}ms"
                 error = result.error ?: "请求失败"
-                responseText = result.body
+                responseRaw = result.body
+                responsePreview = if (result.body.length > 60_000) result.body.take(60_000) + "\n\n…（预览已截断）" else result.body
+                responseTruncatedByClient = result.truncated
+                if (result.truncated) {
+                    responseHint = "错误响应过大：已被客户端截断读取，避免卡死。"
+                }
             }
         }
+    }
+
+    if (confirmCopyFull) {
+        AlertDialog(
+            onDismissRequest = { confirmCopyFull = false },
+            title = { Text("复制完整响应？") },
+            text = {
+                val size = responseRaw.toByteArray(Charsets.UTF_8).size.toLong()
+                Text(
+                    "当前已读取内容约 ${humanBytes(size)}。复制到剪贴板可能会短暂卡顿。\n\n" +
+                        "如果只是查看/排错，建议复制“预览”。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmCopyFull = false
+                        clipboard.setText(AnnotatedString(responseRaw))
+                    }
+                ) { Text("仍要复制") }
+            },
+            dismissButton = { TextButton(onClick = { confirmCopyFull = false }) { Text("取消") } }
+        )
     }
 
     LazyColumn(
@@ -926,7 +1073,10 @@ private fun ApiTestTab(
                             // Simple select: render as chips
                             Text(p.label, style = MaterialTheme.typography.labelMedium)
                             Spacer(Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
                                 p.options.forEach { opt ->
                                     FilterChip(
                                         selected = (paramState[p.name] ?: p.default) == opt,
@@ -962,7 +1112,10 @@ private fun ApiTestTab(
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Button(onClick = { send() }, enabled = !loading && serviceRunning) {
                         if (loading) {
                             CircularProgressIndicator(modifier = Modifier.size(18.dp))
@@ -972,13 +1125,31 @@ private fun ApiTestTab(
                     }
                     OutlinedButton(
                         onClick = {
-                            clipboard.setText(AnnotatedString(responseText))
+                            clipboard.setText(AnnotatedString(responsePreview))
                         },
-                        enabled = responseText.isNotBlank()
+                        enabled = responsePreview.isNotBlank()
                     ) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("复制响应")
+                        Text("复制预览")
+                    }
+                    if (responseRaw.isNotBlank()) {
+                        OutlinedButton(
+                            onClick = {
+                                // Avoid copying a huge payload by accident.
+                                val size = responseRaw.length
+                                if (size > 120_000 || responseTruncatedByClient) {
+                                    confirmCopyFull = true
+                                } else {
+                                    clipboard.setText(AnnotatedString(responseRaw))
+                                }
+                            },
+                            enabled = responseRaw.isNotBlank()
+                        ) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("复制完整")
+                        }
                     }
                 }
             }
@@ -991,23 +1162,36 @@ private fun ApiTestTab(
             if (responseMeta.isNotBlank()) {
                 Text(responseMeta, style = MaterialTheme.typography.labelMedium)
             }
-            if (responseText.isNotBlank()) {
+            if (responseHint != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(responseHint!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (responsePreview.isNotBlank()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ) {
-                    Text(
-                        responseText,
-                        modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    val scroll = rememberScrollState()
+                    SelectionContainer {
+                        Text(
+                            responsePreview,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 140.dp, max = 520.dp)
+                                .verticalScroll(scroll)
+                                .padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-private fun prettifyIfJson(raw: String): String {
+private fun prettifyIfJson(raw: String, maxChars: Int = 120_000): String {
+    if (raw.length > maxChars) return raw
     val t = raw.trim()
     if (!(t.startsWith("{") && t.endsWith("}")) && !(t.startsWith("[") && t.endsWith("]"))) return raw
     return try {
@@ -1015,6 +1199,18 @@ private fun prettifyIfJson(raw: String): String {
     } catch (_: Throwable) {
         raw
     }
+}
+
+private fun humanBytes(bytes: Long): String {
+    val b = bytes.coerceAtLeast(0L)
+    val units = arrayOf("B", "KB", "MB", "GB")
+    var v = b.toDouble()
+    var i = 0
+    while (v >= 1024.0 && i < units.lastIndex) {
+        v /= 1024.0
+        i++
+    }
+    return if (i == 0) "${b}${units[i]}" else String.format(Locale.getDefault(), "%.1f%s", v, units[i])
 }
 
 // ===========================
@@ -1056,28 +1252,31 @@ private fun PushDanmuTab(
     var episodes by remember { mutableStateOf<List<EpisodeItem>>(emptyList()) }
     var loadingEpisodes by remember { mutableStateOf(false) }
 
-    // Push target
-    val presets = remember {
-        listOf(
-            "OK影视" to Pair(9978, "/action?do=refresh&type=danmaku&path="),
-            "Kodi" to Pair(8080, "/jsonrpc?request="),
-            "PotPlayer" to Pair(10800, "/danmaku?url="),
-        )
-    }
+    // Push target (OK影视 9978 only)
+    val okPushPath = remember { "/action?do=refresh&type=danmaku&path=" }
     var subnet by remember { mutableStateOf(defaultSubnet) }
     var lanPort by remember { mutableStateOf("9978") }
-    var pushUrl by remember { mutableStateOf("http://${defaultSubnet}.x:9978/action?do=refresh&type=danmaku&path=") }
 
-    // LAN scan
+    fun buildPushTemplate(host: String, port: Int): String {
+        return "http://$host:$port$okPushPath"
+    }
+
+    // Discovered 9978 devices (include localhost + this device LAN IPs)
     var scanning by remember { mutableStateOf(false) }
-    var scanProgress by remember { mutableStateOf(0) }
+    var scanProgress by remember { mutableIntStateOf(0) }
+    var scanTotal by remember { mutableIntStateOf(0) }
     var foundDevices by remember { mutableStateOf<List<String>>(emptyList()) }
+    var selectedDevice by remember { mutableStateOf<String?>(null) }
+    var pushUrl by remember { mutableStateOf(buildPushTemplate("127.0.0.1", 9978)) }
+    var autoScan by remember { mutableStateOf(true) }
+    var lastAutoScanKey by remember { mutableStateOf<String?>(null) }
 
-    fun applyPreset(index: Int) {
-        val (name, p) = presets[index]
-        val (port, path) = p
-        lanPort = port.toString()
-        pushUrl = "http://${subnet}.x:$port$path"
+    val localHosts = remember(lanIps) { (setOf("127.0.0.1") + lanIps).toSet() }
+
+    fun selectDevice(host: String) {
+        selectedDevice = host
+        val port = lanPort.trim().toIntOrNull() ?: 9978
+        pushUrl = buildPushTemplate(host, port)
     }
 
     fun search() {
@@ -1172,7 +1371,12 @@ private fun PushDanmuTab(
     }
 
     fun buildCommentUrl(episodeId: Int): String {
-        val host = lanIp ?: "127.0.0.1"
+        // If pushing to a local player (127.0.0.1 / 本机 IP), prefer loopback for maximum compatibility.
+        val host = if (selectedDevice != null && localHosts.contains(selectedDevice)) {
+            "127.0.0.1"
+        } else {
+            lanIp ?: "127.0.0.1"
+        }
         return "http://$host:$apiPort/$apiToken/api/v2/comment/$episodeId?format=xml"
     }
 
@@ -1202,40 +1406,82 @@ private fun PushDanmuTab(
     }
 
     fun scanLan() {
-        val subnetTrimmed = subnet.trim()
+        if (scanning) return
+
         val port = lanPort.trim().toIntOrNull() ?: 9978
-        if (!Regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$").matches(subnetTrimmed)) {
-            return
+        val subnetTrimmed = subnet.trim()
+        val subnetOk = Regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$").matches(subnetTrimmed)
+
+        fun sortDevices(list: List<String>): List<String> {
+            val lanSet = lanIps.toSet()
+            return list.distinct().sortedWith(
+                compareBy<String>({ it != "127.0.0.1" }, { !lanSet.contains(it) }, { it })
+            )
         }
+
         scanning = true
         scanProgress = 0
         foundDevices = emptyList()
 
         scope.launch {
             val discovered = mutableListOf<String>()
-            val tasks = (1..254).map { i ->
-                async(Dispatchers.IO) {
-                    val ip = "$subnetTrimmed.$i"
-                    val ok = try {
-                        Socket().use { s ->
-                            s.connect(InetSocketAddress(ip, port), 300)
+
+            val candidates = mutableListOf<String>()
+            // Always include localhost + this device LAN IPs (do NOT exclude local addresses)
+            candidates.addAll(localHosts)
+            if (subnetOk) {
+                for (i in 1..254) {
+                    candidates.add("$subnetTrimmed.$i")
+                }
+            }
+            val uniq = candidates.distinct()
+            scanTotal = uniq.size
+
+            val chunkSize = 64
+            val timeoutMs = 250
+            var done = 0
+
+            for (chunk in uniq.chunked(chunkSize)) {
+                val tasks = chunk.map { host ->
+                    async(Dispatchers.IO) {
+                        val ok = try {
+                            Socket().use { s ->
+                                s.connect(InetSocketAddress(host, port), timeoutMs)
+                            }
+                            true
+                        } catch (_: Throwable) {
+                            false
                         }
-                        true
-                    } catch (_: Throwable) {
-                        false
+                        if (ok) host else null
                     }
-                    if (ok) ip else null
                 }
-            }
-            tasks.forEachIndexed { idx, d ->
-                val ip = d.await()
-                scanProgress = idx + 1
-                if (ip != null) {
-                    discovered.add(ip)
-                    foundDevices = discovered.toList()
+
+                tasks.forEach { d ->
+                    val host = d.await()
+                    if (host != null) discovered.add(host)
                 }
+
+                done += chunk.size
+                scanProgress = done
+                foundDevices = sortDevices(discovered)
             }
+
             scanning = false
+
+            val sorted = sortDevices(discovered)
+            foundDevices = sorted
+            if (sorted.isNotEmpty() && (selectedDevice == null || !sorted.contains(selectedDevice))) {
+                selectDevice(sorted.first())
+            }
+        }
+    }
+
+    // Auto scan when the tab has a context (selected anime) and network parameters change.
+    LaunchedEffect(selectedAnime?.animeId, subnet, lanPort, autoScan, serviceRunning) {
+        val key = "${selectedAnime?.animeId}:${subnet.trim()}:${lanPort.trim()}"
+        if (serviceRunning && selectedAnime != null && autoScan && key != lastAutoScanKey) {
+            lastAutoScanKey = key
+            scanLan()
         }
     }
 
@@ -1324,27 +1570,32 @@ private fun PushDanmuTab(
         if (selectedAnime != null) {
             item {
                 ManagerCard(title = "推送目标") {
-                    Text("推送 URL 模板", style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "默认按 OK影视 的 9978 推送接口生成：末尾必须以 path= 结尾，应用会自动拼接并 URL 编码弹幕链接。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = pushUrl,
                         onValueChange = { pushUrl = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("http://192.168.1.x:9978/...&path=") },
+                        label = { Text("推送URL（OK影视）") },
+                        placeholder = { Text(buildPushTemplate("127.0.0.1", 9978)) },
                     )
-                    Spacer(Modifier.height(8.dp))
-
-                    Text("推送预设", style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        presets.forEachIndexed { idx, (name, _) ->
-                            FilterChip(selected = false, onClick = { applyPreset(idx) }, label = { Text(name) })
-                        }
-                    }
 
                     Spacer(Modifier.height(12.dp))
-                    Text("局域网扫描", style = MaterialTheme.typography.labelMedium)
+                    Text("自动发现 9978 设备", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(6.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = autoScan, onCheckedChange = { autoScan = it })
+                        Spacer(Modifier.width(8.dp))
+                        Text("自动扫描（选中番剧/修改网段后自动刷新）", style = MaterialTheme.typography.bodySmall)
+                    }
+
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
@@ -1353,7 +1604,7 @@ private fun PushDanmuTab(
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             label = { Text("网段") },
-                            placeholder = { Text("192.168.1") },
+                            placeholder = { Text(defaultSubnet) },
                         )
                         OutlinedTextField(
                             value = lanPort,
@@ -1364,18 +1615,57 @@ private fun PushDanmuTab(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         )
                     }
+
                     Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         Button(onClick = { scanLan() }, enabled = !scanning) {
-                            Text(if (scanning) "扫描中…" else "开始扫描")
+                            Text(if (scanning) "扫描中…" else "重新扫描")
                         }
-                        if (scanning) {
-                            Text("$scanProgress/254", style = MaterialTheme.typography.bodySmall)
+                        if (scanTotal > 0) {
+                            Text(
+                                if (scanning) "$scanProgress/$scanTotal" else "已扫描 $scanTotal",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
+
                     if (foundDevices.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
-                        Text("发现设备：${foundDevices.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                        Text("发现设备（点击选择并自动填充 URL）", style = MaterialTheme.typography.labelMedium)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            foundDevices.forEach { host ->
+                                val label = when {
+                                    host == "127.0.0.1" -> "本机 (127.0.0.1)"
+                                    lanIps.contains(host) -> "本机 ($host)"
+                                    else -> host
+                                }
+                                FilterChip(
+                                    selected = selectedDevice == host,
+                                    onClick = { selectDevice(host) },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "未发现设备：请确认播放器/接收端已开启 9978 接口，或直接手动填写上方推送 URL。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (selectedDevice != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("当前选择：$selectedDevice", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -1459,15 +1749,26 @@ private fun SystemSettingsTab(
     val original = serverConfig?.originalEnvVars.orEmpty()
     val categories = serverConfig?.categorizedEnvVars.orEmpty()
 
+    // Effective value (includes defaults) comes from categorizedEnvVars.
+    val effectiveByKey = remember(categories) {
+        categories.values.flatten().associate { it.key to it.value }
+    }
+
     // Keep per-key edits
     val edits = remember { mutableStateMapOf<String, String>() }
 
+    fun baseline(key: String): String {
+        // If it exists in .env (originalEnvVars), that's the baseline.
+        // Otherwise use the effective/default value from categorizedEnvVars.
+        return original[key] ?: effectiveByKey[key].orEmpty()
+    }
+
     fun getCurrent(key: String): String {
-        return edits[key] ?: original[key].orEmpty()
+        return edits[key] ?: original[key] ?: effectiveByKey[key].orEmpty()
     }
 
     fun isChanged(key: String): Boolean {
-        return (edits[key] != null) && edits[key] != original[key].orEmpty()
+        return edits.containsKey(key) && edits[key] != baseline(key)
     }
 
     if (confirmDeleteKey != null) {
@@ -1529,7 +1830,10 @@ private fun SystemSettingsTab(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     OutlinedButton(onClick = { onRefreshConfig(useAdmin) }, enabled = serviceRunning && !loading) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
@@ -1575,14 +1879,10 @@ private fun SystemSettingsTab(
         }
 
         val q = search.trim().lowercase(Locale.getDefault())
-        // Only show real env vars (those exist in originalEnvVars)
-        val keysInOriginal = original.keys
-
         categories.forEach { (category, items) ->
-            val realItems = items.filter { it.key in keysInOriginal }
-            val filtered = if (q.isBlank()) realItems else realItems.filter {
+            val filtered = if (q.isBlank()) items else items.filter {
                 it.key.lowercase(Locale.getDefault()).contains(q) ||
-                    original[it.key].orEmpty().lowercase(Locale.getDefault()).contains(q) ||
+                    getCurrent(it.key).lowercase(Locale.getDefault()).contains(q) ||
                     it.description.lowercase(Locale.getDefault()).contains(q)
             }
             if (filtered.isNotEmpty()) {
@@ -1592,15 +1892,18 @@ private fun SystemSettingsTab(
 
                 items(filtered, key = { it.key }) { env ->
                     val metaItem = meta[env.key] ?: EnvVarMeta(category = category, type = env.type, description = env.description)
+                    val keyExistsInEnv = original.containsKey(env.key)
                     EnvEditorRow(
+                        category = metaItem.category.ifBlank { category },
                         keyName = env.key,
                         description = metaItem.description.ifBlank { env.description },
                         type = metaItem.type,
                         options = metaItem.options,
                         currentValue = getCurrent(env.key),
+                        isDefaultValue = !keyExistsInEnv,
                         min = metaItem.min,
                         max = metaItem.max,
-                        masked = original[env.key].orEmpty().trim().all { it == '*' } && original[env.key].orEmpty().isNotBlank(),
+                        masked = keyExistsInEnv && original[env.key].orEmpty().trim().all { it == '*' } && original[env.key].orEmpty().isNotBlank(),
                         onValueChange = { edits[env.key] = it },
                         onCopyKey = { clipboard.setText(AnnotatedString(env.key)) },
                         onCopyValue = { clipboard.setText(AnnotatedString(getCurrent(env.key))) },
@@ -1610,10 +1913,15 @@ private fun SystemSettingsTab(
                             edits.remove(env.key)
                         },
                         onReset = {
-                            confirmDeleteKey = env.key
+                            // If not written in .env, reset simply drops local edits.
+                            if (keyExistsInEnv) {
+                                confirmDeleteKey = env.key
+                            } else {
+                                edits.remove(env.key)
+                            }
                         },
                         saveEnabled = serviceRunning && isChanged(env.key),
-                        resetEnabled = serviceRunning,
+                        resetEnabled = serviceRunning && (keyExistsInEnv || edits.containsKey(env.key)),
                     )
                 }
             }
@@ -1623,11 +1931,13 @@ private fun SystemSettingsTab(
 
 @Composable
 private fun EnvEditorRow(
+    category: String,
     keyName: String,
     description: String,
     type: String,
     options: List<String>,
     currentValue: String,
+    isDefaultValue: Boolean,
     min: Double?,
     max: Double?,
     masked: Boolean,
@@ -1641,14 +1951,29 @@ private fun EnvEditorRow(
 ) {
     var reveal by remember { mutableStateOf(false) }
 
+    fun parseCommaList(v: String): List<String> {
+        return v.split(',').map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    val accent = categoryAccentColor(category)
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.25f)),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(keyName, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                Text(type, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                if (isDefaultValue) {
+                    Text(
+                        "默认",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accent,
+                        modifier = Modifier.padding(horizontal = 6.dp)
+                    )
+                }
+                Text(type, style = MaterialTheme.typography.labelSmall, color = accent)
                 Spacer(Modifier.width(4.dp))
                 IconButton(onClick = onCopyKey, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Filled.ContentCopy, contentDescription = "复制键")
@@ -1669,7 +1994,6 @@ private fun EnvEditorRow(
                     }
                 }
                 "select" -> {
-                    // simple chip select
                     if (options.isEmpty()) {
                         OutlinedTextField(
                             value = currentValue,
@@ -1678,10 +2002,12 @@ private fun EnvEditorRow(
                             singleLine = true,
                         )
                     } else {
-                        Column {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("当前：${currentValue.ifBlank { "(空)" }}", style = MaterialTheme.typography.bodySmall)
-                            Spacer(Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
                                 options.forEach { opt ->
                                     FilterChip(
                                         selected = currentValue == opt,
@@ -1693,24 +2019,118 @@ private fun EnvEditorRow(
                         }
                     }
                 }
-                "multi-select", "source-order", "platform-order" -> {
-                    // store as comma-separated
-                    val selected = currentValue.split(',').map { it.trim() }.filter { it.isNotBlank() }
-                    Column {
+                "multi-select" -> {
+                    val selected = parseCommaList(currentValue)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
                             if (selected.isEmpty()) "(空)" else selected.joinToString(", "),
-                            style = MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodySmall,
                         )
-                        Spacer(Modifier.height(4.dp))
                         if (options.isNotEmpty()) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
                                 options.forEach { opt ->
                                     val isSel = selected.contains(opt)
                                     FilterChip(
                                         selected = isSel,
                                         onClick = {
-                                            val next = if (isSel) selected.filterNot { it == opt } else selected + opt
+                                            val next = if (isSel) selected.filterNot { it == opt } else (selected + opt)
                                             onValueChange(next.joinToString(","))
+                                        },
+                                        label = { Text(opt) }
+                                    )
+                                }
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = currentValue,
+                                onValueChange = onValueChange,
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                placeholder = { Text("逗号分隔，例如：a,b,c") }
+                            )
+                        }
+                    }
+                }
+                "source-order", "platform-order" -> {
+                    val selected = parseCommaList(currentValue)
+
+                    fun commit(list: List<String>) {
+                        onValueChange(list.joinToString(","))
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("当前顺序", style = MaterialTheme.typography.labelMedium)
+                        if (selected.isEmpty()) {
+                            Text("(空)", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                selected.forEachIndexed { idx, item ->
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(item, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+
+                                        IconButton(
+                                            onClick = {
+                                                if (idx <= 0) return@IconButton
+                                                val next = selected.toMutableList()
+                                                val t = next[idx - 1]
+                                                next[idx - 1] = next[idx]
+                                                next[idx] = t
+                                                commit(next)
+                                            },
+                                            enabled = idx > 0,
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "上移")
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                if (idx >= selected.lastIndex) return@IconButton
+                                                val next = selected.toMutableList()
+                                                val t = next[idx + 1]
+                                                next[idx + 1] = next[idx]
+                                                next[idx] = t
+                                                commit(next)
+                                            },
+                                            enabled = idx < selected.lastIndex,
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "下移")
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                val next = selected.filterNot { it == item }
+                                                commit(next)
+                                            },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Clear, contentDescription = "移除")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (options.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text("可选项", style = MaterialTheme.typography.labelMedium)
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                options.forEach { opt ->
+                                    val isSel = selected.contains(opt)
+                                    FilterChip(
+                                        selected = isSel,
+                                        onClick = {
+                                            val next = if (isSel) {
+                                                selected.filterNot { it == opt }
+                                            } else {
+                                                selected + opt
+                                            }
+                                            commit(next)
                                         },
                                         label = { Text(opt) }
                                     )
@@ -1782,7 +2202,10 @@ private fun EnvEditorRow(
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedButton(onClick = onCopyValue, enabled = currentValue.isNotBlank()) {
                     Icon(Icons.Filled.ContentCopy, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -1794,7 +2217,7 @@ private fun EnvEditorRow(
                 OutlinedButton(onClick = onReset, enabled = resetEnabled) {
                     Icon(Icons.Filled.Delete, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("重置")
+                    Text(if (isDefaultValue) "恢复默认" else "重置")
                 }
             }
         }
