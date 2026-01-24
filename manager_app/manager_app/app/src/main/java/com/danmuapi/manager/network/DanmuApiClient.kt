@@ -16,6 +16,15 @@ data class HttpResult(
     val contentType: String?,
     val durationMs: Long,
     val error: String? = null,
+    /**
+     * True when the response body is truncated due to size limit.
+     *
+     * This is mainly to avoid OOM / ANR when endpoints return huge payloads
+     * (e.g. "获取弹幕" returning megabytes of XML/JSON).
+     */
+    val truncated: Boolean = false,
+    /** Number of bytes actually kept in [body] (best-effort). */
+    val bodyBytesKept: Long = 0L,
 ) {
     val isSuccessful: Boolean get() = error == null && code in 200..299
 }
@@ -36,6 +45,8 @@ class DanmuApiClient(
         .writeTimeout(12, TimeUnit.SECONDS)
         .build(),
 ) {
+
+    private val maxBodyBytes: Long = 2_000_000L // ~2MB guard rail for mobile UI stability
 
     fun normalizeHost(host: String?): String {
         val raw = host.orEmpty().trim()
@@ -118,13 +129,17 @@ class DanmuApiClient(
             client.newCall(reqBuilder.build()).execute().use { resp ->
                 val end = System.nanoTime()
                 val durMs = ((end - start) / 1_000_000L).coerceAtLeast(0L)
-                val body = resp.body?.string().orEmpty()
+                // Guard rail: never read an unbounded response into memory.
+                // If the body exceeds maxBodyBytes, we keep only the first chunk and mark as truncated.
+                val bodyInfo = readBodyWithLimit(resp)
                 return@withContext HttpResult(
                     code = resp.code,
-                    body = body,
+                    body = bodyInfo.text,
                     contentType = resp.header("Content-Type"),
                     durationMs = durMs,
                     error = null,
+                    truncated = bodyInfo.truncated,
+                    bodyBytesKept = bodyInfo.bytesKept,
                 )
             }
         } catch (e: IOException) {
@@ -148,5 +163,72 @@ class DanmuApiClient(
                 error = t.message ?: "Unexpected error",
             )
         }
+    }
+
+    private data class BodyReadResult(
+        val text: String,
+        val truncated: Boolean,
+        val bytesKept: Long,
+    )
+
+    private fun readBodyWithLimit(resp: okhttp3.Response): BodyReadResult {
+        val body = resp.body ?: return BodyReadResult("", truncated = false, bytesKept = 0L)
+
+        val charset = try {
+            body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
+        } catch (_: Throwable) {
+            Charsets.UTF_8
+        }
+
+        // Read as stream and cap at maxBodyBytes.
+        val input = try {
+            body.byteStream()
+        } catch (_: Throwable) {
+            return BodyReadResult("", truncated = false, bytesKept = 0L)
+        }
+
+        val buf = ByteArray(8 * 1024)
+        val out = java.io.ByteArrayOutputStream()
+        var truncated = false
+        var kept: Long = 0L
+
+        try {
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+
+                val remaining = (maxBodyBytes - kept).toInt()
+                if (remaining <= 0) {
+                    truncated = true
+                    break
+                }
+
+                if (n <= remaining) {
+                    out.write(buf, 0, n)
+                    kept += n.toLong()
+                } else {
+                    out.write(buf, 0, remaining)
+                    kept += remaining.toLong()
+                    truncated = true
+                    break
+                }
+            }
+        } catch (_: Throwable) {
+            // Best-effort: return what we already got.
+        } finally {
+            try {
+                input.close()
+            } catch (_: Throwable) {
+            }
+        }
+
+        val text = try {
+            out.toByteArray().toString(charset)
+        } catch (_: Throwable) {
+            // Fallback: treat as UTF-8.
+            out.toByteArray().toString(Charsets.UTF_8)
+        }
+
+        return BodyReadResult(text = text, truncated = truncated, bytesKept = kept)
     }
 }
