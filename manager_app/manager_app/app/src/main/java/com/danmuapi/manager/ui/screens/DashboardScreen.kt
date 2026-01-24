@@ -98,7 +98,7 @@ fun DashboardScreen(
     onCheckActiveCoreUpdate: () -> Unit,
     onCheckModuleUpdate: () -> Unit,
     onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
-    onInstallModuleZip: (String) -> Unit,
+    onInstallModuleZip: (String, Boolean) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -156,7 +156,7 @@ private fun ServiceStatusCard(
     moduleUpdateInfo: ModuleUpdateInfo?,
     onCheckModuleUpdate: () -> Unit,
     onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
-    onInstallModuleZip: (String) -> Unit,
+    onInstallModuleZip: (String, Boolean) -> Unit,
 ) {
     val running: Boolean? = status?.service?.running
     val pid = status?.service?.pid
@@ -171,6 +171,7 @@ private fun ServiceStatusCard(
     var downloading by remember { mutableStateOf(false) }
     var showDownloadProgress by remember { mutableStateOf(false) }
     var showDownloadSuccess by remember { mutableStateOf(false) }
+    var keepCoresOnUpdate by remember { mutableStateOf(true) }
 
     // 下载进度弹窗
     if (showDownloadProgress) {
@@ -207,7 +208,51 @@ private fun ServiceStatusCard(
             onDismissRequest = { showDownloadSuccess = false },
             title = { Text("下载完成") },
             text = {
-                Text("安装包已下载完成，是否立即安装？\n\n安装后建议重启设备使模块生效。")
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("安装包已下载完成，是否立即安装？\n\n安装后建议重启设备使模块生效。")
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "安装选项",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            androidx.compose.material3.RadioButton(
+                                selected = keepCoresOnUpdate,
+                                onClick = { keepCoresOnUpdate = true },
+                            )
+                            Column {
+                                Text("保留旧版核心（推荐）", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "不会删除已安装核心列表，可随时切换。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            androidx.compose.material3.RadioButton(
+                                selected = !keepCoresOnUpdate,
+                                onClick = { keepCoresOnUpdate = false },
+                            )
+                            Column {
+                                Text("不保留（重置核心）", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "将删除 /data/adb/danmu_api_server/cores，并以新安装包自带核心重新初始化。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -216,7 +261,7 @@ private fun ServiceStatusCard(
                             showDownloadSuccess = false
                             val path = downloadedPath
                             if (!path.isNullOrBlank()) {
-                                onInstallModuleZip(path)
+                                onInstallModuleZip(path, keepCoresOnUpdate)
                             }
                         },
                     ) {

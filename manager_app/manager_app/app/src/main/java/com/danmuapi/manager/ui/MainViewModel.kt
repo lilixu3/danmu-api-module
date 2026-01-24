@@ -51,6 +51,8 @@ class MainViewModel(
      */
     var apiToken: String by mutableStateOf("87654321")
         private set
+    var apiAdminToken: String by mutableStateOf("")
+        private set
     var apiPort: Int by mutableStateOf(9321)
         private set
     var apiHost: String by mutableStateOf("0.0.0.0")
@@ -153,6 +155,9 @@ class MainViewModel(
         // TOKEN
         val token = kv["TOKEN"].orEmpty().trim()
         apiToken = token.ifBlank { "87654321" }
+
+        // ADMIN_TOKEN (optional; used for "系统配置" in UI)
+        apiAdminToken = kv["ADMIN_TOKEN"].orEmpty().trim()
 
         // DANMU_API_PORT
         val portText = kv["DANMU_API_PORT"].orEmpty().trim()
@@ -595,7 +600,7 @@ class MainViewModel(
         }
     }
 
-    fun installModuleZip(zipPath: String) {
+    fun installModuleZip(zipPath: String, keepCores: Boolean = true) {
         viewModelScope.launch {
             val wasRunning = status?.service?.running == true
             val ok = withBusy("安装模块中…") {
@@ -605,9 +610,12 @@ class MainViewModel(
                 } catch (_: Throwable) {
                     // ignore
                 }
+                val keep = if (keepCores) 1 else 0
                 val cmd = """
                     MODPATH="/data/adb/modules/danmu_api_server"
                     TMPDIR="/data/local/tmp/danmu_api_module_update"
+                    PERSIST="/data/adb/danmu_api_server"
+                    BIN_DIR="${'$'}PERSIST/bin"
                     rm -rf "${'$'}TMPDIR" 2>/dev/null || true
                     mkdir -p "${'$'}TMPDIR" || exit 1
                     rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
@@ -648,6 +656,35 @@ class MainViewModel(
                     find "${'$'}MODPATH" -type f -name "*.sh" -exec chmod 0755 {} \; 2>/dev/null || true
                     chmod 0755 "${'$'}MODPATH/action.sh" 2>/dev/null || true
 
+                    # Optionally reset core store (user chose "不保留旧版核心")
+                    if [ "$keep" != "1" ]; then
+                      rm -rf "${'$'}PERSIST/cores" "${'$'}PERSIST/core" "${'$'}PERSIST/active_core_id" 2>/dev/null || true
+                    fi
+
+                    # Refresh persistent control scripts for Manager App
+                    mkdir -p "${'$'}BIN_DIR" 2>/dev/null || true
+                    cp -f "${'$'}MODPATH/scripts/danmu_control.sh" "${'$'}BIN_DIR/danmu_control.sh" 2>/dev/null || true
+                    cp -f "${'$'}MODPATH/scripts/danmu_core.sh" "${'$'}BIN_DIR/danmu_core.sh" 2>/dev/null || true
+                    chmod 0755 "${'$'}BIN_DIR/danmu_control.sh" "${'$'}BIN_DIR/danmu_core.sh" 2>/dev/null || true
+
+                    # BusyBox + libs (optional)
+                    if [ -f "${'$'}MODPATH/bin/busybox" ]; then
+                      cp -f "${'$'}MODPATH/bin/busybox" "${'$'}BIN_DIR/busybox" 2>/dev/null || true
+                      chmod 0755 "${'$'}BIN_DIR/busybox" 2>/dev/null || true
+                    fi
+                    if [ -d "${'$'}MODPATH/bin/lib" ]; then
+                      mkdir -p "${'$'}BIN_DIR/lib" "${'$'}PERSIST/lib" 2>/dev/null || true
+                      cp -af "${'$'}MODPATH/bin/lib/." "${'$'}BIN_DIR/lib/" 2>/dev/null || true
+                      cp -af "${'$'}MODPATH/bin/lib/." "${'$'}PERSIST/lib/" 2>/dev/null || true
+                      chmod 0755 "${'$'}BIN_DIR/lib" "${'$'}PERSIST/lib" 2>/dev/null || true
+                      chmod 0644 "${'$'}BIN_DIR/lib/"* "${'$'}PERSIST/lib/"* 2>/dev/null || true
+                    fi
+
+                    # Ensure module/core layout is consistent (fixes in-app update replacing symlink)
+                    if [ -x "${'$'}BIN_DIR/danmu_core.sh" ]; then
+                      "${'$'}BIN_DIR/danmu_core.sh" ensure >/dev/null 2>&1 || true
+                    fi
+
                     rm -rf "${'$'}TMPDIR" 2>/dev/null || true
                     rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
                     echo "success"
@@ -658,7 +695,8 @@ class MainViewModel(
             }
             
             if (ok) {
-                snackbars.tryEmit("模块安装成功！建议重启设备后生效。")
+                val extra = if (keepCores) "" else "（已重置核心）"
+                snackbars.tryEmit("模块安装成功$extra！建议重启设备后生效。")
                 refreshAllInternal()
                 // Restore previous running state (best-effort).
                 if (wasRunning) {

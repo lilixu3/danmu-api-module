@@ -9,16 +9,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import com.danmuapi.manager.ui.components.ManagerCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.rememberScrollState
@@ -31,6 +34,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.data.model.LogFileInfo
@@ -46,6 +52,12 @@ fun LogsScreen(
     var showClearConfirm by remember { mutableStateOf(false) }
     var viewing by remember { mutableStateOf<LogFileInfo?>(null) }
     var viewingText by remember { mutableStateOf("") }
+
+    // Default tail lines. Users often need more than 200 lines when debugging.
+    var tailLines by remember { mutableStateOf(200) }
+    val tailOptions = remember { listOf(200, 500, 1000, 2000, 5000) }
+
+    val clipboard = LocalClipboardManager.current
 
     if (showClearConfirm) {
         AlertDialog(
@@ -71,18 +83,65 @@ fun LogsScreen(
             title = { Text(file.name) },
             text = {
                 val scroll = rememberScrollState()
-                SelectionContainer {
-                    Text(
-                        text = viewingText.ifBlank { "(空)" },
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
                         modifier = Modifier
-                            .heightIn(max = 420.dp)
-                            .verticalScroll(scroll),
-                    )
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "末尾行数",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        tailOptions.forEach { opt ->
+                            androidx.compose.material3.FilterChip(
+                                selected = tailLines == opt,
+                                onClick = {
+                                    tailLines = opt
+                                    viewingText = "加载中…"
+                                    onReadTail(file.path, tailLines) { viewingText = it }
+                                },
+                                label = { Text(opt.toString()) },
+                            )
+                        }
+                    }
+
+                    SelectionContainer {
+                        Text(
+                            text = viewingText.ifBlank { "(空)" },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .heightIn(max = 420.dp)
+                                .verticalScroll(scroll),
+                        )
+                    }
                 }
             },
-            confirmButton = { TextButton(onClick = { viewing = null }) { Text("关闭") } },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(viewingText))
+                        },
+                        enabled = viewingText.isNotBlank(),
+                    ) {
+                        Text("复制")
+                    }
+                    TextButton(
+                        onClick = {
+                            viewingText = "加载中…"
+                            onReadTail(file.path, tailLines) { viewingText = it }
+                        },
+                    ) {
+                        Text("刷新")
+                    }
+                    TextButton(onClick = { viewing = null }) { Text("关闭") }
+                }
+            },
         )
     }
 
@@ -111,7 +170,9 @@ fun LogsScreen(
             }
         }
 
-        val files = logs?.files ?: emptyList()
+        val files = (logs?.files ?: emptyList())
+            // "YYYY-MM-DD HH:mm:ss" style strings are lexicographically sortable.
+            .sortedByDescending { it.modifiedAt ?: "" }
         if (files.isEmpty()) {
             ManagerCard {
                 Column(
@@ -125,6 +186,31 @@ fun LogsScreen(
                 }
             }
         } else {
+            // Rotation hint: server.log may become small/empty after being rotated.
+            ManagerCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Filled.Info, contentDescription = null)
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "提示：日志可能会轮转",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "当 server.log 看起来" + "清零" + "时，通常是被轮转为 server.log.1 / server.log.2… 请在列表里打开对应文件查看历史内容。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(files, key = { it.path }) { file ->
                     LogItem(
@@ -132,7 +218,7 @@ fun LogsScreen(
                         onClick = {
                             viewing = file
                             viewingText = "加载中…"
-                            onReadTail(file.path, 200) { viewingText = it }
+                            onReadTail(file.path, tailLines) { viewingText = it }
                         },
                     )
                 }

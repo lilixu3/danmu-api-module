@@ -6,10 +6,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -43,6 +44,7 @@ import com.danmuapi.manager.data.SettingsRepository
 import com.danmuapi.manager.network.GitHubApi
 import com.danmuapi.manager.root.DanmuCli
 import com.danmuapi.manager.ui.screens.CoresScreen
+import com.danmuapi.manager.ui.screens.ConsoleScreen
 import com.danmuapi.manager.ui.screens.DashboardScreen
 import com.danmuapi.manager.ui.screens.LogsScreen
 import com.danmuapi.manager.ui.screens.SettingsScreen
@@ -53,13 +55,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
-import androidx.compose.material.icons.filled.ArrowBack
 
 private enum class NavItem(
     val route: String,
     val labelRes: Int,
 ) {
     DASHBOARD("dashboard", com.danmuapi.manager.R.string.nav_dashboard),
+    CONSOLE("console", com.danmuapi.manager.R.string.nav_console),
     CORES("cores", com.danmuapi.manager.R.string.nav_cores),
     LOGS("logs", com.danmuapi.manager.R.string.nav_logs),
     SETTINGS("settings", com.danmuapi.manager.R.string.nav_settings),
@@ -97,6 +99,7 @@ fun DanmuManagerApp(applicationContext: Context) {
 
     val title = when (currentRoute) {
         NavItem.DASHBOARD.route -> "仪表盘"
+        NavItem.CONSOLE.route -> "管理界面"
         NavItem.CORES.route -> "核心管理"
         NavItem.LOGS.route -> "日志"
         NavItem.SETTINGS.route -> "设置"
@@ -143,6 +146,12 @@ fun DanmuManagerApp(applicationContext: Context) {
                     onClick = { navTo(NavItem.DASHBOARD) },
                     icon = { Icon(Icons.Filled.Dashboard, contentDescription = null) },
                     label = { Text(text = "仪表盘") },
+                )
+                NavigationBarItem(
+                    selected = currentRoute == NavItem.CONSOLE.route,
+                    onClick = { navTo(NavItem.CONSOLE) },
+                    icon = { Icon(Icons.Filled.Language, contentDescription = null) },
+                    label = { Text(text = "管理") },
                 )
                 NavigationBarItem(
                     selected = currentRoute == NavItem.CORES.route,
@@ -215,7 +224,20 @@ fun DanmuManagerApp(applicationContext: Context) {
                     onDownloadModuleZip = { asset, onProgress, onComplete ->
                         vm.downloadModuleZip(asset, onProgress, onComplete)
                     },
-                    onInstallModuleZip = { path -> vm.installModuleZip(path) },
+                    onInstallModuleZip = { path, keep -> vm.installModuleZip(path, keep) },
+                )
+            }
+
+            composable(NavItem.CONSOLE.route) {
+                ConsoleScreen(
+                    paddingValues = padding,
+                    serviceRunning = vm.status?.service?.running,
+                    apiPort = vm.apiPort,
+                    apiHost = vm.apiHost,
+                    token = vm.apiToken,
+                    adminToken = vm.apiAdminToken,
+                    onStartService = { vm.startService() },
+                    onShowMessage = { msg -> vm.snackbars.tryEmit(msg) },
                 )
             }
             composable(NavItem.CORES.route) {
