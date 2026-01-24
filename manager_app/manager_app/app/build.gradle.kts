@@ -91,9 +91,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
-    // WebView support (dark mode, feature checks)
-    implementation("androidx.webkit:webkit:1.14.0")
-
     // DataStore for app settings (log auto-clean interval, GitHub token)
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 

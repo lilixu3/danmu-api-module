@@ -51,11 +51,17 @@ class MainViewModel(
      */
     var apiToken: String by mutableStateOf("87654321")
         private set
-    var apiAdminToken: String by mutableStateOf("")
-        private set
     var apiPort: Int by mutableStateOf(9321)
         private set
     var apiHost: String by mutableStateOf("0.0.0.0")
+        private set
+
+    /**
+     * System management token (ADMIN_TOKEN) parsed from .env.
+     *
+     * When present, it unlocks Danmu API Web UI's "系统设置" features.
+     */
+    var adminToken: String by mutableStateOf("")
         private set
 
     // 添加以下内容
@@ -156,8 +162,8 @@ class MainViewModel(
         val token = kv["TOKEN"].orEmpty().trim()
         apiToken = token.ifBlank { "87654321" }
 
-        // ADMIN_TOKEN (optional; used for "系统配置" in UI)
-        apiAdminToken = kv["ADMIN_TOKEN"].orEmpty().trim()
+        // ADMIN_TOKEN (optional; may be blank). If key is missing, keep it empty.
+        adminToken = kv["ADMIN_TOKEN"]?.trim().orEmpty()
 
         // DANMU_API_PORT
         val portText = kv["DANMU_API_PORT"].orEmpty().trim()
@@ -600,9 +606,15 @@ class MainViewModel(
         }
     }
 
-    fun installModuleZip(zipPath: String, keepCores: Boolean = true) {
+    fun installModuleZip(
+        zipPath: String,
+        keepCores: Boolean = true,
+        keepConfig: Boolean = true,
+        keepLogs: Boolean = true,
+    ) {
         viewModelScope.launch {
             val wasRunning = status?.service?.running == true
+
             val ok = withBusy("安装模块中…") {
                 // Best-effort: stop service first to avoid half-written files.
                 try {
@@ -610,24 +622,34 @@ class MainViewModel(
                 } catch (_: Throwable) {
                     // ignore
                 }
-                val keep = if (keepCores) 1 else 0
+
+                val zipQ = shellQuote(zipPath)
+                val keepCoresFlag = if (keepCores) 1 else 0
+                val keepConfigFlag = if (keepConfig) 1 else 0
+                val keepLogsFlag = if (keepLogs) 1 else 0
+
                 val cmd = """
                     MODPATH="/data/adb/modules/danmu_api_server"
-                    TMPDIR="/data/local/tmp/danmu_api_module_update"
+                    MODBAK="${'$'}MODPATH.bak"
                     PERSIST="/data/adb/danmu_api_server"
-                    BIN_DIR="${'$'}PERSIST/bin"
+                    ZIP=$zipQ
+                    KEEP_CORES=$keepCoresFlag
+                    KEEP_CONFIG=$keepConfigFlag
+                    KEEP_LOGS=$keepLogsFlag
+
+                    TMPDIR="/data/local/tmp/danmu_api_module_update_${'$'}{RANDOM}_${'$'}{RANDOM}"
                     rm -rf "${'$'}TMPDIR" 2>/dev/null || true
                     mkdir -p "${'$'}TMPDIR" || exit 1
-                    rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
-                    unzip -o "$zipPath" -d "${'$'}TMPDIR" >/dev/null 2>&1 || {
+
+                    unzip -o "${'$'}ZIP" -d "${'$'}TMPDIR" >/dev/null 2>&1 || {
                         rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                        echo "failed"; exit 0;
+                        echo "failed_unzip"; exit 1;
                     }
 
                     # Locate module root (support both flat zip and zip-with-top-dir)
                     SRC="${'$'}TMPDIR"
                     if [ ! -f "${'$'}SRC/module.prop" ]; then
-                        MP="$(find "${'$'}TMPDIR" -maxdepth 3 -type f -name module.prop 2>/dev/null | head -n 1)"
+                        MP="$(find "${'$'}TMPDIR" -maxdepth 4 -type f -name module.prop 2>/dev/null | head -n 1)"
                         if [ -n "${'$'}MP" ]; then
                             SRC="$(dirname "${'$'}MP")"
                         fi
@@ -635,68 +657,151 @@ class MainViewModel(
 
                     if [ ! -f "${'$'}SRC/module.prop" ]; then
                         rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                        echo "failed"; exit 0;
+                        echo "failed_badzip"; exit 1;
                     fi
 
+                    # Optional data cleanup (for reinstall/downgrade)
+                    if [ "${'$'}KEEP_CORES" != "1" ]; then
+                        rm -rf "${'$'}PERSIST/cores" "${'$'}PERSIST/core" "${'$'}PERSIST/active_core_id" 2>/dev/null || true
+                    fi
+                    if [ "${'$'}KEEP_CONFIG" != "1" ]; then
+                        rm -rf "${'$'}PERSIST/config" 2>/dev/null || true
+                    fi
+                    if [ "${'$'}KEEP_LOGS" != "1" ]; then
+                        rm -rf "${'$'}PERSIST/logs" 2>/dev/null || true
+                    fi
+
+                    mkdir -p "${'$'}PERSIST/bin" "${'$'}PERSIST/config" "${'$'}PERSIST/cores" "${'$'}PERSIST/logs" 2>/dev/null || true
+
+                    # Backup old module (if exists)
+                    rm -rf "${'$'}MODBAK" 2>/dev/null || true
                     if [ -d "${'$'}MODPATH" ]; then
-                        mv "${'$'}MODPATH" "${'$'}MODPATH.bak" || {
+                        mv "${'$'}MODPATH" "${'$'}MODBAK" || {
                             rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                            echo "failed"; exit 0;
+                            echo "failed_backup"; exit 1;
                         }
                     fi
+
+                    # Install new module files
                     mkdir -p "${'$'}MODPATH" || {
                         rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                        echo "failed"; exit 0;
+                        echo "failed_mkdir"; exit 1;
                     }
 
                     # Copy files (try preserve metadata when possible).
-                    cp -a "${'$'}SRC"/. "${'$'}MODPATH"/ 2>/dev/null || cp -r "${'$'}SRC"/. "${'$'}MODPATH"/
+                    cp -a "${'$'}SRC"/. "${'$'}MODPATH"/ 2>/dev/null || cp -r "${'$'}SRC"/. "${'$'}MODPATH"/ 2>/dev/null || true
 
-                    # Ensure scripts are executable.
+                    # Validate
+                    if [ ! -f "${'$'}MODPATH/module.prop" ]; then
+                        rm -rf "${'$'}MODPATH" 2>/dev/null || true
+                        if [ -d "${'$'}MODBAK" ]; then
+                            mv "${'$'}MODBAK" "${'$'}MODPATH" 2>/dev/null || true
+                        fi
+                        rm -rf "${'$'}TMPDIR" 2>/dev/null || true
+                        echo "failed_copy"; exit 1;
+                    fi
+
+                    # Fix permissions (best-effort)
+                    chown -R root:root "${'$'}MODPATH" 2>/dev/null || true
+                    chmod 0755 "${'$'}MODPATH" 2>/dev/null || true
+                    find "${'$'}MODPATH" -type d -exec chmod 0755 {} \; 2>/dev/null || true
+                    find "${'$'}MODPATH" -type f -exec chmod 0644 {} \; 2>/dev/null || true
                     find "${'$'}MODPATH" -type f -name "*.sh" -exec chmod 0755 {} \; 2>/dev/null || true
-                    chmod 0755 "${'$'}MODPATH/action.sh" 2>/dev/null || true
+                    [ -d "${'$'}MODPATH/bin" ] && find "${'$'}MODPATH/bin" -type f -exec chmod 0755 {} \; 2>/dev/null || true
+                    [ -d "${'$'}MODPATH/scripts" ] && find "${'$'}MODPATH/scripts" -type f -exec chmod 0755 {} \; 2>/dev/null || true
+                    [ -d "${'$'}MODPATH/system/bin" ] && find "${'$'}MODPATH/system/bin" -type f -exec chmod 0755 {} \; 2>/dev/null || true
 
-                    # Optionally reset core store (user chose "不保留旧版核心")
-                    if [ "$keep" != "1" ]; then
-                      rm -rf "${'$'}PERSIST/cores" "${'$'}PERSIST/core" "${'$'}PERSIST/active_core_id" 2>/dev/null || true
+                    # Sync bin/scripts to persist for CLI (so manager app can call them right away)
+                    if [ -d "${'$'}MODPATH/scripts" ]; then
+                        cp -a "${'$'}MODPATH/scripts"/. "${'$'}PERSIST/bin"/ 2>/dev/null || cp -r "${'$'}MODPATH/scripts"/. "${'$'}PERSIST/bin"/ 2>/dev/null || true
+                    fi
+                    if [ -d "${'$'}MODPATH/bin" ]; then
+                        cp -a "${'$'}MODPATH/bin"/. "${'$'}PERSIST/bin"/ 2>/dev/null || cp -r "${'$'}MODPATH/bin"/. "${'$'}PERSIST/bin"/ 2>/dev/null || true
+                    fi
+                    chmod -R 0755 "${'$'}PERSIST/bin" 2>/dev/null || true
+
+                    # Ensure config file exists
+                    if [ ! -f "${'$'}PERSIST/config/.env" ]; then
+                        if [ -f "${'$'}MODPATH/defaults/config/.env.example" ]; then
+                            cp -f "${'$'}MODPATH/defaults/config/.env.example" "${'$'}PERSIST/config/.env" 2>/dev/null || true
+                            chmod 0644 "${'$'}PERSIST/config/.env" 2>/dev/null || true
+                        fi
                     fi
 
-                    # Refresh persistent control scripts for Manager App
-                    mkdir -p "${'$'}BIN_DIR" 2>/dev/null || true
-                    cp -f "${'$'}MODPATH/scripts/danmu_control.sh" "${'$'}BIN_DIR/danmu_control.sh" 2>/dev/null || true
-                    cp -f "${'$'}MODPATH/scripts/danmu_core.sh" "${'$'}BIN_DIR/danmu_core.sh" 2>/dev/null || true
-                    chmod 0755 "${'$'}BIN_DIR/danmu_control.sh" "${'$'}BIN_DIR/danmu_core.sh" 2>/dev/null || true
-
-                    # BusyBox + libs (optional)
-                    if [ -f "${'$'}MODPATH/bin/busybox" ]; then
-                      cp -f "${'$'}MODPATH/bin/busybox" "${'$'}BIN_DIR/busybox" 2>/dev/null || true
-                      chmod 0755 "${'$'}BIN_DIR/busybox" 2>/dev/null || true
-                    fi
-                    if [ -d "${'$'}MODPATH/bin/lib" ]; then
-                      mkdir -p "${'$'}BIN_DIR/lib" "${'$'}PERSIST/lib" 2>/dev/null || true
-                      cp -af "${'$'}MODPATH/bin/lib/." "${'$'}BIN_DIR/lib/" 2>/dev/null || true
-                      cp -af "${'$'}MODPATH/bin/lib/." "${'$'}PERSIST/lib/" 2>/dev/null || true
-                      chmod 0755 "${'$'}BIN_DIR/lib" "${'$'}PERSIST/lib" 2>/dev/null || true
-                      chmod 0644 "${'$'}BIN_DIR/lib/"* "${'$'}PERSIST/lib/"* 2>/dev/null || true
+                    # Ensure core link points to active core if exists
+                    ACTIVE_FILE="${'$'}PERSIST/active_core_id"
+                    CORE_LINK="${'$'}PERSIST/core"
+                    if [ -f "${'$'}ACTIVE_FILE" ]; then
+                        ID="$(cat "${'$'}ACTIVE_FILE" 2>/dev/null | tr -d '\r\n')"
+                        if [ -n "${'$'}ID" ] && [ -d "${'$'}PERSIST/cores/${'$'}ID/danmu_api" ]; then
+                            rm -rf "${'$'}CORE_LINK" 2>/dev/null || true
+                            ln -s "${'$'}PERSIST/cores/${'$'}ID/danmu_api" "${'$'}CORE_LINK" 2>/dev/null || true
+                        fi
                     fi
 
-                    # Ensure module/core layout is consistent (fixes in-app update replacing symlink)
-                    if [ -x "${'$'}BIN_DIR/danmu_core.sh" ]; then
-                      "${'$'}BIN_DIR/danmu_core.sh" ensure >/dev/null 2>&1 || true
+                    # If no active core (fresh install or user wiped cores), seed from bundled core in the zip.
+                    if [ ! -f "${'$'}ACTIVE_FILE" ]; then
+                        if [ -d "${'$'}SRC/app/danmu_api" ] && [ -f "${'$'}SRC/app/danmu_api/worker.js" ]; then
+                            REPO=""
+                            REF=""
+                            SHA=""
+                            VERSION=""
+                            if [ -f "${'$'}SRC/defaults/core_source.txt" ]; then
+                                REPO="$(grep '^repo=' "${'$'}SRC/defaults/core_source.txt" | head -n1 | cut -d= -f2-)"
+                                REF="$(grep '^ref=' "${'$'}SRC/defaults/core_source.txt" | head -n1 | cut -d= -f2-)"
+                                SHA="$(grep '^sha=' "${'$'}SRC/defaults/core_source.txt" | head -n1 | cut -d= -f2-)"
+                                VERSION="$(grep '^version=' "${'$'}SRC/defaults/core_source.txt" | head -n1 | cut -d= -f2-)"
+                            fi
+                            SHA_SHORT="$(echo "${'$'}SHA" | cut -c1-7)"
+                            ID_BASE="bundled_${'$'}REPO_${'$'}REF_${'$'}SHA_SHORT"
+                            CORE_ID="$(echo "${'$'}ID_BASE" | sed 's/[^A-Za-z0-9._-]/_/g')"
+                            DEST="${'$'}PERSIST/cores/${'$'}CORE_ID"
+                            DEST_CORE="${'$'}DEST/danmu_api"
+                            rm -rf "${'$'}DEST" 2>/dev/null || true
+                            mkdir -p "${'$'}DEST" 2>/dev/null || true
+                            cp -a "${'$'}SRC/app/danmu_api" "${'$'}DEST_CORE" 2>/dev/null || cp -r "${'$'}SRC/app/danmu_api" "${'$'}DEST_CORE" 2>/dev/null || true
+                            ln -s "${'$'}PERSIST/config" "${'$'}DEST/config" 2>/dev/null || true
+
+                            TS="$(date +%s 2>/dev/null || echo 0)"
+                            cat > "${'$'}DEST/meta.json" <<META
+{
+  "id": "${'$'}CORE_ID",
+  "repo": "${'$'}REPO",
+  "ref": "${'$'}REF",
+  "sha": "${'$'}SHA",
+  "shaShort": "${'$'}SHA_SHORT",
+  "version": "${'$'}VERSION",
+  "installedAt": ${'$'}TS,
+  "sizeBytes": 0
+}
+META
+
+                            rm -rf "${'$'}CORE_LINK" 2>/dev/null || true
+                            ln -s "${'$'}DEST_CORE" "${'$'}CORE_LINK" 2>/dev/null || true
+                            echo "${'$'}CORE_ID" > "${'$'}ACTIVE_FILE"
+                        fi
                     fi
+
+                    # Ensure module app links point to persist
+                    MODCFG="${'$'}MODPATH/app/config"
+                    rm -rf "${'$'}MODCFG" 2>/dev/null || true
+                    ln -s "${'$'}PERSIST/config" "${'$'}MODCFG" 2>/dev/null || true
+
+                    MODCORE="${'$'}MODPATH/app/danmu_api"
+                    rm -rf "${'$'}MODCORE" 2>/dev/null || true
+                    ln -s "${'$'}CORE_LINK" "${'$'}MODCORE" 2>/dev/null || true
 
                     rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                    rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
+                    rm -rf "${'$'}MODBAK" 2>/dev/null || true
                     echo "success"
                 """.trimIndent()
-                
-                val res = RootShell.runSu(cmd, timeoutMs = 120_000)
-                res.stdout.contains("success")
+
+                val res = RootShell.runSu(cmd, timeoutMs = 180_000)
+                res.exitCode == 0 && res.stdout.contains("success")
             }
-            
+
             if (ok) {
-                val extra = if (keepCores) "" else "（已重置核心）"
-                snackbars.tryEmit("模块安装成功$extra！建议重启设备后生效。")
+                snackbars.tryEmit("模块安装成功！建议重启设备后生效。")
                 refreshAllInternal()
                 // Restore previous running state (best-effort).
                 if (wasRunning) {
@@ -706,6 +811,11 @@ class MainViewModel(
                 snackbars.tryEmit("模块安装失败")
             }
         }
+    }
+
+    private fun shellQuote(value: String): String {
+        // Safe single-quote wrapper for sh.
+        return "'" + value.replace("'", "'\"'\"'") + "'"
     }
 }
 
