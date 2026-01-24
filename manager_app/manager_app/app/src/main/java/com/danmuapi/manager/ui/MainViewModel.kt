@@ -13,7 +13,13 @@ import com.danmuapi.manager.data.SettingsRepository
 import com.danmuapi.manager.data.model.CoreListResponse
 import com.danmuapi.manager.data.model.LogsResponse
 import com.danmuapi.manager.data.model.ModuleUpdateInfo  // 添加
+import com.danmuapi.manager.data.model.EnvVarItem
+import com.danmuapi.manager.data.model.EnvVarMeta
+import com.danmuapi.manager.data.model.ServerConfigResponse
+import com.danmuapi.manager.data.model.ServerLogEntry
 import com.danmuapi.manager.data.model.StatusResponse
+import com.danmuapi.manager.network.DanmuApiClient
+import com.danmuapi.manager.network.HttpResult
 import com.danmuapi.manager.network.WebDavClient
 import com.danmuapi.manager.network.WebDavResult
 import com.danmuapi.manager.root.RootShell
@@ -26,6 +32,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainViewModel(
     private val appContext: Context,
@@ -34,6 +42,8 @@ class MainViewModel(
 ) : ViewModel() {
 
     private val webDavClient = WebDavClient()
+
+    private val danmuApiClient = DanmuApiClient()
 
     // UI state
     var rootAvailable: Boolean? by mutableStateOf(null)
@@ -57,11 +67,25 @@ class MainViewModel(
         private set
 
     /**
-     * System management token (ADMIN_TOKEN) parsed from .env.
-     *
-     * When present, it unlocks Danmu API Web UI's "系统设置" features.
+     * Optional ADMIN_TOKEN from .env.
+     * Used by the server UI for system settings.
      */
     var adminToken: String by mutableStateOf("")
+        private set
+
+    // ===== danmu-api Console (Compose replica of Web UI) =====
+    var serverConfig: ServerConfigResponse? by mutableStateOf(null)
+        private set
+    var serverConfigError: String? by mutableStateOf(null)
+        private set
+    var serverConfigLoading: Boolean by mutableStateOf(false)
+        private set
+
+    var serverLogs: List<ServerLogEntry> by mutableStateOf(emptyList())
+        private set
+    var serverLogsError: String? by mutableStateOf(null)
+        private set
+    var serverLogsLoading: Boolean by mutableStateOf(false)
         private set
 
     // 添加以下内容
@@ -162,9 +186,6 @@ class MainViewModel(
         val token = kv["TOKEN"].orEmpty().trim()
         apiToken = token.ifBlank { "87654321" }
 
-        // ADMIN_TOKEN (optional; may be blank). If key is missing, keep it empty.
-        adminToken = kv["ADMIN_TOKEN"]?.trim().orEmpty()
-
         // DANMU_API_PORT
         val portText = kv["DANMU_API_PORT"].orEmpty().trim()
         val port = portText.toIntOrNull()
@@ -173,6 +194,9 @@ class MainViewModel(
         // DANMU_API_HOST (0.0.0.0 by default; if user sets 127.0.0.1 then LAN access is not possible)
         val host = kv["DANMU_API_HOST"].orEmpty().trim()
         apiHost = host.ifBlank { "0.0.0.0" }
+
+        // ADMIN_TOKEN (optional)
+        adminToken = kv["ADMIN_TOKEN"].orEmpty().trim()
     }
 
     private suspend fun <T> withBusy(message: String? = null, block: suspend () -> T): T {
@@ -361,6 +385,287 @@ class MainViewModel(
             }
             snackbars.tryEmit(if (ok) "配置已保存（重启服务后生效）" else "保存配置失败")
         }
+    }
+
+    // ====== danmu-api Console ======
+
+    private fun pickTokenSegment(useAdminToken: Boolean): String {
+        return if (useAdminToken && adminToken.isNotBlank()) adminToken else apiToken
+    }
+
+    /**
+     * Low-level request helper for the built-in console (Compose replica of Web UI).
+     */
+    suspend fun requestDanmuApi(
+        method: String,
+        path: String,
+        query: Map<String, String?> = emptyMap(),
+        bodyJson: String? = null,
+        useAdminToken: Boolean = false,
+    ): HttpResult {
+        return danmuApiClient.request(
+            method = method,
+            host = apiHost,
+            port = apiPort,
+            tokenSegment = pickTokenSegment(useAdminToken),
+            path = path,
+            query = query,
+            bodyJson = bodyJson,
+        )
+    }
+
+    fun refreshServerConfig(useAdminToken: Boolean = false) {
+        viewModelScope.launch {
+            serverConfigLoading = true
+            serverConfigError = null
+
+            val res = requestDanmuApi("GET", "/api/config", useAdminToken = useAdminToken)
+            if (res.isSuccessful) {
+                val parsed = parseServerConfig(res.body)
+                if (parsed != null) {
+                    serverConfig = parsed
+                } else {
+                    serverConfigError = "解析配置失败"
+                }
+            } else {
+                serverConfigError = res.error ?: "请求失败（HTTP ${res.code}）"
+            }
+            serverConfigLoading = false
+        }
+    }
+
+    fun refreshServerLogs() {
+        viewModelScope.launch {
+            serverLogsLoading = true
+            serverLogsError = null
+            val res = requestDanmuApi("GET", "/api/logs")
+            if (res.isSuccessful) {
+                serverLogs = parseServerLogs(res.body)
+            } else {
+                serverLogsError = res.error ?: "请求失败（HTTP ${res.code}）"
+            }
+            serverLogsLoading = false
+        }
+    }
+
+    fun clearServerLogs() {
+        viewModelScope.launch {
+            if (adminToken.isBlank()) {
+                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行清空服务日志")
+                return@launch
+            }
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/logs/clear",
+                bodyJson = "{}",
+                useAdminToken = true,
+            )
+            if (res.isSuccessful) {
+                snackbars.tryEmit("已清空服务日志")
+                refreshServerLogs()
+            } else {
+                snackbars.tryEmit(res.error ?: "清空失败（HTTP ${res.code}）")
+            }
+        }
+    }
+
+    fun clearServerCache() {
+        viewModelScope.launch {
+            if (adminToken.isBlank()) {
+                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行清理缓存")
+                return@launch
+            }
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/cache/clear",
+                bodyJson = "{}",
+                useAdminToken = true,
+            )
+            snackbars.tryEmit(
+                if (res.isSuccessful) "缓存已清理" else (res.error ?: "清理失败（HTTP ${res.code}）")
+            )
+        }
+    }
+
+    fun deployServer() {
+        viewModelScope.launch {
+            if (adminToken.isBlank()) {
+                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行重新部署")
+                return@launch
+            }
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/deploy",
+                bodyJson = "{}",
+                useAdminToken = true,
+            )
+            snackbars.tryEmit(
+                if (res.isSuccessful) "已触发部署" else (res.error ?: "操作失败（HTTP ${res.code}）")
+            )
+        }
+    }
+
+    fun setServerEnvVar(key: String, value: String) {
+        viewModelScope.launch {
+            val tokenIsAdmin = adminToken.isNotBlank()
+            val body = JSONObject().apply {
+                put("key", key)
+                put("value", value)
+            }.toString()
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/env/set",
+                bodyJson = body,
+                useAdminToken = tokenIsAdmin,
+            )
+            if (res.isSuccessful) {
+                snackbars.tryEmit("已更新：$key")
+                // Re-fetch access info in case TOKEN/PORT/HOST changes.
+                refreshAccessInfoInternal()
+                refreshServerConfig(useAdminToken = tokenIsAdmin)
+            } else {
+                snackbars.tryEmit(res.error ?: "更新失败（HTTP ${res.code}）")
+            }
+        }
+    }
+
+    fun deleteServerEnvVar(key: String) {
+        viewModelScope.launch {
+            val tokenIsAdmin = adminToken.isNotBlank()
+            val body = JSONObject().apply {
+                put("key", key)
+            }.toString()
+            val res = requestDanmuApi(
+                method = "POST",
+                path = "/api/env/del",
+                bodyJson = body,
+                useAdminToken = tokenIsAdmin,
+            )
+            if (res.isSuccessful) {
+                snackbars.tryEmit("已删除：$key")
+                refreshAccessInfoInternal()
+                refreshServerConfig(useAdminToken = tokenIsAdmin)
+            } else {
+                snackbars.tryEmit(res.error ?: "删除失败（HTTP ${res.code}）")
+            }
+        }
+    }
+
+    private fun parseServerConfig(body: String): ServerConfigResponse? {
+        return try {
+            val obj = JSONObject(body)
+
+            val categorized = mutableMapOf<String, List<EnvVarItem>>()
+            val categorizedObj = obj.optJSONObject("categorizedEnvVars")
+            if (categorizedObj != null) {
+                val iter = categorizedObj.keys()
+                while (iter.hasNext()) {
+                    val category = iter.next()
+                    val arr = categorizedObj.optJSONArray(category) ?: JSONArray()
+                    val list = mutableListOf<EnvVarItem>()
+                    for (i in 0 until arr.length()) {
+                        val it = arr.optJSONObject(i) ?: continue
+                        val key = it.optString("key")
+                        val valueAny = it.opt("value")
+                        val value = when (valueAny) {
+                            is JSONArray -> (0 until valueAny.length()).joinToString(",") { idx -> valueAny.optString(idx) }
+                            null -> ""
+                            else -> valueAny.toString()
+                        }
+                        val type = it.optString("type").ifBlank { "text" }
+                        val desc = it.optString("description")
+                        val options = mutableListOf<String>()
+                        val optAny = it.opt("options")
+                        if (optAny is JSONArray) {
+                            for (j in 0 until optAny.length()) options.add(optAny.optString(j))
+                        }
+                        list.add(
+                            EnvVarItem(
+                                key = key,
+                                value = value,
+                                type = type,
+                                description = desc,
+                                options = options,
+                            )
+                        )
+                    }
+                    categorized[category] = list
+                }
+            }
+
+            val metaMap = mutableMapOf<String, EnvVarMeta>()
+            val metaObj = obj.optJSONObject("envVarConfig")
+            if (metaObj != null) {
+                val iter = metaObj.keys()
+                while (iter.hasNext()) {
+                    val k = iter.next()
+                    val m = metaObj.optJSONObject(k) ?: continue
+                    val options = mutableListOf<String>()
+                    val optAny = m.opt("options")
+                    if (optAny is JSONArray) {
+                        for (j in 0 until optAny.length()) options.add(optAny.optString(j))
+                    }
+                    val minVal = if (m.has("min")) m.optDouble("min") else Double.NaN
+                    val maxVal = if (m.has("max")) m.optDouble("max") else Double.NaN
+                    metaMap[k] = EnvVarMeta(
+                        category = m.optString("category").ifBlank { "system" },
+                        type = m.optString("type").ifBlank { "text" },
+                        description = m.optString("description"),
+                        options = options,
+                        min = if (!minVal.isNaN()) minVal else null,
+                        max = if (!maxVal.isNaN()) maxVal else null,
+                    )
+                }
+            }
+
+            val originalMap = mutableMapOf<String, String>()
+            val origObj = obj.optJSONObject("originalEnvVars")
+            if (origObj != null) {
+                val iter = origObj.keys()
+                while (iter.hasNext()) {
+                    val k = iter.next()
+                    val v = origObj.opt(k)
+                    originalMap[k] = v?.toString().orEmpty()
+                }
+            }
+
+            ServerConfigResponse(
+                message = obj.optString("message"),
+                version = obj.optString("version").ifBlank { null },
+                categorizedEnvVars = categorized,
+                envVarConfig = metaMap,
+                originalEnvVars = originalMap,
+                hasAdminToken = obj.optBoolean("hasAdminToken", false),
+                repository = obj.optString("repository").ifBlank { null },
+                description = obj.optString("description").ifBlank { null },
+                notice = obj.optString("notice").ifBlank { null },
+            )
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun parseServerLogs(text: String): List<ServerLogEntry> {
+        // Expected format per line: "[2024-01-01 12:00:00] info: message"
+        val regex = Regex("^\\[(.+?)]\\s+(\\w+):\\s+(.*)")
+        return text
+            .lineSequence()
+            .mapNotNull { raw ->
+                val line = raw.trim()
+                if (line.isBlank()) return@mapNotNull null
+
+                val m = regex.find(line)
+                if (m == null) {
+                    // Keep unknown format lines (rare, but happens on some deployments).
+                    return@mapNotNull ServerLogEntry("", "", line)
+                }
+
+                val ts = m.groupValues.getOrNull(1).orEmpty()
+                val level = m.groupValues.getOrNull(2).orEmpty()
+                val msg = m.groupValues.getOrNull(3).orEmpty()
+                ServerLogEntry(ts, level, msg)
+            }
+            .toList()
     }
 
     fun exportEnvToUri(uri: Uri) {
@@ -606,15 +911,9 @@ class MainViewModel(
         }
     }
 
-    fun installModuleZip(
-        zipPath: String,
-        keepCores: Boolean = true,
-        keepConfig: Boolean = true,
-        keepLogs: Boolean = true,
-    ) {
+    fun installModuleZip(zipPath: String, preserveCore: Boolean = true) {
         viewModelScope.launch {
             val wasRunning = status?.service?.running == true
-
             val ok = withBusy("安装模块中…") {
                 // Best-effort: stop service first to avoid half-written files.
                 try {
@@ -622,34 +921,21 @@ class MainViewModel(
                 } catch (_: Throwable) {
                     // ignore
                 }
-
-                val zipQ = shellQuote(zipPath)
-                val keepCoresFlag = if (keepCores) 1 else 0
-                val keepConfigFlag = if (keepConfig) 1 else 0
-                val keepLogsFlag = if (keepLogs) 1 else 0
-
                 val cmd = """
                     MODPATH="/data/adb/modules/danmu_api_server"
-                    MODBAK="${'$'}MODPATH.bak"
-                    PERSIST="/data/adb/danmu_api_server"
-                    ZIP=$zipQ
-                    KEEP_CORES=$keepCoresFlag
-                    KEEP_CONFIG=$keepConfigFlag
-                    KEEP_LOGS=$keepLogsFlag
-
-                    TMPDIR="/data/local/tmp/danmu_api_module_update_${'$'}{RANDOM}_${'$'}{RANDOM}"
+                    TMPDIR="/data/local/tmp/danmu_api_module_update"
                     rm -rf "${'$'}TMPDIR" 2>/dev/null || true
                     mkdir -p "${'$'}TMPDIR" || exit 1
-
-                    unzip -o "${'$'}ZIP" -d "${'$'}TMPDIR" >/dev/null 2>&1 || {
+                    rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
+                    unzip -o "$zipPath" -d "${'$'}TMPDIR" >/dev/null 2>&1 || {
                         rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                        echo "failed_unzip"; exit 1;
+                        echo "failed"; exit 0;
                     }
 
                     # Locate module root (support both flat zip and zip-with-top-dir)
                     SRC="${'$'}TMPDIR"
                     if [ ! -f "${'$'}SRC/module.prop" ]; then
-                        MP="$(find "${'$'}TMPDIR" -maxdepth 4 -type f -name module.prop 2>/dev/null | head -n 1)"
+                        MP="$(find "${'$'}TMPDIR" -maxdepth 3 -type f -name module.prop 2>/dev/null | head -n 1)"
                         if [ -n "${'$'}MP" ]; then
                             SRC="$(dirname "${'$'}MP")"
                         fi
@@ -657,150 +943,57 @@ class MainViewModel(
 
                     if [ ! -f "${'$'}SRC/module.prop" ]; then
                         rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                        echo "failed_badzip"; exit 1;
+                        echo "failed"; exit 0;
                     fi
 
-                    # Optional data cleanup (for reinstall/downgrade)
-                    if [ "${'$'}KEEP_CORES" != "1" ]; then
-                        rm -rf "${'$'}PERSIST/cores" "${'$'}PERSIST/core" "${'$'}PERSIST/active_core_id" 2>/dev/null || true
-                    fi
-                    if [ "${'$'}KEEP_CONFIG" != "1" ]; then
-                        rm -rf "${'$'}PERSIST/config" 2>/dev/null || true
-                    fi
-                    if [ "${'$'}KEEP_LOGS" != "1" ]; then
-                        rm -rf "${'$'}PERSIST/logs" 2>/dev/null || true
-                    fi
-
-                    mkdir -p "${'$'}PERSIST/bin" "${'$'}PERSIST/config" "${'$'}PERSIST/cores" "${'$'}PERSIST/logs" 2>/dev/null || true
-
-                    # Backup old module (if exists)
-                    rm -rf "${'$'}MODBAK" 2>/dev/null || true
                     if [ -d "${'$'}MODPATH" ]; then
-                        mv "${'$'}MODPATH" "${'$'}MODBAK" || {
+                        mv "${'$'}MODPATH" "${'$'}MODPATH.bak" || {
                             rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                            echo "failed_backup"; exit 1;
+                            echo "failed"; exit 0;
                         }
                     fi
-
-                    # Install new module files
                     mkdir -p "${'$'}MODPATH" || {
                         rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                        echo "failed_mkdir"; exit 1;
+                        echo "failed"; exit 0;
                     }
 
                     # Copy files (try preserve metadata when possible).
-                    cp -a "${'$'}SRC"/. "${'$'}MODPATH"/ 2>/dev/null || cp -r "${'$'}SRC"/. "${'$'}MODPATH"/ 2>/dev/null || true
+                    cp -a "${'$'}SRC"/. "${'$'}MODPATH"/ 2>/dev/null || cp -r "${'$'}SRC"/. "${'$'}MODPATH"/
 
-                    # Validate
-                    if [ ! -f "${'$'}MODPATH/module.prop" ]; then
-                        rm -rf "${'$'}MODPATH" 2>/dev/null || true
-                        if [ -d "${'$'}MODBAK" ]; then
-                            mv "${'$'}MODBAK" "${'$'}MODPATH" 2>/dev/null || true
-                        fi
-                        rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                        echo "failed_copy"; exit 1;
-                    fi
-
-                    # Fix permissions (best-effort)
-                    chown -R root:root "${'$'}MODPATH" 2>/dev/null || true
-                    chmod 0755 "${'$'}MODPATH" 2>/dev/null || true
-                    find "${'$'}MODPATH" -type d -exec chmod 0755 {} \; 2>/dev/null || true
-                    find "${'$'}MODPATH" -type f -exec chmod 0644 {} \; 2>/dev/null || true
+                    # Ensure scripts are executable.
                     find "${'$'}MODPATH" -type f -name "*.sh" -exec chmod 0755 {} \; 2>/dev/null || true
-                    [ -d "${'$'}MODPATH/bin" ] && find "${'$'}MODPATH/bin" -type f -exec chmod 0755 {} \; 2>/dev/null || true
-                    [ -d "${'$'}MODPATH/scripts" ] && find "${'$'}MODPATH/scripts" -type f -exec chmod 0755 {} \; 2>/dev/null || true
-                    [ -d "${'$'}MODPATH/system/bin" ] && find "${'$'}MODPATH/system/bin" -type f -exec chmod 0755 {} \; 2>/dev/null || true
-
-                    # Sync bin/scripts to persist for CLI (so manager app can call them right away)
-                    if [ -d "${'$'}MODPATH/scripts" ]; then
-                        cp -a "${'$'}MODPATH/scripts"/. "${'$'}PERSIST/bin"/ 2>/dev/null || cp -r "${'$'}MODPATH/scripts"/. "${'$'}PERSIST/bin"/ 2>/dev/null || true
-                    fi
-                    if [ -d "${'$'}MODPATH/bin" ]; then
-                        cp -a "${'$'}MODPATH/bin"/. "${'$'}PERSIST/bin"/ 2>/dev/null || cp -r "${'$'}MODPATH/bin"/. "${'$'}PERSIST/bin"/ 2>/dev/null || true
-                    fi
-                    chmod -R 0755 "${'$'}PERSIST/bin" 2>/dev/null || true
-
-                    # Ensure config file exists
-                    if [ ! -f "${'$'}PERSIST/config/.env" ]; then
-                        if [ -f "${'$'}MODPATH/defaults/config/.env.example" ]; then
-                            cp -f "${'$'}MODPATH/defaults/config/.env.example" "${'$'}PERSIST/config/.env" 2>/dev/null || true
-                            chmod 0644 "${'$'}PERSIST/config/.env" 2>/dev/null || true
-                        fi
-                    fi
-
-                    # Ensure core link points to active core if exists
-                    ACTIVE_FILE="${'$'}PERSIST/active_core_id"
-                    CORE_LINK="${'$'}PERSIST/core"
-                    if [ -f "${'$'}ACTIVE_FILE" ]; then
-                        ID="$(cat "${'$'}ACTIVE_FILE" 2>/dev/null | tr -d '\r\n')"
-                        if [ -n "${'$'}ID" ] && [ -d "${'$'}PERSIST/cores/${'$'}ID/danmu_api" ]; then
-                            rm -rf "${'$'}CORE_LINK" 2>/dev/null || true
-                            ln -s "${'$'}PERSIST/cores/${'$'}ID/danmu_api" "${'$'}CORE_LINK" 2>/dev/null || true
-                        fi
-                    fi
-
-                    # If no active core (fresh install or user wiped cores), seed from bundled core in the zip.
-                    if [ ! -f "${'$'}ACTIVE_FILE" ]; then
-                        if [ -d "${'$'}SRC/app/danmu_api" ] && [ -f "${'$'}SRC/app/danmu_api/worker.js" ]; then
-                            REPO=""
-                            REF=""
-                            SHA=""
-                            VERSION=""
-                            if [ -f "${'$'}SRC/defaults/core_source.txt" ]; then
-                                REPO="$(grep '^repo=' "${'$'}SRC/defaults/core_source.txt" | head -n1 | cut -d= -f2-)"
-                                REF="$(grep '^ref=' "${'$'}SRC/defaults/core_source.txt" | head -n1 | cut -d= -f2-)"
-                                SHA="$(grep '^sha=' "${'$'}SRC/defaults/core_source.txt" | head -n1 | cut -d= -f2-)"
-                                VERSION="$(grep '^version=' "${'$'}SRC/defaults/core_source.txt" | head -n1 | cut -d= -f2-)"
-                            fi
-                            SHA_SHORT="$(echo "${'$'}SHA" | cut -c1-7)"
-                            ID_BASE="bundled_${'$'}REPO_${'$'}REF_${'$'}SHA_SHORT"
-                            CORE_ID="$(echo "${'$'}ID_BASE" | sed 's/[^A-Za-z0-9._-]/_/g')"
-                            DEST="${'$'}PERSIST/cores/${'$'}CORE_ID"
-                            DEST_CORE="${'$'}DEST/danmu_api"
-                            rm -rf "${'$'}DEST" 2>/dev/null || true
-                            mkdir -p "${'$'}DEST" 2>/dev/null || true
-                            cp -a "${'$'}SRC/app/danmu_api" "${'$'}DEST_CORE" 2>/dev/null || cp -r "${'$'}SRC/app/danmu_api" "${'$'}DEST_CORE" 2>/dev/null || true
-                            ln -s "${'$'}PERSIST/config" "${'$'}DEST/config" 2>/dev/null || true
-
-                            TS="$(date +%s 2>/dev/null || echo 0)"
-                            cat > "${'$'}DEST/meta.json" <<META
-{
-  "id": "${'$'}CORE_ID",
-  "repo": "${'$'}REPO",
-  "ref": "${'$'}REF",
-  "sha": "${'$'}SHA",
-  "shaShort": "${'$'}SHA_SHORT",
-  "version": "${'$'}VERSION",
-  "installedAt": ${'$'}TS,
-  "sizeBytes": 0
-}
-META
-
-                            rm -rf "${'$'}CORE_LINK" 2>/dev/null || true
-                            ln -s "${'$'}DEST_CORE" "${'$'}CORE_LINK" 2>/dev/null || true
-                            echo "${'$'}CORE_ID" > "${'$'}ACTIVE_FILE"
-                        fi
-                    fi
-
-                    # Ensure module app links point to persist
-                    MODCFG="${'$'}MODPATH/app/config"
-                    rm -rf "${'$'}MODCFG" 2>/dev/null || true
-                    ln -s "${'$'}PERSIST/config" "${'$'}MODCFG" 2>/dev/null || true
-
-                    MODCORE="${'$'}MODPATH/app/danmu_api"
-                    rm -rf "${'$'}MODCORE" 2>/dev/null || true
-                    ln -s "${'$'}CORE_LINK" "${'$'}MODCORE" 2>/dev/null || true
+                    chmod 0755 "${'$'}MODPATH/action.sh" 2>/dev/null || true
 
                     rm -rf "${'$'}TMPDIR" 2>/dev/null || true
-                    rm -rf "${'$'}MODBAK" 2>/dev/null || true
+                    rm -rf "${'$'}MODPATH.bak" 2>/dev/null || true
                     echo "success"
                 """.trimIndent()
-
-                val res = RootShell.runSu(cmd, timeoutMs = 180_000)
-                res.exitCode == 0 && res.stdout.contains("success")
+                
+                val res = RootShell.runSu(cmd, timeoutMs = 120_000)
+                res.stdout.contains("success")
             }
-
+            
             if (ok) {
+                if (!preserveCore) {
+                    // User requested to drop existing cores and switch to the bundled core shipped in the new module.
+                    // We do a safe backup instead of deleting outright.
+                    val ts = System.currentTimeMillis()
+                    val resetCmd = """
+                        PERSIST_DIR='/data/adb/danmu_api_server'
+                        CORE_CLI='${DanmuPaths.CORE_CLI}'
+                        TS='${ts}'
+
+                        if [ -d "${'$'}PERSIST_DIR/cores" ]; then
+                          mv "${'$'}PERSIST_DIR/cores" "${'$'}PERSIST_DIR/cores.bak.${'$'}TS" 2>/dev/null || true
+                        fi
+                        rm -f "${'$'}PERSIST_DIR/core" "${'$'}PERSIST_DIR/active_core_id" 2>/dev/null || true
+
+                        # Re-seed / fix symlinks based on the newly installed module.
+                        sh "${'$'}CORE_CLI" ensure >/dev/null 2>&1 || true
+                        echo "reset_core_ok"
+                    """.trimIndent()
+                    RootShell.runSu(resetCmd)
+                }
                 snackbars.tryEmit("模块安装成功！建议重启设备后生效。")
                 refreshAllInternal()
                 // Restore previous running state (best-effort).
@@ -811,11 +1004,6 @@ META
                 snackbars.tryEmit("模块安装失败")
             }
         }
-    }
-
-    private fun shellQuote(value: String): String {
-        // Safe single-quote wrapper for sh.
-        return "'" + value.replace("'", "'\"'\"'") + "'"
     }
 }
 

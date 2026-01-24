@@ -100,7 +100,7 @@ fun LogsScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = "日志", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    text = "可用于排查启动失败、核心切换与更新问题。部分日志会轮转为 *.log.1/*.log.2。",
+                    text = "可用于排查启动失败、核心切换与更新问题。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }

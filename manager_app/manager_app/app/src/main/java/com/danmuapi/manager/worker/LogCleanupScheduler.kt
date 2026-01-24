@@ -5,7 +5,6 @@ import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import androidx.work.workDataOf
 import java.util.concurrent.TimeUnit
 
 object LogCleanupScheduler {
@@ -28,9 +27,6 @@ object LogCleanupScheduler {
             intervalDays.toLong(),
             TimeUnit.DAYS,
         )
-            .setInputData(
-                workDataOf(LogCleanupWorker.KEY_RETENTION_DAYS to intervalDays)
-            )
             .setConstraints(constraints)
             .build()
 

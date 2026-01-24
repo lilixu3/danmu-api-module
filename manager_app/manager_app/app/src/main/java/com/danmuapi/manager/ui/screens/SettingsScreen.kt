@@ -409,19 +409,19 @@ fun SettingsScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.BatterySaver, contentDescription = null)
-                    Text(text = "日志历史清理", style = MaterialTheme.typography.titleMedium)
+                    Text(text = "日志自动修剪", style = MaterialTheme.typography.titleMedium)
                 }
                 Text(
-                    text = "自动删除轮转日志（如 server.log.1 / server.log.2）中超过指定天数的旧文件，不会自动清空当前 *.log。",
+                    text = "使用 WorkManager 定时执行（无轮询）。会将模块日志修剪到最后 1MB（不会全部清空），建议设置为 3/7 天。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
 
                 val options = listOf(
                     0 to "关闭",
-                    1 to "保留 1 天",
-                    3 to "保留 3 天",
-                    7 to "保留 7 天",
-                    30 to "保留 30 天",
+                    1 to "每 1 天",
+                    3 to "每 3 天",
+                    7 to "每 7 天",
+                    30 to "每 30 天",
                 )
 
                 var expanded by remember { mutableStateOf(false) }
@@ -435,7 +435,7 @@ fun SettingsScreen(
                         value = selectedLabel,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("保留天数") },
+                        label = { Text("清理周期") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         modifier = Modifier.menuAnchor(),
                     )

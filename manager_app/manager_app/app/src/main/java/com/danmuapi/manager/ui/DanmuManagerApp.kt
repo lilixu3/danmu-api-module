@@ -44,10 +44,9 @@ import com.danmuapi.manager.network.GitHubApi
 import com.danmuapi.manager.root.DanmuCli
 import com.danmuapi.manager.ui.screens.CoresScreen
 import com.danmuapi.manager.ui.screens.DashboardScreen
-import com.danmuapi.manager.ui.screens.LogsScreen
+import com.danmuapi.manager.ui.screens.ConsoleScreen
 import com.danmuapi.manager.ui.screens.SettingsScreen
 import com.danmuapi.manager.ui.screens.AboutScreen
-import com.danmuapi.manager.ui.screens.AdminPanelScreen
 import com.danmuapi.manager.worker.LogCleanupScheduler
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,9 +60,8 @@ private enum class NavItem(
     val labelRes: Int,
 ) {
     DASHBOARD("dashboard", com.danmuapi.manager.R.string.nav_dashboard),
-    ADMIN("admin", com.danmuapi.manager.R.string.nav_admin),
     CORES("cores", com.danmuapi.manager.R.string.nav_cores),
-    LOGS("logs", com.danmuapi.manager.R.string.nav_logs),
+    CONSOLE("console", com.danmuapi.manager.R.string.nav_console),
     SETTINGS("settings", com.danmuapi.manager.R.string.nav_settings),
     ABOUT("about", com.danmuapi.manager.R.string.nav_about),
 }
@@ -99,9 +97,8 @@ fun DanmuManagerApp(applicationContext: Context) {
 
     val title = when (currentRoute) {
         NavItem.DASHBOARD.route -> "仪表盘"
-        NavItem.ADMIN.route -> "后台管理"
         NavItem.CORES.route -> "核心管理"
-        NavItem.LOGS.route -> "日志"
+        NavItem.CONSOLE.route -> "控制台"
         NavItem.SETTINGS.route -> "设置"
         NavItem.ABOUT.route -> "关于"
         else -> "Danmu API"
@@ -148,22 +145,16 @@ fun DanmuManagerApp(applicationContext: Context) {
                     label = { Text(text = "仪表盘") },
                 )
                 NavigationBarItem(
-                    selected = currentRoute == NavItem.ADMIN.route,
-                    onClick = { navTo(NavItem.ADMIN) },
-                    icon = { Icon(Icons.Filled.AutoAwesome, contentDescription = null) },
-                    label = { Text(text = "管理") },
-                )
-                NavigationBarItem(
                     selected = currentRoute == NavItem.CORES.route,
                     onClick = { navTo(NavItem.CORES) },
                     icon = { Icon(Icons.Filled.CloudDownload, contentDescription = null) },
                     label = { Text(text = "核心") },
                 )
                 NavigationBarItem(
-                    selected = currentRoute == NavItem.LOGS.route,
-                    onClick = { navTo(NavItem.LOGS) },
-                    icon = { Icon(Icons.Filled.BugReport, contentDescription = null) },
-                    label = { Text(text = "日志") },
+                    selected = currentRoute == NavItem.CONSOLE.route,
+                    onClick = { navTo(NavItem.CONSOLE) },
+                    icon = { Icon(Icons.Filled.AutoAwesome, contentDescription = null) },
+                    label = { Text(text = "控制台") },
                 )
                 NavigationBarItem(
                     selected = currentRoute == NavItem.SETTINGS.route,
@@ -209,7 +200,6 @@ fun DanmuManagerApp(applicationContext: Context) {
                     rootAvailable = vm.rootAvailable,
                     status = vm.status,
                     apiToken = vm.apiToken,
-                    adminToken = vm.adminToken,
                     apiPort = vm.apiPort,
                     apiHost = vm.apiHost,
                     cores = vm.cores,
@@ -225,20 +215,7 @@ fun DanmuManagerApp(applicationContext: Context) {
                     onDownloadModuleZip = { asset, onProgress, onComplete ->
                         vm.downloadModuleZip(asset, onProgress, onComplete)
                     },
-                    onInstallModuleZip = { path, keepCores, keepConfig, keepLogs ->
-                        vm.installModuleZip(path, keepCores, keepConfig, keepLogs)
-                    },
-                )
-            }
-            composable(NavItem.ADMIN.route) {
-                AdminPanelScreen(
-                    paddingValues = padding,
-                    serviceRunning = vm.status?.service?.running,
-                    apiPort = vm.apiPort,
-                    apiHost = vm.apiHost,
-                    token = vm.apiToken,
-                    adminToken = vm.adminToken,
-                    onStartService = { vm.startService() },
+                    onInstallModuleZip = { path, preserveCore -> vm.installModuleZip(path, preserveCore) },
                 )
             }
             composable(NavItem.CORES.route) {
@@ -252,20 +229,55 @@ fun DanmuManagerApp(applicationContext: Context) {
                     onDelete = { id -> vm.deleteCore(id) },
                 )
             }
-            composable(NavItem.LOGS.route) {
-                // Keep the log list fresh when entering the Logs screen.
+            composable(NavItem.CONSOLE.route) {
+                val consoleScope = rememberCoroutineScope()
+                // Entering console: keep module logs fresh; backend features are loaded lazily inside ConsoleScreen.
                 LaunchedEffect(Unit) {
                     vm.refreshLogs()
+                    if (vm.status?.isRunning == true) {
+                        vm.refreshServerConfig(useAdminToken = false)
+                        vm.refreshServerLogs()
+                    }
                 }
-                LogsScreen(
+
+                ConsoleScreen(
                     paddingValues = padding,
-                    logs = vm.logs,
-                    onClearAll = { vm.clearLogs() },
-                    onReadTail = { path, lines, onResult ->
-                        scope.launch {
+                    rootAvailable = vm.rootAvailable,
+                    serviceRunning = (vm.status?.isRunning == true),
+                    apiToken = vm.apiToken,
+                    apiPort = vm.apiPort,
+                    apiHost = vm.apiHost,
+                    adminToken = vm.adminToken,
+                    serverConfig = vm.serverConfig,
+                    serverConfigLoading = vm.serverConfigLoading,
+                    serverConfigError = vm.serverConfigError,
+                    serverLogs = vm.serverLogs,
+                    serverLogsLoading = vm.serverLogsLoading,
+                    serverLogsError = vm.serverLogsError,
+                    moduleLogs = vm.logs,
+                    onRefreshConfig = { useAdmin -> vm.refreshServerConfig(useAdminToken = useAdmin) },
+                    onRefreshServerLogs = { vm.refreshServerLogs() },
+                    onClearServerLogs = { vm.clearServerLogs() },
+                    onSetEnv = { key, value -> vm.setServerEnvVar(key, value) },
+                    onDeleteEnv = { key -> vm.deleteServerEnvVar(key) },
+                    onClearCache = { vm.clearServerCache() },
+                    onDeploy = { vm.deployServer() },
+                    onRefreshModuleLogs = { vm.refreshLogs() },
+                    onClearModuleLogs = { vm.clearLogs() },
+                    onReadModuleLogTail = { path, lines, onResult ->
+                        consoleScope.launch {
                             val text = repo.tailLog(path, lines) ?: "（无法读取日志）"
                             onResult(text)
                         }
+                    },
+                    requestApi = { method, path, query, bodyJson, useAdminToken ->
+                        vm.requestDanmuApi(
+                            method = method,
+                            path = path,
+                            query = query,
+                            bodyJson = bodyJson,
+                            useAdminToken = useAdminToken
+                        )
                     }
                 )
             }

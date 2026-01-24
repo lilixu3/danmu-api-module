@@ -3,47 +3,39 @@ package com.danmuapi.manager.worker
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.danmuapi.manager.root.DanmuPaths
 import com.danmuapi.manager.root.RootShell
 
 class LogCleanupWorker(
     appContext: Context,
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
-
-    companion object {
-        /**
-         * How many days of historical (rotated) logs to keep.
-         *
-         * NOTE: We intentionally do NOT truncate active *.log files automatically.
-         * Users can always clear logs manually from the Logs screen.
-         */
-        const val KEY_RETENTION_DAYS = "retention_days"
-    }
-
     override suspend fun doWork(): Result {
-        val days = inputData.getInt(KEY_RETENTION_DAYS, 0)
-        if (days <= 0) return Result.success()
-
-        // Only delete rotated logs older than N days (e.g. server.log.1, server.log.2).
-        // This fixes the "logs suddenly become 0" complaint caused by full truncation.
-        val cmd = """
-            PERSIST="/data/adb/danmu_api_server"
-            LOGDIR="${'$'}PERSIST/logs"
-            DAYS="$days"
-            BB="${'$'}PERSIST/bin/busybox"
-
-            if [ -d "${'$'}LOGDIR" ]; then
-              if [ -x "${'$'}BB" ]; then
-                "${'$'}BB" find "${'$'}LOGDIR" -type f -name "*.log.*" -mtime +"${'$'}DAYS" -exec "${'$'}BB" rm -f {} \; 2>/dev/null || true
+        // NOTE:
+        // The early version of the app used `logs clear`, which truncates ALL module logs to 0.
+        // That behaviour is too destructive (users think "logs disappear by themselves").
+        //
+        // Here we implement a safer "log trim" strategy: keep the last ~1MiB of each *.log file.
+        // This prevents log growth without wiping everything.
+        val trimCmd = """
+            LOG_DIR='${DanmuPaths.LOG_DIR}'
+            MAX_BYTES=1048576
+            for f in "${'$'}LOG_DIR"/*.log; do
+              [ -f "${'$'}f" ] || continue
+              tmp="${'$'}f.trim.tmp"
+              # Keep last MAX_BYTES bytes. If `tail -c` is unsupported, fallback to last 5000 lines.
+              if tail -c "${'$'}MAX_BYTES" "${'$'}f" > "${'$'}tmp" 2>/dev/null; then
+                cat "${'$'}tmp" > "${'$'}f" || true
+                rm -f "${'$'}tmp"
               else
-                find "${'$'}LOGDIR" -type f -name "*.log.*" -mtime +"${'$'}DAYS" -exec rm -f {} \; 2>/dev/null || true
+                tail -n 5000 "${'$'}f" > "${'$'}tmp" 2>/dev/null || true
+                [ -f "${'$'}tmp" ] && cat "${'$'}tmp" > "${'$'}f" || true
+                rm -f "${'$'}tmp"
               fi
-            fi
-
-            echo ok
+            done
         """.trimIndent()
 
-        val res = RootShell.runSu(cmd, timeoutMs = 60_000)
+        val res = RootShell.runSu(trimCmd, timeoutMs = 60_000)
         return if (res.exitCode == 0) Result.success() else Result.retry()
     }
 }

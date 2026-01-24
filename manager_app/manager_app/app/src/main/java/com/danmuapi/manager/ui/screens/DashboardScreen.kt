@@ -46,14 +46,12 @@ import com.danmuapi.manager.ui.components.ManagerCard
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -63,7 +61,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,7 +85,6 @@ fun DashboardScreen(
     rootAvailable: Boolean?,
     status: StatusResponse?,
     apiToken: String,
-    adminToken: String,
     apiPort: Int,
     apiHost: String,
     cores: CoreListResponse?,
@@ -102,7 +98,7 @@ fun DashboardScreen(
     onCheckActiveCoreUpdate: () -> Unit,
     onCheckModuleUpdate: () -> Unit,
     onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
-    onInstallModuleZip: (String, Boolean, Boolean, Boolean) -> Unit,
+    onInstallModuleZip: (String, Boolean) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -128,7 +124,6 @@ fun DashboardScreen(
 
         AccessInfoCard(
             apiToken = apiToken,
-            adminToken = adminToken,
             apiPort = apiPort,
             apiHost = apiHost,
             serviceRunning = status?.service?.running,
@@ -161,7 +156,7 @@ private fun ServiceStatusCard(
     moduleUpdateInfo: ModuleUpdateInfo?,
     onCheckModuleUpdate: () -> Unit,
     onDownloadModuleZip: (ReleaseAsset, (Int) -> Unit, (String?) -> Unit) -> Unit,
-    onInstallModuleZip: (String, Boolean, Boolean, Boolean) -> Unit,
+    onInstallModuleZip: (String, Boolean) -> Unit,
 ) {
     val running: Boolean? = status?.service?.running
     val pid = status?.service?.pid
@@ -175,12 +170,7 @@ private fun ServiceStatusCard(
     var downloadedPath by remember { mutableStateOf<String?>(null) }
     var downloading by remember { mutableStateOf(false) }
     var showDownloadProgress by remember { mutableStateOf(false) }
-    var showInstallOptions by remember { mutableStateOf(false) }
-
-    // Install options (default: keep everything)
-    var keepCores by remember { mutableStateOf(true) }
-    var keepConfig by remember { mutableStateOf(true) }
-    var keepLogs by remember { mutableStateOf(true) }
+    var showDownloadSuccess by remember { mutableStateOf(false) }
 
     // 下载进度弹窗
     if (showDownloadProgress) {
@@ -211,57 +201,72 @@ private fun ServiceStatusCard(
         )
     }
 
-    // 安装选项弹窗（更新/重装时可选择是否保留旧核心/配置/日志）
-    if (showInstallOptions) {
+    // 下载成功弹窗
+    if (showDownloadSuccess) {
+        var preserveCore by remember { mutableStateOf(true) }
         AlertDialog(
-            onDismissRequest = { showInstallOptions = false },
-            title = { Text("安装选项") },
+            onDismissRequest = { showDownloadSuccess = false },
+            title = { Text("下载完成") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("安装包已下载完成，是否立即安装？")
                     Text(
-                        "安装后建议重启设备使模块完全生效。\n\n如你是在\"重装/降级\"，可以取消勾选以下选项以清理旧数据。",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "安装后建议重启设备使模块生效。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = keepCores, onCheckedChange = { keepCores = it })
-                        Spacer(Modifier.width(8.dp))
-                        Text("保留旧版核心（cores / active_core_id）")
+                    HorizontalDivider()
+
+                    Text(
+                        text = "核心处理",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { preserveCore = true }
+                    ) {
+                        RadioButton(selected = preserveCore, onClick = { preserveCore = true })
+                        Text("保留旧版核心（推荐）")
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = keepConfig, onCheckedChange = { keepConfig = it })
-                        Spacer(Modifier.width(8.dp))
-                        Text("保留现有配置（config/.env）")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = keepLogs, onCheckedChange = { keepLogs = it })
-                        Spacer(Modifier.width(8.dp))
-                        Text("保留日志（logs）")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { preserveCore = false }
+                    ) {
+                        RadioButton(selected = !preserveCore, onClick = { preserveCore = false })
+                        Text("不保留：安装后切换到新模块自带核心")
                     }
 
                     Text(
-                        "提示：取消勾选会在安装前删除对应目录/文件，适合彻底重装。",
+                        text = "提示：选择“不保留”不会直接删除旧核心，会将 cores 目录备份为 cores.bak.*，便于回退。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showInstallOptions = false
-                        val path = downloadedPath
-                        if (!path.isNullOrBlank()) {
-                            onInstallModuleZip(path, keepCores, keepConfig, keepLogs)
-                        }
-                    },
-                ) {
-                    Text("安装")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            showDownloadSuccess = false
+                            val path = downloadedPath
+                            if (!path.isNullOrBlank()) {
+                                onInstallModuleZip(path, preserveCore)
+                            }
+                        },
+                    ) {
+                        Text("安装")
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showInstallOptions = false }) {
-                    Text("稍后")
+                TextButton(onClick = { showDownloadSuccess = false }) {
+                    Text("取消")
                 }
             },
         )
@@ -310,11 +315,7 @@ private fun ServiceStatusCard(
                         if (path == null) {
                             Toast.makeText(ctx, "下载失败", Toast.LENGTH_SHORT).show()
                         } else {
-                            // Default to keeping existing data on update.
-                            keepCores = true
-                            keepConfig = true
-                            keepLogs = true
-                            showInstallOptions = true
+                            showDownloadSuccess = true
                         }
                     },
                 )
@@ -824,7 +825,6 @@ private fun ModuleUpdateDialog(
 @Composable
 private fun AccessInfoCard(
     apiToken: String,
-    adminToken: String,
     apiPort: Int,
     apiHost: String,
     serviceRunning: Boolean?,
@@ -833,8 +833,6 @@ private fun AccessInfoCard(
     val clipboard = LocalClipboardManager.current
 
     val token = apiToken.trim().ifBlank { "87654321" }
-    val admin = adminToken.trim()
-    val hasAdmin = admin.isNotBlank()
     val port = apiPort.coerceIn(1, 65535)
 
     val lanIps = rememberLanIpv4Addresses()
@@ -844,8 +842,6 @@ private fun AccessInfoCard(
 
     val localUrl = buildHttpUrl(host = "127.0.0.1", port = port, token = token)
     val lanUrl = if (lanIp.isBlank()) "" else buildHttpUrl(host = lanIp, port = port, token = token)
-    val adminLocalUrl = if (hasAdmin) buildHttpUrl(host = "127.0.0.1", port = port, token = admin) else ""
-    val adminLanUrl = if (hasAdmin && lanIp.isNotBlank()) buildHttpUrl(host = lanIp, port = port, token = admin) else ""
 
     ManagerCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -865,14 +861,8 @@ private fun AccessInfoCard(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    val tokenText = if (revealToken) token else "******"
-                    val adminText = when {
-                        !hasAdmin -> "未配置"
-                        revealToken -> admin
-                        else -> "******"
-                    }
                     Text(
-                        text = "端口：$port · Token：$tokenText · Admin：$adminText",
+                        text = "端口：$port · Token：${if (revealToken) token else "******"}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -921,36 +911,6 @@ private fun AccessInfoCard(
                     openUrl(ctx, lanUrl)
                 },
             )
-
-            if (hasAdmin) {
-                HorizontalDivider()
-
-                UrlRow(
-                    title = "系统管理（ADMIN_TOKEN）本机",
-                    url = adminLocalUrl,
-                    displayUrl = if (revealToken) adminLocalUrl else maskTokenInUrl(adminLocalUrl, admin),
-                    enabled = serviceRunning == true,
-                    subtitle = "用于系统设置/环境变量管理等高级功能",
-                    onCopy = {
-                        clipboard.setText(AnnotatedString(adminLocalUrl))
-                        Toast.makeText(ctx, "已复制管理员本机地址", Toast.LENGTH_SHORT).show()
-                    },
-                    onOpen = { openUrl(ctx, adminLocalUrl) },
-                )
-
-                UrlRow(
-                    title = "系统管理（ADMIN_TOKEN）局域网",
-                    url = adminLanUrl,
-                    displayUrl = if (revealToken) adminLanUrl else maskTokenInUrl(adminLanUrl, admin),
-                    enabled = (serviceRunning == true) && adminLanUrl.isNotBlank(),
-                    subtitle = if (adminLanUrl.isBlank()) "未获取到局域网 IPv4" else null,
-                    onCopy = {
-                        clipboard.setText(AnnotatedString(adminLanUrl))
-                        Toast.makeText(ctx, "已复制管理员局域网地址", Toast.LENGTH_SHORT).show()
-                    },
-                    onOpen = { openUrl(ctx, adminLanUrl) },
-                )
-            }
 
             AnimatedVisibility(
                 visible = serviceRunning == false,
