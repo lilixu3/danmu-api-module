@@ -29,7 +29,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
@@ -73,6 +75,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.material3.Surface
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
+import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.AnnotatedString
@@ -109,6 +115,13 @@ fun ConsoleScreen(
     apiPort: Int,
     apiHost: String,
     adminToken: String,
+    sessionAdminToken: String,
+    adminTokenPromptMode: Int,
+    consoleLogLimit: Int,
+    onSetAdminTokenPromptMode: (Int) -> Unit,
+    onSetConsoleLogLimit: (Int) -> Unit,
+    onSetSessionAdminToken: (String) -> Unit,
+    onClearSessionAdminToken: () -> Unit,
     serverConfig: ServerConfigResponse?,
     serverConfigLoading: Boolean,
     serverConfigError: String?,
@@ -136,6 +149,8 @@ fun ConsoleScreen(
 ) {
     val tabs = listOf("预览", "日志", "接口", "推送", "系统")
     var selectedTab by remember { mutableIntStateOf(0) }
+
+    val effectiveAdminToken = sessionAdminToken.ifBlank { adminToken }
 
     // Initial refresh (best-effort)
     LaunchedEffect(serviceRunning) {
@@ -181,7 +196,9 @@ fun ConsoleScreen(
             1 -> LogsTab(
                 rootAvailable = rootAvailable,
                 serviceRunning = serviceRunning,
-                adminToken = adminToken,
+                adminToken = effectiveAdminToken,
+                consoleLogLimit = consoleLogLimit,
+                onSetConsoleLogLimit = onSetConsoleLogLimit,
                 serverLogs = serverLogs,
                 serverLogsLoading = serverLogsLoading,
                 serverLogsError = serverLogsError,
@@ -195,7 +212,7 @@ fun ConsoleScreen(
 
             2 -> ApiTestTab(
                 serviceRunning = serviceRunning,
-                adminToken = adminToken,
+                adminToken = effectiveAdminToken,
                 requestApi = requestApi,
             )
 
@@ -209,7 +226,12 @@ fun ConsoleScreen(
             4 -> SystemSettingsTab(
                 rootAvailable = rootAvailable,
                 serviceRunning = serviceRunning,
-                adminToken = adminToken,
+                adminTokenFromEnv = adminToken,
+                sessionAdminToken = sessionAdminToken,
+                adminTokenPromptMode = adminTokenPromptMode,
+                onSetAdminTokenPromptMode = onSetAdminTokenPromptMode,
+                onSetSessionAdminToken = onSetSessionAdminToken,
+                onClearSessionAdminToken = onClearSessionAdminToken,
                 serverConfig = serverConfig,
                 loading = serverConfigLoading,
                 error = serverConfigError,
@@ -250,7 +272,7 @@ private fun ConfigPreviewTab(
         item {
             ManagerCard(title = "配置预览") {
                 Text(
-                    text = "用于快速查看 danmu-api 当前运行配置（与 Web UI 预览页一致）。",
+                    text = "用于快速查看 danmu-api 当前运行配置。",
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -413,6 +435,8 @@ private fun LogsTab(
     rootAvailable: Boolean?,
     serviceRunning: Boolean,
     adminToken: String,
+    consoleLogLimit: Int,
+    onSetConsoleLogLimit: (Int) -> Unit,
     serverLogs: List<ServerLogEntry>,
     serverLogsLoading: Boolean,
     serverLogsError: String?,
@@ -445,10 +469,58 @@ private fun LogsTab(
 
         HorizontalDivider()
 
+        // Display limit (avoid a wall of text / jank when logs explode)
+        val presets = listOf(100, 300, 600, 1200)
+        var limitText by remember(consoleLogLimit) { mutableStateOf(consoleLogLimit.toString()) }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("显示", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                presets.forEach { v ->
+                    FilterChip(
+                        selected = consoleLogLimit == v,
+                        onClick = { onSetConsoleLogLimit(v) },
+                        label = { Text("$v") },
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = limitText,
+                onValueChange = { raw ->
+                    limitText = raw.filter { it.isDigit() }.take(5)
+                },
+                modifier = Modifier.width(96.dp),
+                singleLine = true,
+                label = { Text("条数") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+            OutlinedButton(
+                onClick = {
+                    val v = limitText.toIntOrNull()
+                    if (v != null) onSetConsoleLogLimit(v)
+                },
+                enabled = limitText.toIntOrNull() != null,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Text("应用")
+            }
+        }
+
         when (selected) {
             0 -> ServerLogsView(
                 serviceRunning = serviceRunning,
                 adminToken = adminToken,
+                maxDisplayLines = consoleLogLimit,
                 logs = serverLogs,
                 loading = serverLogsLoading,
                 error = serverLogsError,
@@ -457,6 +529,7 @@ private fun LogsTab(
             )
             else -> ModuleLogsView(
                 rootAvailable = rootAvailable,
+                tailLines = consoleLogLimit,
                 logsResponse = moduleLogs,
                 onRefresh = onRefreshModuleLogs,
                 onClear = onClearModuleLogs,
@@ -470,6 +543,7 @@ private fun LogsTab(
 private fun ServerLogsView(
     serviceRunning: Boolean,
     adminToken: String,
+    maxDisplayLines: Int,
     logs: List<ServerLogEntry>,
     loading: Boolean,
     error: String?,
@@ -510,9 +584,9 @@ private fun ServerLogsView(
 
     // Avoid rendering thousands of cards: show as a single, selectable text panel.
     // Also cap the visible lines to keep the UI smooth.
-    val maxDisplayLines = 1200
-    val displayLogs = remember(filtered) {
-        if (filtered.size > maxDisplayLines) filtered.takeLast(maxDisplayLines) else filtered
+    val safeMax = maxDisplayLines.coerceIn(50, 5000)
+    val displayLogs = remember(filtered, safeMax) {
+        if (filtered.size > safeMax) filtered.takeLast(safeMax) else filtered
     }
     val truncated = filtered.size > displayLogs.size
     val displayText = remember(displayLogs) {
@@ -560,7 +634,7 @@ private fun ServerLogsView(
         item {
             ManagerCard(title = "服务日志") {
                 Text(
-                    "来自 /api/logs（与 Web UI 日志页一致）。",
+                    "来自 /api/logs。",
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -641,7 +715,7 @@ private fun ServerLogsView(
 
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "当前：${displayLogs.size}${if (truncated) "（已截断显示最后 $maxDisplayLines 条/共 ${filtered.size} 条）" else " 条"}",
+                    "当前：${displayLogs.size}${if (truncated) "（已截断显示最后 $safeMax 条/共 ${filtered.size} 条）" else " 条"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -690,13 +764,18 @@ private fun ServerLogsView(
 
 private fun ServerLogEntry.toLine(): String {
     val ts = timestamp.ifBlank { "-" }
-    val lv = level.ifBlank { "" }
-    return "[$ts] $lv: $message"
+    val lv = level.ifBlank { "-" }
+        .uppercase(Locale.getDefault())
+        .padEnd(5)
+        .take(5)
+    // Keep it compact & readable in a monospace panel.
+    return "$ts  $lv  $message"
 }
 
 @Composable
 private fun ModuleLogsView(
     rootAvailable: Boolean?,
+    tailLines: Int,
     logsResponse: LogsResponse?,
     onRefresh: () -> Unit,
     onClear: () -> Unit,
@@ -736,6 +815,7 @@ private fun ModuleLogsView(
         LogsScreen(
             paddingValues = PaddingValues(0.dp),
             logs = logsResponse,
+            tailLines = tailLines,
             onClearAll = onClear,
             onReadTail = onReadTail,
         )
@@ -777,6 +857,54 @@ private fun ApiTestTab(
 ) {
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    // Clipboard on Android has a binder size limit; copying huge payloads can crash the app.
+    val maxClipboardBytes = 500_000 // ~500KB (safe margin)
+
+    var pendingExportText by remember { mutableStateOf<String?>(null) }
+    var pendingExportName by remember { mutableStateOf("danmu-api.txt") }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain"),
+        onResult = { uri ->
+            val content = pendingExportText ?: return@rememberLauncherForActivityResult
+            if (uri == null) return@rememberLauncherForActivityResult
+            val name = pendingExportName
+            scope.launch(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(content.toByteArray(Charsets.UTF_8))
+                    }
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "已导出：$name", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (t: Throwable) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            "导出失败：${t.message ?: t.javaClass.simpleName}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+    )
+
+    fun copyToClipboardSafe(label: String, text: String) {
+        val size = text.toByteArray(Charsets.UTF_8).size
+        if (size > maxClipboardBytes) {
+            Toast.makeText(context, "内容过大（约 ${humanBytes(size.toLong())}），建议导出为文件", Toast.LENGTH_LONG).show()
+            return
+        }
+        try {
+            clipboard.setText(AnnotatedString(text))
+            Toast.makeText(context, "已复制：$label", Toast.LENGTH_SHORT).show()
+        } catch (t: Throwable) {
+            Toast.makeText(context, "复制失败：${t.message ?: t.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        }
+    }
 
     val endpoints = remember {
         listOf(
@@ -892,6 +1020,7 @@ private fun ApiTestTab(
     var responsePreview by remember { mutableStateOf("") }
     var responseHint by remember { mutableStateOf<String?>(null) }
     var responseMeta by remember { mutableStateOf("") }
+    var responseContentType by remember { mutableStateOf<String?>(null) }
     var responseTruncatedByClient by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -909,6 +1038,7 @@ private fun ApiTestTab(
         responseHint = null
         responseTruncatedByClient = false
         responseMeta = ""
+        responseContentType = null
 
         scope.launch {
             val useAdmin = false
@@ -958,13 +1088,15 @@ private fun ApiTestTab(
                 val truncInfo = if (result.truncated) " • 已截断" else ""
                 responseMeta = "HTTP ${result.code} • ${result.durationMs}ms$ctInfo$sizeInfo$truncInfo"
 
+                responseContentType = result.contentType
+
                 // Pretty print JSON only when it's small enough and not truncated.
                 val pretty = if (!result.truncated) prettifyIfJson(result.body, maxChars = 160_000) else result.body
 
                 // UI preview cap: large text layout can still ANR on some devices.
                 val previewMaxChars = 60_000
                 responsePreview = if (pretty.length > previewMaxChars) {
-                    responseHint = "响应较大：仅预览前 ${previewMaxChars} 字符（可复制完整响应）。"
+                    responseHint = "响应较大：仅预览前 ${previewMaxChars} 字符（建议使用“导出”保存完整内容）。"
                     pretty.take(previewMaxChars) + "\n\n…（预览已截断）"
                 } else {
                     responseHint = if (result.truncated) {
@@ -975,6 +1107,7 @@ private fun ApiTestTab(
             } else {
                 responseMeta = "HTTP ${result.code} • ${result.durationMs}ms"
                 error = result.error ?: "请求失败"
+                responseContentType = result.contentType
                 responseRaw = result.body
                 responsePreview = if (result.body.length > 60_000) result.body.take(60_000) + "\n\n…（预览已截断）" else result.body
                 responseTruncatedByClient = result.truncated
@@ -988,23 +1121,42 @@ private fun ApiTestTab(
     if (confirmCopyFull) {
         AlertDialog(
             onDismissRequest = { confirmCopyFull = false },
-            title = { Text("复制完整响应？") },
+            title = { Text("响应较大") },
             text = {
                 val size = responseRaw.toByteArray(Charsets.UTF_8).size.toLong()
                 Text(
-                    "当前已读取内容约 ${humanBytes(size)}。复制到剪贴板可能会短暂卡顿。\n\n" +
-                        "如果只是查看/排错，建议复制“预览”。"
+                    "当前已读取内容约 ${humanBytes(size)}。\n\n" +
+                        "由于系统剪贴板有大小限制，复制完整内容可能导致闪退。\n" +
+                        "建议：导出为文件，或仅复制预览。"
                 )
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirmCopyFull = false
-                        clipboard.setText(AnnotatedString(responseRaw))
+                        val name = suggestApiExportFileName(
+                            endpoint = selected,
+                            params = paramState.toMap(),
+                            contentType = responseContentType,
+                            truncated = responseTruncatedByClient
+                        )
+                        pendingExportName = name
+                        pendingExportText = responseRaw
+                        exportLauncher.launch(name)
                     }
-                ) { Text("仍要复制") }
+                ) { Text("导出") }
             },
-            dismissButton = { TextButton(onClick = { confirmCopyFull = false }) { Text("取消") } }
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { confirmCopyFull = false }) { Text("取消") }
+                    TextButton(
+                        onClick = {
+                            confirmCopyFull = false
+                            copyToClipboardSafe("预览", responsePreview)
+                        }
+                    ) { Text("复制预览") }
+                }
+            }
         )
     }
 
@@ -1016,7 +1168,7 @@ private fun ApiTestTab(
         item {
             ManagerCard(title = "接口调试") {
                 Text(
-                    "在 App 内直接调用 danmu-api 接口（Compose 复刻 Web UI：接口调试页）。",
+                    "在 App 内直接调用 danmu-api 接口，用于调试与排错。",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 if (!serviceRunning) {
@@ -1125,7 +1277,7 @@ private fun ApiTestTab(
                     }
                     OutlinedButton(
                         onClick = {
-                            clipboard.setText(AnnotatedString(responsePreview))
+                            copyToClipboardSafe("预览", responsePreview)
                         },
                         enabled = responsePreview.isNotBlank()
                     ) {
@@ -1136,12 +1288,31 @@ private fun ApiTestTab(
                     if (responseRaw.isNotBlank()) {
                         OutlinedButton(
                             onClick = {
-                                // Avoid copying a huge payload by accident.
-                                val size = responseRaw.length
-                                if (size > 120_000 || responseTruncatedByClient) {
+                                val name = suggestApiExportFileName(
+                                    endpoint = selected,
+                                    params = paramState.toMap(),
+                                    contentType = responseContentType,
+                                    truncated = responseTruncatedByClient
+                                )
+                                pendingExportName = name
+                                pendingExportText = responseRaw
+                                exportLauncher.launch(name)
+                            },
+                            enabled = responseRaw.isNotBlank()
+                        ) {
+                            Icon(Icons.Filled.FileDownload, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("导出")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                val bytes = responseRaw.toByteArray(Charsets.UTF_8).size
+                                // For large payloads, don't try clipboard: it may crash.
+                                if (bytes > maxClipboardBytes || responseTruncatedByClient) {
                                     confirmCopyFull = true
                                 } else {
-                                    clipboard.setText(AnnotatedString(responseRaw))
+                                    copyToClipboardSafe("完整", responseRaw)
                                 }
                             },
                             enabled = responseRaw.isNotBlank()
@@ -1213,6 +1384,66 @@ private fun humanBytes(bytes: Long): String {
     return if (i == 0) "${b}${units[i]}" else String.format(Locale.getDefault(), "%.1f%s", v, units[i])
 }
 
+
+private fun sanitizeForFilenamePart(input: String?, maxLen: Int = 24): String {
+    val raw = input.orEmpty().trim()
+    if (raw.isBlank()) return ""
+    // Remove characters not allowed in common file systems.
+    val cleaned = raw
+        .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        .replace(Regex("\\s+"), "_")
+        .replace(Regex("_+"), "_")
+        .trim('_')
+    return cleaned.take(maxLen)
+}
+
+private fun extractHostForFilename(url: String): String {
+    return try {
+        val host = java.net.URI(url.trim()).host.orEmpty()
+        host.replace('.', '-').trim('-')
+    } catch (_: Throwable) {
+        ""
+    }
+}
+
+private fun suggestApiExportFileName(
+    endpoint: ApiEndpoint,
+    params: Map<String, String>,
+    contentType: String?,
+    truncated: Boolean,
+): String {
+    val ts = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.getDefault()).format(java.util.Date())
+
+    val ext = when {
+        params["format"]?.equals("xml", true) == true -> "xml"
+        params["format"]?.equals("json", true) == true -> "json"
+        contentType?.contains("xml", true) == true -> "xml"
+        contentType?.contains("json", true) == true -> "json"
+        else -> "txt"
+    }
+
+    val base = when (endpoint.key) {
+        "getComment" -> "comment-" + sanitizeForFilenamePart(params["commentId"], 16)
+        "getBangumi" -> "bangumi-" + sanitizeForFilenamePart(params["animeId"], 16)
+        "searchAnime" -> "search-anime-" + sanitizeForFilenamePart(params["keyword"], 18)
+        "searchEpisodes" -> "search-episodes-" + sanitizeForFilenamePart(params["anime"], 18)
+        "matchAnime" -> "match-" + sanitizeForFilenamePart(params["fileName"], 22)
+        "getCommentByUrl" -> {
+            val host = extractHostForFilename(params["url"].orEmpty())
+            if (host.isNotBlank()) "comment-url-$host" else "comment-url"
+        }
+        "getSegmentComment" -> "segmentcomment"
+        else -> sanitizeForFilenamePart(endpoint.key, 28).ifBlank { "danmu-api" }
+    }.trim('-', '_')
+
+    val suffix = if (truncated) "-partial" else ""
+    val name = "$base-$ts$suffix.$ext"
+
+    // Keep it readable but avoid ridiculously long file names.
+    return if (name.length > 140) name.take(140) else name
+}
+
+
 // ===========================
 // 推送弹幕
 // ===========================
@@ -1234,16 +1465,31 @@ private fun PushDanmuTab(
     serviceRunning: Boolean,
     apiToken: String,
     apiPort: Int,
-    requestApi: suspend (method: String, path: String, query: Map<String, String?>, bodyJson: String?, useAdminToken: Boolean) -> HttpResult,
+    requestApi: suspend (
+        method: String,
+        path: String,
+        query: Map<String, String?>,
+        bodyJson: String?,
+        useAdminToken: Boolean
+    ) -> HttpResult,
 ) {
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+
     val lanIps = rememberLanIpv4Addresses()
     val lanIp = lanIps.firstOrNull()
-    val defaultSubnet = remember(lanIp) {
-        lanIp?.split('.')?.take(3)?.joinToString(".") ?: "192.168.1"
+
+    // Auto-detect candidate /24 subnets from current LAN IPs.
+    // Since danmu-api runs locally, we don't expose subnet input to users.
+    val detectedSubnets = remember(lanIps) {
+        lanIps.mapNotNull { ip ->
+            val parts = ip.split('.')
+            if (parts.size == 4) parts.take(3).joinToString(".") else null
+        }.distinct()
     }
 
+    // Search state
     var keyword by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
@@ -1252,31 +1498,40 @@ private fun PushDanmuTab(
     var episodes by remember { mutableStateOf<List<EpisodeItem>>(emptyList()) }
     var loadingEpisodes by remember { mutableStateOf(false) }
 
-    // Push target (OK影视 9978 only)
+    // Push target (OK影视默认 9978)
     val okPushPath = remember { "/action?do=refresh&type=danmaku&path=" }
-    var subnet by remember { mutableStateOf(defaultSubnet) }
     var lanPort by remember { mutableStateOf("9978") }
 
-    fun buildPushTemplate(host: String, port: Int): String {
-        return "http://$host:$port$okPushPath"
-    }
+    fun currentPort(): Int = lanPort.trim().toIntOrNull() ?: 9978
 
-    // Discovered 9978 devices (include localhost + this device LAN IPs)
+    fun buildPushTemplate(host: String, port: Int): String = "http://$host:$port$okPushPath"
+
+    // Discovered devices
     var scanning by remember { mutableStateOf(false) }
     var scanProgress by remember { mutableIntStateOf(0) }
     var scanTotal by remember { mutableIntStateOf(0) }
     var foundDevices by remember { mutableStateOf<List<String>>(emptyList()) }
     var selectedDevice by remember { mutableStateOf<String?>(null) }
-    var pushUrl by remember { mutableStateOf(buildPushTemplate("127.0.0.1", 9978)) }
     var autoScan by remember { mutableStateOf(true) }
     var lastAutoScanKey by remember { mutableStateOf<String?>(null) }
 
+    // Last push result
+    var lastPushOk by remember { mutableStateOf<Boolean?>(null) }
+    var lastPushMessage by remember { mutableStateOf<String?>(null) }
+
     val localHosts = remember(lanIps) { (setOf("127.0.0.1") + lanIps).toSet() }
 
-    fun selectDevice(host: String) {
-        selectedDevice = host
-        val port = lanPort.trim().toIntOrNull() ?: 9978
-        pushUrl = buildPushTemplate(host, port)
+    fun labelForHost(host: String): String {
+        return when {
+            host == "127.0.0.1" -> "本机 (127.0.0.1)"
+            lanIps.contains(host) -> "本机 ($host)"
+            else -> host
+        }
+    }
+
+    fun currentPushTemplate(): String {
+        val host = selectedDevice ?: "127.0.0.1"
+        return buildPushTemplate(host, currentPort())
     }
 
     fun search() {
@@ -1324,7 +1579,7 @@ private fun PushDanmuTab(
                 }
                 animes = list
                 if (list.isEmpty()) searchError = "未找到结果"
-            } catch (t: Throwable) {
+            } catch (_: Throwable) {
                 searchError = "解析响应失败"
             }
         }
@@ -1371,7 +1626,7 @@ private fun PushDanmuTab(
     }
 
     fun buildCommentUrl(episodeId: Int): String {
-        // If pushing to a local player (127.0.0.1 / 本机 IP), prefer loopback for maximum compatibility.
+        // If pushing to local player (127.0.0.1 / 本机 IP), prefer loopback for maximum compatibility.
         val host = if (selectedDevice != null && localHosts.contains(selectedDevice)) {
             "127.0.0.1"
         } else {
@@ -1381,26 +1636,36 @@ private fun PushDanmuTab(
     }
 
     fun pushOne(episode: EpisodeItem) {
-        val template = pushUrl.trim()
-        if (template.isBlank()) return
+        val template = currentPushTemplate()
         val commentUrl = buildCommentUrl(episode.episodeId)
         val finalUrl = template + java.net.URLEncoder.encode(commentUrl, "UTF-8")
 
+        lastPushOk = null
+        lastPushMessage = "推送中：${episode.episodeNumber.ifBlank { episode.episodeId.toString() }}"
+
         scope.launch {
-            val res = withContext(Dispatchers.IO) {
+            val ok = withContext(Dispatchers.IO) {
                 try {
-                    // Use JVM URLConnection (no CORS issues)
                     val conn = java.net.URL(finalUrl).openConnection()
                     conn.connectTimeout = 1500
-                    conn.readTimeout = 2000
+                    conn.readTimeout = 2500
                     conn.getInputStream().use { it.readBytes() }
                     true
                 } catch (_: Throwable) {
                     false
                 }
             }
-            if (res) {
+            lastPushOk = ok
+            lastPushMessage = if (ok) {
+                "推送成功：${episode.episodeNumber} ${episode.title}".trim()
+            } else {
+                "推送失败：请确认目标设备可访问（${selectedDevice ?: "127.0.0.1"}:${currentPort()}）"
+            }
+            if (ok) {
                 clipboard.setText(AnnotatedString(commentUrl))
+                Toast.makeText(context, "已推送并复制弹幕链接", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "推送失败", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -1408,9 +1673,7 @@ private fun PushDanmuTab(
     fun scanLan() {
         if (scanning) return
 
-        val port = lanPort.trim().toIntOrNull() ?: 9978
-        val subnetTrimmed = subnet.trim()
-        val subnetOk = Regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$").matches(subnetTrimmed)
+        val port = currentPort()
 
         fun sortDevices(list: List<String>): List<String> {
             val lanSet = lanIps.toSet()
@@ -1427,13 +1690,16 @@ private fun PushDanmuTab(
             val discovered = mutableListOf<String>()
 
             val candidates = mutableListOf<String>()
-            // Always include localhost + this device LAN IPs (do NOT exclude local addresses)
+            // Always include localhost + this device LAN IPs
             candidates.addAll(localHosts)
-            if (subnetOk) {
+
+            // Auto-scan detected /24 networks (no manual subnet input)
+            detectedSubnets.forEach { subnet ->
                 for (i in 1..254) {
-                    candidates.add("$subnetTrimmed.$i")
+                    candidates.add("$subnet.$i")
                 }
             }
+
             val uniq = candidates.distinct()
             scanTotal = uniq.size
 
@@ -1471,14 +1737,14 @@ private fun PushDanmuTab(
             val sorted = sortDevices(discovered)
             foundDevices = sorted
             if (sorted.isNotEmpty() && (selectedDevice == null || !sorted.contains(selectedDevice))) {
-                selectDevice(sorted.first())
+                selectedDevice = sorted.first()
             }
         }
     }
 
-    // Auto scan when the tab has a context (selected anime) and network parameters change.
-    LaunchedEffect(selectedAnime?.animeId, subnet, lanPort, autoScan, serviceRunning) {
-        val key = "${selectedAnime?.animeId}:${subnet.trim()}:${lanPort.trim()}"
+    // Auto scan when selected anime / port / networks change.
+    LaunchedEffect(selectedAnime?.animeId, lanPort, autoScan, serviceRunning, detectedSubnets) {
+        val key = "${selectedAnime?.animeId}:${lanPort.trim()}:${detectedSubnets.joinToString(",")}"
         if (serviceRunning && selectedAnime != null && autoScan && key != lastAutoScanKey) {
             lastAutoScanKey = key
             scanLan()
@@ -1493,57 +1759,67 @@ private fun PushDanmuTab(
         item {
             ManagerCard(title = "弹幕推送") {
                 Text(
-                    "选择番剧/剧集后，将弹幕链接推送到局域网播放器（Compose 复刻 Web UI：推送弹幕页）。",
+                    "搜索番剧 → 选择剧集 → 推送到局域网播放器（自动检测网段/设备）。",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 if (!serviceRunning) {
                     Spacer(Modifier.height(8.dp))
                     Text("服务未运行，无法搜索/生成弹幕链接。", color = MaterialTheme.colorScheme.error)
                 }
+                Spacer(Modifier.height(8.dp))
                 if (lanIp == null) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("未检测到局域网 IPv4，推送到其它设备可能不可用。", color = MaterialTheme.colorScheme.error)
+                    Text("未检测到局域网 IPv4，跨设备推送可能不可用。", color = MaterialTheme.colorScheme.error)
                 } else {
-                    Spacer(Modifier.height(8.dp))
-                    Text("当前局域网 IP：$lanIp", style = MaterialTheme.typography.bodySmall)
+                    Text("本机 IP：$lanIp", style = MaterialTheme.typography.bodySmall)
+                }
+                if (detectedSubnets.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "已检测网段：${detectedSubnets.joinToString { "$it.*" }}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
 
         item {
-            OutlinedTextField(
-                value = keyword,
-                onValueChange = { keyword = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("搜索动漫") },
-                placeholder = { Text("关键词 或 播放链接URL") },
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { search() }, enabled = !searching && serviceRunning) {
-                    if (searching) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp))
+            ManagerCard(title = "搜索番剧") {
+                OutlinedTextField(
+                    value = keyword,
+                    onValueChange = { keyword = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("关键词") },
+                    placeholder = { Text("例如：鬼灭 / 进击 / 你的名字") },
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { search() }, enabled = !searching && serviceRunning) {
+                        if (searching) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text("搜索")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            keyword = ""
+                            animes = emptyList()
+                            episodes = emptyList()
+                            selectedAnime = null
+                            searchError = null
+                        }
+                    ) {
+                        Icon(Icons.Filled.Clear, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
+                        Text("清空")
                     }
-                    Text("搜索")
                 }
-                OutlinedButton(
-                    onClick = {
-                        keyword = ""
-                        animes = emptyList()
-                        episodes = emptyList()
-                        selectedAnime = null
-                    }
-                ) {
-                    Icon(Icons.Filled.Clear, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("清空")
+                if (searchError != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(searchError!!, color = MaterialTheme.colorScheme.error)
                 }
-            }
-            if (searchError != null) {
-                Spacer(Modifier.height(8.dp))
-                Text(searchError!!, color = MaterialTheme.colorScheme.error)
             }
         }
 
@@ -1554,75 +1830,59 @@ private fun PushDanmuTab(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { loadEpisodes(anime) },
-                    colors = CardDefaults.cardColors(containerColor = if (selectedAnime?.animeId == anime.animeId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selectedAnime?.animeId == anime.animeId)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.surfaceContainer
+                    )
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Text(anime.title, style = MaterialTheme.typography.titleSmall)
                         if (anime.typeDesc.isNotBlank()) {
-                            Text(anime.typeDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                anime.typeDesc,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                         Text("ID: ${anime.animeId}", style = MaterialTheme.typography.labelSmall)
                     }
                 }
+                Spacer(Modifier.height(8.dp))
             }
         }
 
         if (selectedAnime != null) {
             item {
-                ManagerCard(title = "推送目标") {
-                    Text(
-                        "默认按 OK影视 的 9978 推送接口生成：末尾必须以 path= 结尾，应用会自动拼接并 URL 编码弹幕链接。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = pushUrl,
-                        onValueChange = { pushUrl = it },
+                ManagerCard(title = "目标设备") {
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("推送URL（OK影视）") },
-                        placeholder = { Text(buildPushTemplate("127.0.0.1", 9978)) },
-                    )
-
-                    Spacer(Modifier.height(12.dp))
-                    Text("自动发现 9978 设备", style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.height(6.dp))
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = autoScan, onCheckedChange = { autoScan = it })
-                        Spacer(Modifier.width(8.dp))
-                        Text("自动扫描（选中番剧/修改网段后自动刷新）", style = MaterialTheme.typography.bodySmall)
-                    }
-
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = subnet,
-                            onValueChange = { subnet = it },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            label = { Text("网段") },
-                            placeholder = { Text(defaultSubnet) },
-                        )
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         OutlinedTextField(
                             value = lanPort,
-                            onValueChange = { lanPort = it },
-                            modifier = Modifier.width(110.dp),
+                            onValueChange = { lanPort = it.filter { ch -> ch.isDigit() }.take(5) },
+                            modifier = Modifier.width(120.dp),
                             singleLine = true,
                             label = { Text("端口") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(checked = autoScan, onCheckedChange = { autoScan = it })
+                            Spacer(Modifier.width(8.dp))
+                            Text("自动扫描", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Button(onClick = { scanLan() }, enabled = !scanning) {
-                            Text(if (scanning) "扫描中…" else "重新扫描")
+                            Text(if (scanning) "扫描中…" else "扫描设备")
                         }
                         if (scanTotal > 0) {
                             Text(
@@ -1634,38 +1894,71 @@ private fun PushDanmuTab(
                     }
 
                     if (foundDevices.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text("发现设备（点击选择并自动填充 URL）", style = MaterialTheme.typography.labelMedium)
+                        Spacer(Modifier.height(10.dp))
+                        Text("发现设备（点选）", style = MaterialTheme.typography.labelMedium)
                         Spacer(Modifier.height(6.dp))
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             foundDevices.forEach { host ->
-                                val label = when {
-                                    host == "127.0.0.1" -> "本机 (127.0.0.1)"
-                                    lanIps.contains(host) -> "本机 ($host)"
-                                    else -> host
-                                }
                                 FilterChip(
                                     selected = selectedDevice == host,
-                                    onClick = { selectDevice(host) },
-                                    label = { Text(label) }
+                                    onClick = { selectedDevice = host },
+                                    label = { Text(labelForHost(host)) }
                                 )
                             }
                         }
                     } else {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
                         Text(
-                            "未发现设备：请确认播放器/接收端已开启 9978 接口，或直接手动填写上方推送 URL。",
+                            "未发现设备：请确认播放器已开启 ${currentPort()} 端口，或先手动在播放器中打开推送功能。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
-                    if (selectedDevice != null) {
-                        Spacer(Modifier.height(8.dp))
-                        Text("当前选择：$selectedDevice", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(10.dp))
+                    val pushTemplate = currentPushTemplate()
+                    Text("推送接口", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(
+                                pushTemplate,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedButton(
+                                onClick = { clipboard.setText(AnnotatedString(pushTemplate)) },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            ) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("复制")
+                            }
+                        }
+                    }
+
+                    if (lastPushMessage != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            lastPushMessage!!,
+                            color = when (lastPushOk) {
+                                true -> MaterialTheme.colorScheme.primary
+                                false -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurface
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }
@@ -1683,24 +1976,41 @@ private fun PushDanmuTab(
                     }
                 }
             }
+
             items(episodes, key = { it.episodeId }) { ep ->
+                val commentUrl = remember(selectedDevice, lanPort, lanIp, ep.episodeId) {
+                    buildCommentUrl(ep.episodeId)
+                }
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
                 ) {
                     Column(Modifier.padding(12.dp)) {
-                        Text(
-                            "${ep.episodeNumber} ${ep.title}".trim(),
-                            style = MaterialTheme.typography.titleSmall
-                        )
+                        Text("${ep.episodeNumber} ${ep.title}".trim(), style = MaterialTheme.typography.titleSmall)
                         Text("弹幕ID: ${ep.episodeId}", style = MaterialTheme.typography.labelSmall)
 
                         Spacer(Modifier.height(8.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            Text(
+                                commentUrl,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+
+                        Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { pushOne(ep) }) {
+                            Button(
+                                onClick = { pushOne(ep) },
+                                enabled = serviceRunning
+                            ) {
                                 Text("推送")
                             }
-                            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(buildCommentUrl(ep.episodeId))) }) {
+                            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(commentUrl)) }) {
                                 Icon(Icons.Filled.ContentCopy, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
                                 Text("复制链接")
@@ -1708,10 +2018,13 @@ private fun PushDanmuTab(
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
 }
+
+
 
 // ===========================
 // 系统配置（环境变量可视化）
@@ -1721,7 +2034,12 @@ private fun PushDanmuTab(
 private fun SystemSettingsTab(
     rootAvailable: Boolean?,
     serviceRunning: Boolean,
-    adminToken: String,
+    adminTokenFromEnv: String,
+    sessionAdminToken: String,
+    adminTokenPromptMode: Int,
+    onSetAdminTokenPromptMode: (Int) -> Unit,
+    onSetSessionAdminToken: (String) -> Unit,
+    onClearSessionAdminToken: () -> Unit,
     serverConfig: ServerConfigResponse?,
     loading: Boolean,
     error: String?,
@@ -1732,17 +2050,44 @@ private fun SystemSettingsTab(
     onDeploy: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
-    var useAdmin by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    val mode = remember(adminTokenPromptMode) { adminTokenPromptMode.coerceIn(0, 2) }
+    val modeLabel = when (mode) {
+        0 -> "每次进入都填"
+        1 -> "本次运行填一次"
+        else -> "不需要填"
+    }
+
+    // “系统”页只认会话 Token：用户明确填写后才启用管理员能力。
+    val hasSessionAdmin = sessionAdminToken.isNotBlank()
+    val canAdminOps = serviceRunning && hasSessionAdmin
+
+    // In “always ask” mode, clear the session token when leaving this page.
+    DisposableEffect(mode) {
+        onDispose {
+            if (mode == 0) onClearSessionAdminToken()
+        }
+    }
+
+    // If user chose “never”, also clear session token to avoid accidental admin operations.
+    LaunchedEffect(mode) {
+        if (mode == 2) onClearSessionAdminToken()
+    }
+
+    // Token input (not persisted)
+    var tokenInput by remember(mode) {
+        // In “always ask”, don't prefill.
+        mutableStateOf(if (mode == 0) "" else sessionAdminToken)
+    }
+    var revealToken by remember { mutableStateOf(false) }
+
     var search by remember { mutableStateOf("") }
     var confirmDeleteKey by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(adminToken) {
-        // Default: if ADMIN_TOKEN exists, use it for better experience.
-        useAdmin = adminToken.isNotBlank()
-    }
-
-    LaunchedEffect(useAdmin, serviceRunning) {
-        if (serviceRunning) onRefreshConfig(useAdmin)
+    // Refresh config when service/token changes.
+    LaunchedEffect(hasSessionAdmin, serviceRunning, mode) {
+        if (serviceRunning) onRefreshConfig(useAdminToken = hasSessionAdmin)
     }
 
     val meta = serverConfig?.envVarConfig.orEmpty()
@@ -1777,11 +2122,14 @@ private fun SystemSettingsTab(
             title = { Text("确认删除") },
             text = { Text("将从 .env 中移除：${confirmDeleteKey}\n\n这会让该项回到默认值（如有）。") },
             confirmButton = {
-                TextButton(onClick = {
-                    val key = confirmDeleteKey!!
-                    confirmDeleteKey = null
-                    onDeleteEnv(key)
-                }) {
+                TextButton(
+                    onClick = {
+                        val key = confirmDeleteKey!!
+                        confirmDeleteKey = null
+                        onDeleteEnv(key)
+                    },
+                    enabled = canAdminOps
+                ) {
                     Text("删除")
                 }
             },
@@ -1789,6 +2137,20 @@ private fun SystemSettingsTab(
                 TextButton(onClick = { confirmDeleteKey = null }) { Text("取消") }
             }
         )
+    }
+
+    fun toast(msg: String) {
+        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    fun applyToken() {
+        val v = tokenInput.trim()
+        if (v.isBlank()) {
+            toast("请填写 ADMIN_TOKEN")
+            return
+        }
+        onSetSessionAdminToken(v)
+        toast("已启用管理员 Token（本次会话）")
     }
 
     LazyColumn(
@@ -1799,7 +2161,7 @@ private fun SystemSettingsTab(
         item {
             ManagerCard(title = "系统配置") {
                 Text(
-                    "环境变量可视化配置（Compose 复刻 Web UI：系统设置页）。",
+                    "环境变量可视化配置，用于调整 danmu-api 行为。",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.height(8.dp))
@@ -1809,42 +2171,150 @@ private fun SystemSettingsTab(
                     Spacer(Modifier.height(8.dp))
                 }
                 if (rootAvailable == false) {
-                    Text("未获取 Root：无法使用 .env 兜底操作。", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = useAdmin, onCheckedChange = {
-                        if (adminToken.isNotBlank()) {
-                            useAdmin = it
-                        }
-                    }, enabled = adminToken.isNotBlank())
-                    Spacer(Modifier.width(8.dp))
-                    Text("使用管理员 Token")
-                }
-                if (adminToken.isBlank()) {
                     Text(
-                        "未配置 ADMIN_TOKEN：部分敏感项在 /api/config 中会被脱敏。\n建议在设置里编辑 .env 添加 ADMIN_TOKEN 后再回来。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        "未获取 Root：无法使用 .env 兜底操作。",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
                     )
+                    Spacer(Modifier.height(6.dp))
                 }
 
-                Spacer(Modifier.height(8.dp))
+                // Admin token section
+                Text("管理员 Token（ADMIN_TOKEN）", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(6.dp))
+
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    OutlinedButton(onClick = { onRefreshConfig(useAdmin) }, enabled = serviceRunning && !loading) {
+                    FilterChip(
+                        selected = mode == 0,
+                        onClick = { onSetAdminTokenPromptMode(0) },
+                        label = { Text("每次进入都填") }
+                    )
+                    FilterChip(
+                        selected = mode == 1,
+                        onClick = { onSetAdminTokenPromptMode(1) },
+                        label = { Text("本次运行填一次") }
+                    )
+                    FilterChip(
+                        selected = mode == 2,
+                        onClick = { onSetAdminTokenPromptMode(2) },
+                        label = { Text("不需要填") }
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                if (mode == 2) {
+                    Text(
+                        "当前模式：$modeLabel。将以普通权限读取配置；敏感项可能被脱敏，且“清理缓存/重新部署/保存修改”等操作不可用。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    if (!hasSessionAdmin) {
+                        Text(
+                            "当前模式：$modeLabel。进入后默认需要填写管理员 Token（不会写入磁盘，仅本次会话有效）。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (adminTokenFromEnv.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "已检测到配置中的 ADMIN_TOKEN，可一键使用。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Text(
+                            "管理员 Token 已启用（本次会话）。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = tokenInput,
+                        onValueChange = { tokenInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("ADMIN_TOKEN") },
+                        placeholder = { Text("请输入管理员 Token") },
+                        visualTransformation = if (revealToken) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { revealToken = !revealToken }) {
+                                Icon(
+                                    imageVector = if (revealToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                    contentDescription = null
+                                )
+                            }
+                        }
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Button(
+                            onClick = { applyToken() },
+                            enabled = tokenInput.trim().isNotBlank() && serviceRunning
+                        ) {
+                            Text("应用 Token")
+                        }
+                        if (adminTokenFromEnv.isNotBlank()) {
+                            OutlinedButton(
+                                onClick = {
+                                    tokenInput = adminTokenFromEnv
+                                    applyToken()
+                                },
+                                enabled = serviceRunning
+                            ) {
+                                Text("使用已配置")
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                tokenInput = ""
+                                onClearSessionAdminToken()
+                                toast("已清除本次 Token")
+                            },
+                            enabled = serviceRunning && hasSessionAdmin
+                        ) {
+                            Text("清除本次 Token")
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { onRefreshConfig(hasSessionAdmin) },
+                        enabled = serviceRunning && !loading
+                    ) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("刷新")
                     }
-                    OutlinedButton(onClick = onClearCache, enabled = serviceRunning && adminToken.isNotBlank()) {
+                    OutlinedButton(
+                        onClick = onClearCache,
+                        enabled = canAdminOps
+                    ) {
                         Icon(Icons.Filled.Delete, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("清理缓存")
                     }
-                    OutlinedButton(onClick = onDeploy, enabled = serviceRunning && adminToken.isNotBlank()) {
+                    OutlinedButton(
+                        onClick = onDeploy,
+                        enabled = canAdminOps
+                    ) {
                         Icon(Icons.Filled.RestartAlt, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("重新部署")
@@ -1873,6 +2343,29 @@ private fun SystemSettingsTab(
                     error != null -> {
                         Spacer(Modifier.height(8.dp))
                         Text("加载失败：$error", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        }
+
+        // If user chose “not needed” or hasn't applied token yet, show config in read-only mode.
+        val canEdit = canAdminOps
+
+        if (!canEdit && serviceRunning && mode != 2) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("只读模式", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "请先“应用 Token”开启管理员权限后再修改配置。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -1913,21 +2406,21 @@ private fun SystemSettingsTab(
                             edits.remove(env.key)
                         },
                         onReset = {
-                            // If not written in .env, reset simply drops local edits.
                             if (keyExistsInEnv) {
                                 confirmDeleteKey = env.key
                             } else {
                                 edits.remove(env.key)
                             }
                         },
-                        saveEnabled = serviceRunning && isChanged(env.key),
-                        resetEnabled = serviceRunning && (keyExistsInEnv || edits.containsKey(env.key)),
+                        saveEnabled = canEdit && isChanged(env.key),
+                        resetEnabled = canEdit && (keyExistsInEnv || edits.containsKey(env.key)),
                     )
                 }
             }
         }
     }
 }
+
 
 @Composable
 private fun EnvEditorRow(

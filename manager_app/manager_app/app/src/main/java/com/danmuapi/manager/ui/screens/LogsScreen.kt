@@ -40,6 +40,7 @@ import com.danmuapi.manager.data.model.LogsResponse
 fun LogsScreen(
     paddingValues: PaddingValues,
     logs: LogsResponse?,
+    tailLines: Int = 300,
     onClearAll: () -> Unit,
     onReadTail: (path: String, lines: Int, onResult: (String) -> Unit) -> Unit,
 ) {
@@ -132,7 +133,8 @@ fun LogsScreen(
                         onClick = {
                             viewing = file
                             viewingText = "加载中…"
-                            onReadTail(file.path, 200) { viewingText = it }
+                            val safe = tailLines.coerceIn(50, 5000)
+                            onReadTail(file.path, safe) { viewingText = it }
                         },
                     )
                 }

@@ -240,6 +240,9 @@ fun DanmuManagerApp(applicationContext: Context) {
                     }
                 }
 
+                val adminMode by vm.adminTokenPromptMode.collectAsStateWithLifecycle()
+                val logLimit by vm.consoleLogLimit.collectAsStateWithLifecycle()
+
                 ConsoleScreen(
                     paddingValues = padding,
                     rootAvailable = vm.rootAvailable,
@@ -248,6 +251,13 @@ fun DanmuManagerApp(applicationContext: Context) {
                     apiPort = vm.apiPort,
                     apiHost = vm.apiHost,
                     adminToken = vm.adminToken,
+                    sessionAdminToken = vm.sessionAdminToken,
+                    adminTokenPromptMode = adminMode,
+                    consoleLogLimit = logLimit,
+                    onSetAdminTokenPromptMode = { vm.setAdminTokenPromptMode(it) },
+                    onSetConsoleLogLimit = { vm.setConsoleLogLimit(it) },
+                    onSetSessionAdminToken = { vm.setSessionAdminToken(it) },
+                    onClearSessionAdminToken = { vm.clearSessionAdminToken() },
                     serverConfig = vm.serverConfig,
                     serverConfigLoading = vm.serverConfigLoading,
                     serverConfigError = vm.serverConfigError,

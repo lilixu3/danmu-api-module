@@ -74,6 +74,15 @@ class MainViewModel(
     var adminToken: String by mutableStateOf("")
         private set
 
+    /**
+     * Runtime admin token entered in the app.
+     *
+     * - Not persisted to disk (avoids accidentally storing secrets).
+     * - Used to access admin endpoints when the user doesn't want to write ADMIN_TOKEN into .env.
+     */
+    var sessionAdminToken: String by mutableStateOf("")
+        private set
+
     // ===== danmu-api Console (Compose replica of Web UI) =====
     var serverConfig: ServerConfigResponse? by mutableStateOf(null)
         private set
@@ -130,6 +139,12 @@ class MainViewModel(
 
     val dynamicColor: StateFlow<Boolean> = settings.dynamicColor
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    val adminTokenPromptMode: StateFlow<Int> = settings.adminTokenPromptMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 1)
+
+    val consoleLogLimit: StateFlow<Int> = settings.consoleLogLimit
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 300)
 
     val snackbars = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
@@ -230,6 +245,27 @@ class MainViewModel(
             settings.setDynamicColor(enabled)
         }
     }
+
+    fun setAdminTokenPromptMode(mode: Int) {
+        viewModelScope.launch {
+            settings.setAdminTokenPromptMode(mode)
+        }
+    }
+
+    fun setConsoleLogLimit(limit: Int) {
+        viewModelScope.launch {
+            settings.setConsoleLogLimit(limit)
+        }
+    }
+
+    fun setSessionAdminToken(token: String) {
+        sessionAdminToken = token.trim()
+    }
+
+    fun clearSessionAdminToken() {
+        sessionAdminToken = ""
+    }
+
 
     /**
      * Refresh only the log list.
@@ -390,8 +426,21 @@ class MainViewModel(
 
     // ====== danmu-api Console ======
 
+    private fun effectiveAdminToken(): String {
+        val s = sessionAdminToken.trim()
+        if (s.isNotBlank()) return s
+        return adminToken.trim()
+    }
+
+    private fun hasAdminToken(): Boolean = effectiveAdminToken().isNotBlank()
+
     private fun pickTokenSegment(useAdminToken: Boolean): String {
-        return if (useAdminToken && adminToken.isNotBlank()) adminToken else apiToken
+        return if (useAdminToken) {
+            val t = effectiveAdminToken()
+            if (t.isNotBlank()) t else apiToken
+        } else {
+            apiToken
+        }
     }
 
     /**
@@ -451,8 +500,8 @@ class MainViewModel(
 
     fun clearServerLogs() {
         viewModelScope.launch {
-            if (adminToken.isBlank()) {
-                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行清空服务日志")
+            if (!hasAdminToken()) {
+                snackbars.tryEmit("未提供管理员 Token，无法执行清空服务日志")
                 return@launch
             }
             val res = requestDanmuApi(
@@ -472,8 +521,8 @@ class MainViewModel(
 
     fun clearServerCache() {
         viewModelScope.launch {
-            if (adminToken.isBlank()) {
-                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行清理缓存")
+            if (!hasAdminToken()) {
+                snackbars.tryEmit("未提供管理员 Token，无法执行清理缓存")
                 return@launch
             }
             val res = requestDanmuApi(
@@ -490,8 +539,8 @@ class MainViewModel(
 
     fun deployServer() {
         viewModelScope.launch {
-            if (adminToken.isBlank()) {
-                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行重新部署")
+            if (!hasAdminToken()) {
+                snackbars.tryEmit("未提供管理员 Token，无法执行重新部署")
                 return@launch
             }
             val res = requestDanmuApi(
@@ -508,7 +557,7 @@ class MainViewModel(
 
     fun setServerEnvVar(key: String, value: String) {
         viewModelScope.launch {
-            val tokenIsAdmin = adminToken.isNotBlank()
+            val tokenIsAdmin = hasAdminToken()
             val body = JSONObject().apply {
                 put("key", key)
                 put("value", value)
@@ -532,7 +581,7 @@ class MainViewModel(
 
     fun deleteServerEnvVar(key: String) {
         viewModelScope.launch {
-            val tokenIsAdmin = adminToken.isNotBlank()
+            val tokenIsAdmin = hasAdminToken()
             val body = JSONObject().apply {
                 put("key", key)
             }.toString()
