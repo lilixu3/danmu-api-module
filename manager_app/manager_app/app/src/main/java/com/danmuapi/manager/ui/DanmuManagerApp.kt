@@ -285,7 +285,8 @@ fun DanmuManagerApp(applicationContext: Context) {
                             bodyJson = bodyJson,
                             useAdminToken = useAdminToken
                         )
-                    }
+                    },
+                    validateAdminToken = { token -> vm.validateAdminToken(token) },
                 )
             }
             composable(NavItem.SETTINGS.route) {

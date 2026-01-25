@@ -145,6 +145,7 @@ fun ConsoleScreen(
         bodyJson: String?,
         useAdminToken: Boolean,
     ) -> HttpResult,
+    validateAdminToken: suspend (token: String) -> Pair<Boolean, String?>,
 ) {
     val tabs = listOf("日志", "接口", "推送", "系统")
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -219,6 +220,7 @@ fun ConsoleScreen(
                 sessionAdminToken = sessionAdminToken,
                 onSetSessionAdminToken = onSetSessionAdminToken,
                 onClearSessionAdminToken = onClearSessionAdminToken,
+                validateAdminToken = validateAdminToken,
                 serverConfig = serverConfig,
                 loading = serverConfigLoading,
                 error = serverConfigError,
@@ -1334,6 +1336,11 @@ private fun PushDanmuTab(
     val okPushPath = remember { "/action?do=refresh&type=danmaku&path=" }
     var lanPort by remember { mutableStateOf("9978") }
 
+    // One-shot push parameters (NOT persisted; only affects push URL query params)
+    // OK影视 通常支持通过额外 query 参数控制弹幕大小/偏移（不同壳子实现可能略有差异）。
+    var danmuSize by remember { mutableStateOf("") }
+    var danmuOffset by remember { mutableStateOf("") }
+
     fun currentPort(): Int = lanPort.trim().toIntOrNull() ?: 9978
 
     fun buildPushTemplate(host: String, port: Int): String = "http://$host:$port$okPushPath"
@@ -1470,7 +1477,35 @@ private fun PushDanmuTab(
     fun pushOne(episode: EpisodeItem) {
         val template = currentPushTemplate()
         val commentUrl = buildCommentUrl(episode.episodeId)
-        val finalUrl = template + java.net.URLEncoder.encode(commentUrl, "UTF-8")
+
+        // Extra per-push parameters
+        val sizeText = danmuSize.trim()
+        val offsetText = danmuOffset.trim()
+
+        fun isFiniteNumber(s: String): Boolean {
+            val d = s.toDoubleOrNull() ?: return false
+            return d.isFinite()
+        }
+
+        if (sizeText.isNotBlank() && !isFiniteNumber(sizeText)) {
+            lastPushOk = false
+            lastPushMessage = "弹幕大小格式不正确：$sizeText"
+            Toast.makeText(context, "弹幕大小必须是数字（可留空）", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (offsetText.isNotBlank() && !isFiniteNumber(offsetText)) {
+            lastPushOk = false
+            lastPushMessage = "弹幕偏移量格式不正确：$offsetText"
+            Toast.makeText(context, "偏移量必须是数字（可留空）", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val extras = buildString {
+            if (sizeText.isNotBlank()) append("&size=").append(java.net.URLEncoder.encode(sizeText, "UTF-8"))
+            if (offsetText.isNotBlank()) append("&offset=").append(java.net.URLEncoder.encode(offsetText, "UTF-8"))
+        }
+
+        val finalUrl = template + java.net.URLEncoder.encode(commentUrl, "UTF-8") + extras
 
         lastPushOk = null
         lastPushMessage = "推送中：${episode.episodeNumber.ifBlank { episode.episodeId.toString() }}"
@@ -1709,6 +1744,57 @@ private fun PushDanmuTab(
                     }
 
                     Spacer(Modifier.height(10.dp))
+                    Text("本次推送参数", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = danmuSize,
+                            onValueChange = { danmuSize = it },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            label = { Text("弹幕大小") },
+                            placeholder = { Text("留空=默认") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        )
+                        OutlinedTextField(
+                            value = danmuOffset,
+                            onValueChange = { danmuOffset = it },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            label = { Text("偏移量") },
+                            placeholder = { Text("留空=默认") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "仅对本次推送请求生效，不会写入配置。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (danmuSize.trim().isNotBlank() || danmuOffset.trim().isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    danmuSize = ""
+                                    danmuOffset = ""
+                                }
+                            ) {
+                                Icon(Icons.Filled.Clear, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("重置参数")
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1870,6 +1956,7 @@ private fun SystemSettingsTab(
     sessionAdminToken: String,
     onSetSessionAdminToken: (String) -> Unit,
     onClearSessionAdminToken: () -> Unit,
+    validateAdminToken: suspend (token: String) -> Pair<Boolean, String?>,
     serverConfig: ServerConfigResponse?,
     loading: Boolean,
     error: String?,
@@ -1881,6 +1968,12 @@ private fun SystemSettingsTab(
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // Whether the server has ADMIN_TOKEN configured.
+    // Prefer the value returned by /api/config. Fallback to local .env parsing.
+    val hasAdminTokenOnServer: Boolean? = serverConfig?.hasAdminToken
+    val adminTokenConfigured: Boolean = hasAdminTokenOnServer ?: adminTokenFromEnv.isNotBlank()
 
     // 0 = 预览模式（只读/脱敏），1 = 管理员模式（需要输入 ADMIN_TOKEN 才能解锁编辑）
     var mode by remember { mutableIntStateOf(if (sessionAdminToken.isNotBlank()) 1 else 0) }
@@ -1890,6 +1983,14 @@ private fun SystemSettingsTab(
     val canAdminOps = serviceRunning && isAdminModeSelected && hasSessionAdmin
     val canEdit = canAdminOps
 
+    // Admin login state (this session only)
+    var validatingAdmin by remember { mutableStateOf(false) }
+    var adminAuthError by remember { mutableStateOf<String?>(null) }
+
+    // Admin bootstrap (when ADMIN_TOKEN is not configured yet)
+    var setupAdminToken by remember { mutableStateOf("") }
+    var revealSetupToken by remember { mutableStateOf(false) }
+
     // Token input (never persisted; never auto-filled)
     var tokenInput by remember(isAdminModeSelected) { mutableStateOf("") }
     var revealToken by remember { mutableStateOf(false) }
@@ -1898,6 +1999,18 @@ private fun SystemSettingsTab(
     LaunchedEffect(mode) {
         if (mode == 0 && hasSessionAdmin) {
             onClearSessionAdminToken()
+            adminAuthError = null
+            validatingAdmin = false
+        }
+    }
+
+    // If the server reports there is no ADMIN_TOKEN, make sure we never keep a session admin token.
+    LaunchedEffect(hasAdminTokenOnServer) {
+        if (hasAdminTokenOnServer == false && hasSessionAdmin) {
+            onClearSessionAdminToken()
+            mode = 0
+            adminAuthError = null
+            validatingAdmin = false
         }
     }
 
@@ -1911,11 +2024,37 @@ private fun SystemSettingsTab(
             toast("请填写 ADMIN_TOKEN")
             return
         }
-        onSetSessionAdminToken(v)
-        toast("已进入管理员模式（本次会话）")
-        // Clear input ASAP to reduce shoulder-surfing risk.
-        tokenInput = ""
-        revealToken = false
+        if (!serviceRunning) {
+            toast("服务未运行")
+            return
+        }
+        if (!adminTokenConfigured) {
+            toast("未配置 ADMIN_TOKEN，请先配置并保存")
+            return
+        }
+        if (validatingAdmin) return
+
+        validatingAdmin = true
+        adminAuthError = null
+        scope.launch {
+            val (ok, err) = try {
+                validateAdminToken(v)
+            } catch (t: Throwable) {
+                false to (t.message ?: "验证失败")
+            }
+            validatingAdmin = false
+            if (ok) {
+                onSetSessionAdminToken(v)
+                toast("已进入管理员模式（本次会话）")
+                // Clear input ASAP to reduce shoulder-surfing risk.
+                tokenInput = ""
+                revealToken = false
+                adminAuthError = null
+            } else {
+                adminAuthError = err ?: "ADMIN_TOKEN 输入错误"
+                toast(adminAuthError!!)
+            }
+        }
     }
 
     var search by remember { mutableStateOf("") }
@@ -2033,71 +2172,151 @@ private fun SystemSettingsTab(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    if (!hasSessionAdmin) {
-                        Text(
-                            "管理员模式：需要手动输入 ADMIN_TOKEN 才能解锁编辑（不提供一键导入/不写入磁盘）。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (adminTokenFromEnv.isNotBlank()) {
-                            Spacer(Modifier.height(4.dp))
+                    when {
+                        // ADMIN_TOKEN is not configured: do not ask for input; guide user to set it first.
+                        !adminTokenConfigured -> {
                             Text(
-                                "提示：检测到系统已配置 ADMIN_TOKEN，但为避免误触/泄露，此处不会自动导入。",
+                                "管理员模式：当前服务端未配置 ADMIN_TOKEN，无法进入管理员模式。\n" +
+                                    "请先设置 ADMIN_TOKEN 并保存，保存后再进入管理员模式。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
 
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedTextField(
-                            value = tokenInput,
-                            onValueChange = { tokenInput = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            label = { Text("ADMIN_TOKEN") },
-                            placeholder = { Text("请输入管理员 Token") },
-                            visualTransformation = if (revealToken) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(onClick = { revealToken = !revealToken }) {
-                                    Icon(
-                                        imageVector = if (revealToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                        contentDescription = null
-                                    )
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = setupAdminToken,
+                                onValueChange = { setupAdminToken = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("设置 ADMIN_TOKEN") },
+                                placeholder = { Text("建议使用难猜的字符串") },
+                                visualTransformation = if (revealSetupToken) VisualTransformation.None else PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    IconButton(onClick = { revealSetupToken = !revealSetupToken }) {
+                                        Icon(
+                                            imageVector = if (revealSetupToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                            contentDescription = null
+                                        )
+                                    }
+                                }
+                            )
+
+                            Spacer(Modifier.height(8.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Button(
+                                    onClick = {
+                                        val v = setupAdminToken.trim()
+                                        if (v.isBlank()) {
+                                            toast("请填写 ADMIN_TOKEN")
+                                        } else {
+                                            onSetEnv("ADMIN_TOKEN", v)
+                                            toast("已提交保存 ADMIN_TOKEN，请稍后刷新/重新进入")
+                                            // Do not auto-fill login input for security.
+                                            setupAdminToken = ""
+                                            revealSetupToken = false
+                                        }
+                                    },
+                                    enabled = setupAdminToken.trim().isNotBlank() && serviceRunning && !loading
+                                ) {
+                                    Text("保存 ADMIN_TOKEN")
+                                }
+                                OutlinedButton(onClick = { mode = 0 }) {
+                                    Text("返回预览")
                                 }
                             }
-                        )
+                        }
 
-                        Spacer(Modifier.height(8.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Button(
-                                onClick = { enterAdminMode() },
-                                enabled = tokenInput.trim().isNotBlank() && serviceRunning
-                            ) {
-                                Text("进入管理员模式")
+                        // ADMIN_TOKEN exists but not yet provided in this session.
+                        !hasSessionAdmin -> {
+                            Text(
+                                "管理员模式：需要手动输入 ADMIN_TOKEN 才能解锁编辑（不会自动导入/不会写入本机存储）。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (adminTokenFromEnv.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "提示：检测到系统已配置 ADMIN_TOKEN，但为避免误触/泄露，此处不会自动导入。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            OutlinedButton(onClick = { mode = 0 }) {
-                                Text("返回预览")
+
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = tokenInput,
+                                onValueChange = {
+                                    tokenInput = it
+                                    adminAuthError = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("ADMIN_TOKEN") },
+                                placeholder = { Text("请输入管理员 Token") },
+                                isError = adminAuthError != null,
+                                visualTransformation = if (revealToken) VisualTransformation.None else PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    IconButton(onClick = { revealToken = !revealToken }) {
+                                        Icon(
+                                            imageVector = if (revealToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                            contentDescription = null
+                                        )
+                                    }
+                                }
+                            )
+                            if (adminAuthError != null) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    adminAuthError!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Button(
+                                    onClick = { enterAdminMode() },
+                                    enabled = tokenInput.trim().isNotBlank() && serviceRunning && !loading && !validatingAdmin
+                                ) {
+                                    if (validatingAdmin) {
+                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("验证中…")
+                                    } else {
+                                        Text("进入管理员模式")
+                                    }
+                                }
+                                OutlinedButton(onClick = { mode = 0 }, enabled = !validatingAdmin) {
+                                    Text("返回预览")
+                                }
                             }
                         }
-                    } else {
-                        Text(
-                            "管理员模式已开启（本次会话）。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                onClearSessionAdminToken()
-                                mode = 0
-                                toast("已退出管理员模式")
-                            },
-                            enabled = serviceRunning
-                        ) {
-                            Text("退出管理员模式")
+
+                        // Already unlocked.
+                        else -> {
+                            Text(
+                                "管理员模式已开启（本次会话）。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    onClearSessionAdminToken()
+                                    mode = 0
+                                    toast("已退出管理员模式")
+                                },
+                                enabled = serviceRunning
+                            ) {
+                                Text("退出管理员模式")
+                            }
                         }
                     }
                 }
@@ -2160,7 +2379,7 @@ private fun SystemSettingsTab(
             }
         }
 
-        if (!canEdit && isAdminModeSelected && serviceRunning) {
+        if (!canEdit && isAdminModeSelected && serviceRunning && adminTokenConfigured) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),

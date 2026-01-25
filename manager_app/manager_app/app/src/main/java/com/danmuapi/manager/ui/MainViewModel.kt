@@ -458,6 +458,46 @@ class MainViewModel(
         )
     }
 
+    /**
+     * Validate whether [candidate] is a correct ADMIN_TOKEN.
+     *
+     * This method **does not** persist anything. It simply probes `/api/config` using the
+     * provided token as the first path segment and checks the returned `isAdminToken` flag.
+     *
+     * @return Pair(ok, errorMessage). When ok=true, errorMessage is null.
+     */
+    suspend fun validateAdminToken(candidate: String): Pair<Boolean, String?> {
+        val token = candidate.trim()
+        if (token.isBlank()) return false to "请填写 ADMIN_TOKEN"
+
+        val res = danmuApiClient.request(
+            method = "GET",
+            host = apiHost,
+            port = apiPort,
+            tokenSegment = token,
+            path = "/api/config",
+            query = emptyMap(),
+            bodyJson = null,
+        )
+
+        if (!res.isSuccessful) {
+            val msg = when (res.code) {
+                401, 403 -> "ADMIN_TOKEN 输入错误"
+                -1 -> res.error ?: "验证失败"
+                else -> res.error ?: "验证失败（HTTP ${res.code}）"
+            }
+            return false to msg
+        }
+
+        val parsed = parseServerConfig(res.body) ?: return false to "验证失败：解析响应失败"
+        return if (parsed.isAdminToken) {
+            true to null
+        } else {
+            // Token is valid but not admin.
+            false to "ADMIN_TOKEN 输入错误"
+        }
+    }
+
     fun refreshServerConfig(useAdminToken: Boolean = false) {
         viewModelScope.launch {
             serverConfigLoading = true
