@@ -75,6 +75,8 @@ fun LogsScreen(
             title = { Text(file.name) },
             text = {
                 val warnColor = remember { Color(0xFFFFC107) }
+                val errorColor = MaterialTheme.colorScheme.error
+                val normalColor = MaterialTheme.colorScheme.onSurface
                 val errorRegex = remember { Regex("""\b(ERROR|FATAL)\b""", RegexOption.IGNORE_CASE) }
                 val warnRegex = remember { Regex("""\bWARN(ING)?\b""", RegexOption.IGNORE_CASE) }
 
@@ -93,9 +95,9 @@ fun LogsScreen(
 
                 fun lineColor(line: String): Color {
                     return when {
-                        errorRegex.containsMatchIn(line) -> MaterialTheme.colorScheme.error
+                        errorRegex.containsMatchIn(line) -> errorColor
                         warnRegex.containsMatchIn(line) -> warnColor
-                        else -> MaterialTheme.colorScheme.onSurface
+                        else -> normalColor
                     }
                 }
 
