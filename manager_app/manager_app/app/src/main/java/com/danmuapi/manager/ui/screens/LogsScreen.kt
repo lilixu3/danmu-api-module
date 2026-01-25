@@ -35,6 +35,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.data.model.LogFileInfo
 import com.danmuapi.manager.data.model.LogsResponse
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.Color
 
 @Composable
 fun LogsScreen(
@@ -71,16 +74,46 @@ fun LogsScreen(
             onDismissRequest = { viewing = null },
             title = { Text(file.name) },
             text = {
-                val scroll = rememberScrollState()
+                val warnColor = remember { Color(0xFFFFC107) }
+                val errorRegex = remember { Regex("""\b(ERROR|FATAL)\b""", RegexOption.IGNORE_CASE) }
+                val warnRegex = remember { Regex("""\bWARN(ING)?\b""", RegexOption.IGNORE_CASE) }
+
+                val raw = viewingText.ifBlank { "(空)" }
+                val lines = remember(raw) { raw.split("\n") }
+
+                val listState = rememberLazyListState()
+                LaunchedEffect(lines.size) {
+                    if (lines.isNotEmpty()) {
+                        try {
+                            listState.scrollToItem(lines.lastIndex)
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+
+                fun lineColor(line: String): Color {
+                    return when {
+                        errorRegex.containsMatchIn(line) -> MaterialTheme.colorScheme.error
+                        warnRegex.containsMatchIn(line) -> warnColor
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
+                }
+
                 SelectionContainer {
-                    Text(
-                        text = viewingText.ifBlank { "(空)" },
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier
-                            .heightIn(max = 420.dp)
-                            .verticalScroll(scroll),
-                    )
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        items(lines) { line ->
+                            Text(
+                                text = line,
+                                color = lineColor(line),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = { viewing = null }) { Text("关闭") } },

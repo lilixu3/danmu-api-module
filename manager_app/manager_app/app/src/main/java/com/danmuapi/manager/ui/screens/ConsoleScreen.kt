@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -75,6 +76,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.material3.Surface
 import androidx.activity.result.contract.ActivityResultContracts
@@ -385,12 +387,15 @@ private fun ServerLogsView(
     onClear: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+
     var autoRefresh by remember { mutableStateOf(false) }
     var followTail by remember { mutableStateOf(true) }
     var filter by remember { mutableStateOf("all") }
     var keyword by remember { mutableStateOf("") }
     var confirmCopyAll by remember { mutableStateOf(false) }
 
+    // Auto refresh (when service is running)
     LaunchedEffect(autoRefresh, serviceRunning) {
         if (!serviceRunning) return@LaunchedEffect
         while (autoRefresh) {
@@ -403,9 +408,10 @@ private fun ServerLogsView(
         val kw = keyword.trim().lowercase(Locale.getDefault())
         logs.filter { e ->
             val okLevel = when (filter) {
-                "error" -> e.level.equals("error", true)
-                "warn" -> e.level.equals("warn", true)
+                "error" -> e.level.equals("error", true) || e.level.equals("fatal", true)
+                "warn" -> e.level.equals("warn", true) || e.level.equals("warning", true)
                 "info" -> e.level.equals("info", true)
+                "debug" -> e.level.equals("debug", true) || e.level.equals("trace", true)
                 else -> true
             }
             val okKw = kw.isBlank() ||
@@ -416,25 +422,37 @@ private fun ServerLogsView(
         }
     }
 
-    // Avoid rendering thousands of cards: show as a single, selectable text panel.
-    // Also cap the visible lines to keep the UI smooth.
+    // Keep UI smooth
     val safeMax = maxDisplayLines.coerceIn(50, 5000)
     val displayLogs = remember(filtered, safeMax) {
         if (filtered.size > safeMax) filtered.takeLast(safeMax) else filtered
     }
     val truncated = filtered.size > displayLogs.size
-    val displayText = remember(displayLogs) {
-        displayLogs.joinToString("\n") { it.toLine() }
+    val displayText = remember(displayLogs) { displayLogs.joinToString("\n") { it.toLine() } }
+
+    val warnColor = remember { Color(0xFFFFC107) }
+
+    fun lineColor(levelRaw: String): Color {
+        val lv = levelRaw.trim().uppercase(Locale.getDefault())
+        return when {
+            lv == "ERROR" || lv == "FATAL" -> MaterialTheme.colorScheme.error
+            lv == "WARN" || lv == "WARNING" -> warnColor
+            lv == "DEBUG" || lv == "TRACE" -> MaterialTheme.colorScheme.onSurfaceVariant
+            else -> MaterialTheme.colorScheme.onSurface
+        }
     }
 
-    val scrollState = rememberScrollState()
-    LaunchedEffect(displayText, followTail) {
+    val listState = rememberLazyListState()
+    val tailKey = remember(displayLogs) {
+        displayLogs.lastOrNull()?.let { "${it.timestamp}|${it.level}|${it.message.hashCode()}" } ?: ""
+    }
+    LaunchedEffect(tailKey, followTail) {
         if (!followTail) return@LaunchedEffect
-        // Let layout calculate maxValue.
-        delay(10)
-        try {
-            scrollState.scrollTo(scrollState.maxValue)
-        } catch (_: Throwable) {
+        if (displayLogs.isNotEmpty()) {
+            try {
+                listState.scrollToItem(displayLogs.lastIndex)
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -443,10 +461,7 @@ private fun ServerLogsView(
             onDismissRequest = { confirmCopyAll = false },
             title = { Text("复制全部日志？") },
             text = {
-                Text(
-                    "当前筛选结果共 ${filtered.size} 条。复制全部可能较大，部分机型会变慢。\n\n" +
-                        "建议优先复制“当前显示”。"
-                )
+                Text("当前筛选结果共 ${filtered.size} 条。复制全部可能较大，部分机型会变慢。\n\n建议优先复制“当前显示”。")
             },
             confirmButton = {
                 TextButton(
@@ -456,24 +471,22 @@ private fun ServerLogsView(
                     }
                 ) { Text("仍要复制") }
             },
-            dismissButton = { TextButton(onClick = { confirmCopyAll = false }) { Text("取消") } }
+            dismissButton = { TextButton(onClick = { confirmCopyAll = false }) { Text("取消") } },
         )
     }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
             ManagerCard(title = "服务日志") {
-                Text(
-                    "来自 /api/logs。",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Text("来自 /api/logs。", style = MaterialTheme.typography.bodyMedium)
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
 
+                // Actions
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -483,50 +496,53 @@ private fun ServerLogsView(
                         Spacer(Modifier.width(8.dp))
                         Text("刷新")
                     }
+
                     OutlinedButton(
                         onClick = { clipboard.setText(AnnotatedString(displayText)) },
-                        enabled = displayText.isNotBlank()
+                        enabled = displayText.isNotBlank(),
                     ) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(if (truncated) "复制当前显示" else "复制")
                     }
+
                     if (truncated && filtered.isNotEmpty()) {
-                        OutlinedButton(
-                            onClick = { confirmCopyAll = true },
-                        ) {
+                        OutlinedButton(onClick = { confirmCopyAll = true }) {
                             Icon(Icons.Filled.ContentCopy, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Text("复制全部")
                         }
                     }
+
                     if (adminToken.isNotBlank()) {
-                        OutlinedButton(
-                            onClick = onClear,
-                            enabled = serviceRunning
-                        ) {
+                        OutlinedButton(onClick = onClear, enabled = serviceRunning && !loading) {
                             Icon(Icons.Filled.Delete, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Text("清空")
                         }
                     }
+
+                    if (!followTail && displayLogs.isNotEmpty()) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    try {
+                                        listState.scrollToItem(displayLogs.lastIndex)
+                                    } catch (_: Throwable) {
+                                    }
+                                }
+                            },
+                        ) {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("到底部")
+                        }
+                    }
                 }
 
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = autoRefresh, onCheckedChange = { autoRefresh = it }, enabled = serviceRunning)
-                    Spacer(Modifier.width(8.dp))
-                    Text("自动刷新（2s）")
-                }
+                Spacer(Modifier.height(10.dp))
 
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = followTail, onCheckedChange = { followTail = it })
-                    Spacer(Modifier.width(8.dp))
-                    Text("跟随底部")
-                }
-
-                Spacer(Modifier.height(8.dp))
+                // Filters
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -535,21 +551,51 @@ private fun ServerLogsView(
                     FilterChip(selected = filter == "info", onClick = { filter = "info" }, label = { Text("Info") })
                     FilterChip(selected = filter == "warn", onClick = { filter = "warn" }, label = { Text("Warn") })
                     FilterChip(selected = filter == "error", onClick = { filter = "error" }, label = { Text("Error") })
+                    FilterChip(selected = filter == "debug", onClick = { filter = "debug" }, label = { Text("Debug") })
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
+
                 OutlinedTextField(
                     value = keyword,
                     onValueChange = { keyword = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("筛选") },
-                    placeholder = { Text("关键词/时间/级别") }
+                    label = { Text("搜索") },
+                    placeholder = { Text("关键词 / 时间 / 级别") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 )
 
+                Spacer(Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = autoRefresh,
+                            onCheckedChange = { autoRefresh = it },
+                            enabled = serviceRunning,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("自动刷新（2s）")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = followTail,
+                            onCheckedChange = { followTail = it },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("跟随底部")
+                    }
+                }
+
                 Spacer(Modifier.height(6.dp))
+
                 Text(
-                    "当前：${displayLogs.size}${if (truncated) "（已截断显示最后 $safeMax 条/共 ${filtered.size} 条）" else " 条"}",
+                    "当前：${displayLogs.size}${if (truncated) "（已截断显示最后 $safeMax 条 / 共 ${filtered.size} 条）" else " 条"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -570,24 +616,39 @@ private fun ServerLogsView(
                         Text("加载中…")
                     }
                 }
-                error != null -> Text("加载失败：$error", color = MaterialTheme.colorScheme.error)
-                displayLogs.isEmpty() -> Text("暂无日志")
+
+                error != null -> {
+                    Text("加载失败：$error", color = MaterialTheme.colorScheme.error)
+                }
+
+                displayLogs.isEmpty() -> {
+                    Text("暂无日志")
+                }
+
                 else -> {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                     ) {
+                        // Line-by-line rendering so we can color ERROR/WARN.
                         SelectionContainer {
-                            Text(
-                                text = displayText,
+                            LazyColumn(
+                                state = listState,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(min = 220.dp, max = 520.dp)
-                                    .verticalScroll(scrollState)
-                                    .padding(12.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                            )
+                                    .heightIn(min = 260.dp, max = 560.dp),
+                                contentPadding = PaddingValues(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                items(displayLogs) { e ->
+                                    Text(
+                                        text = e.toLine(),
+                                        color = lineColor(e.level),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -595,6 +656,7 @@ private fun ServerLogsView(
         }
     }
 }
+
 
 private fun ServerLogEntry.toLine(): String {
     val ts = timestamp.ifBlank { "-" }

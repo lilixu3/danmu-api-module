@@ -462,7 +462,7 @@ class MainViewModel(
      * Validate whether [candidate] is a correct ADMIN_TOKEN.
      *
      * This method **does not** persist anything. It simply probes `/api/config` using the
-     * provided token as the first path segment and checks the returned `isAdminToken` flag.
+     * provided token as the first path segment and checks whether the server accepts it.
      *
      * @return Pair(ok, errorMessage). When ok=true, errorMessage is null.
      */
@@ -489,13 +489,8 @@ class MainViewModel(
             return false to msg
         }
 
-        val parsed = parseServerConfig(res.body) ?: return false to "验证失败：解析响应失败"
-        return if (parsed.isAdminToken) {
-            true to null
-        } else {
-            // Token is valid but not admin.
-            false to "ADMIN_TOKEN 输入错误"
-        }
+        // If the server accepted the token for /api/config, treat it as valid.
+        return true to null
     }
 
     fun refreshServerConfig(useAdminToken: Boolean = false) {
@@ -728,26 +723,60 @@ class MainViewModel(
             null
         }
     }
-
     private fun parseServerLogs(text: String): List<ServerLogEntry> {
-        // Expected format per line: "[2024-01-01 12:00:00] info: message"
-        val regex = Regex("^\\[(.+?)]\\s+(\\w+):\\s+(.*)")
+        // The backend log format may vary by build / runtime.
+        // Supported examples:
+        // 1) "[2024-01-01 12:00:00] info: message"
+        // 2) "2026-01-25T12:28:36.155+08:00  ERROR  message"
+        // 3) "2026-01-25 12:28:36.155  WARN  message"
+
+        fun normLevel(raw: String): String {
+            val s = raw.trim().uppercase()
+            return when {
+                s == "WARNING" -> "WARN"
+                s == "WRN" -> "WARN"
+                s.startsWith("ERR") -> "ERROR"
+                s == "FATAL" -> "ERROR"
+                else -> s
+            }
+        }
+
+        val bracketed = Regex("""^\[(.+?)]\s+(\w+):\s+(.*)$""")
+        val iso = Regex("""^(\d{4}-\d{2}-\d{2}T[^\s]+)\s+(\w+)\s+(.*)$""")
+        val plain = Regex("""^(\d{4}-\d{2}-\d{2}\s+[^\s]+)\s+(\w+)\s+(.*)$""")
+
         return text
             .lineSequence()
             .mapNotNull { raw ->
-                val line = raw.trim()
+                val line = raw.trimEnd()
                 if (line.isBlank()) return@mapNotNull null
 
-                val m = regex.find(line)
-                if (m == null) {
-                    // Keep unknown format lines (rare, but happens on some deployments).
-                    return@mapNotNull ServerLogEntry("", "", line)
+                // Format 1
+                bracketed.find(line)?.let { m ->
+                    val ts = m.groupValues.getOrNull(1).orEmpty()
+                    val level = normLevel(m.groupValues.getOrNull(2).orEmpty())
+                    val msg = m.groupValues.getOrNull(3).orEmpty()
+                    return@mapNotNull ServerLogEntry(ts, level, msg)
                 }
 
-                val ts = m.groupValues.getOrNull(1).orEmpty()
-                val level = m.groupValues.getOrNull(2).orEmpty()
-                val msg = m.groupValues.getOrNull(3).orEmpty()
-                ServerLogEntry(ts, level, msg)
+                // Format 2
+                iso.find(line)?.let { m ->
+                    val ts = m.groupValues.getOrNull(1).orEmpty()
+                    val level = normLevel(m.groupValues.getOrNull(2).orEmpty())
+                    val msg = m.groupValues.getOrNull(3).orEmpty()
+                    return@mapNotNull ServerLogEntry(ts, level, msg)
+                }
+
+                // Format 3
+                plain.find(line)?.let { m ->
+                    val ts = m.groupValues.getOrNull(1).orEmpty()
+                    val level = normLevel(m.groupValues.getOrNull(2).orEmpty())
+                    val msg = m.groupValues.getOrNull(3).orEmpty()
+                    return@mapNotNull ServerLogEntry(ts, level, msg)
+                }
+
+                // Unknown format: keep full line as message.
+                ServerLogEntry("", "", line.trim())
             }
             .toList()
     }
