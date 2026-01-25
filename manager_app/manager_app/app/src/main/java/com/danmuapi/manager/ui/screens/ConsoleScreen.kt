@@ -64,6 +64,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -2087,7 +2088,8 @@ private fun SystemSettingsTab(
 
     // Refresh config when service/token changes.
     LaunchedEffect(hasSessionAdmin, serviceRunning, mode) {
-        if (serviceRunning) onRefreshConfig(useAdminToken = hasSessionAdmin)
+        // Note: onRefreshConfig is a function type, so we can't use named arguments here.
+        if (serviceRunning) onRefreshConfig(hasSessionAdmin)
     }
 
     val meta = serverConfig?.envVarConfig.orEmpty()
