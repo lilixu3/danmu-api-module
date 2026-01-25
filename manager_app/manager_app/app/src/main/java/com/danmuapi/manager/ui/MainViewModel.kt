@@ -80,6 +80,7 @@ class MainViewModel(
      * - Not persisted to disk (avoids accidentally storing secrets).
      * - Used to access admin endpoints when the user doesn't want to write ADMIN_TOKEN into .env.
      */
+    @set:JvmName("setSessionAdminTokenState")
     var sessionAdminToken: String by mutableStateOf("")
         private set
 
