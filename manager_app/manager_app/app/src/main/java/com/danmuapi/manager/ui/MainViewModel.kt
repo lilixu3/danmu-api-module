@@ -141,9 +141,6 @@ class MainViewModel(
     val dynamicColor: StateFlow<Boolean> = settings.dynamicColor
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
-    val adminTokenPromptMode: StateFlow<Int> = settings.adminTokenPromptMode
-        .stateIn(viewModelScope, SharingStarted.Eagerly, 1)
-
     val consoleLogLimit: StateFlow<Int> = settings.consoleLogLimit
         .stateIn(viewModelScope, SharingStarted.Eagerly, 300)
 
@@ -244,12 +241,6 @@ class MainViewModel(
     fun setDynamicColor(enabled: Boolean) {
         viewModelScope.launch {
             settings.setDynamicColor(enabled)
-        }
-    }
-
-    fun setAdminTokenPromptMode(mode: Int) {
-        viewModelScope.launch {
-            settings.setAdminTokenPromptMode(mode)
         }
     }
 
@@ -428,9 +419,11 @@ class MainViewModel(
     // ====== danmu-api Console ======
 
     private fun effectiveAdminToken(): String {
-        val s = sessionAdminToken.trim()
-        if (s.isNotBlank()) return s
-        return adminToken.trim()
+        // Security note:
+        // The in-app “控制台” only treats *session* admin token as admin privilege.
+        // Even if ADMIN_TOKEN exists in .env, we do NOT automatically use it to unlock admin endpoints,
+        // so the user must explicitly enter ADMIN_TOKEN to enter “管理员模式”.
+        return sessionAdminToken.trim()
     }
 
     private fun hasAdminToken(): Boolean = effectiveAdminToken().isNotBlank()

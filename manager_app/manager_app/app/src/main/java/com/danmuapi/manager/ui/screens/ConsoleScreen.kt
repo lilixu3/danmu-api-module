@@ -117,9 +117,7 @@ fun ConsoleScreen(
     apiHost: String,
     adminToken: String,
     sessionAdminToken: String,
-    adminTokenPromptMode: Int,
     consoleLogLimit: Int,
-    onSetAdminTokenPromptMode: (Int) -> Unit,
     onSetConsoleLogLimit: (Int) -> Unit,
     onSetSessionAdminToken: (String) -> Unit,
     onClearSessionAdminToken: () -> Unit,
@@ -148,10 +146,12 @@ fun ConsoleScreen(
         useAdminToken: Boolean,
     ) -> HttpResult,
 ) {
-    val tabs = listOf("预览", "日志", "接口", "推送", "系统")
+    val tabs = listOf("日志", "接口", "推送", "系统")
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    val effectiveAdminToken = sessionAdminToken.ifBlank { adminToken }
+    // Console admin features are unlocked only when user explicitly enters ADMIN_TOKEN in this run.
+    // (Do not auto-use ADMIN_TOKEN from .env.)
+    val effectiveAdminToken = sessionAdminToken.trim()
 
     // Initial refresh (best-effort)
     LaunchedEffect(serviceRunning) {
@@ -182,19 +182,7 @@ fun ConsoleScreen(
         }
 
         when (selectedTab) {
-            0 -> ConfigPreviewTab(
-                rootAvailable = rootAvailable,
-                serviceRunning = serviceRunning,
-                apiToken = apiToken,
-                apiPort = apiPort,
-                apiHost = apiHost,
-                serverConfig = serverConfig,
-                loading = serverConfigLoading,
-                error = serverConfigError,
-                onRefresh = { onRefreshConfig(false) },
-            )
-
-            1 -> LogsTab(
+            0 -> LogsTab(
                 rootAvailable = rootAvailable,
                 serviceRunning = serviceRunning,
                 adminToken = effectiveAdminToken,
@@ -211,26 +199,24 @@ fun ConsoleScreen(
                 onReadModuleLogTail = onReadModuleLogTail,
             )
 
-            2 -> ApiTestTab(
+            1 -> ApiTestTab(
                 serviceRunning = serviceRunning,
                 adminToken = effectiveAdminToken,
                 requestApi = requestApi,
             )
 
-            3 -> PushDanmuTab(
+            2 -> PushDanmuTab(
                 serviceRunning = serviceRunning,
                 apiToken = apiToken,
                 apiPort = apiPort,
                 requestApi = requestApi,
             )
 
-            4 -> SystemSettingsTab(
+            3 -> SystemSettingsTab(
                 rootAvailable = rootAvailable,
                 serviceRunning = serviceRunning,
                 adminTokenFromEnv = adminToken,
                 sessionAdminToken = sessionAdminToken,
-                adminTokenPromptMode = adminTokenPromptMode,
-                onSetAdminTokenPromptMode = onSetAdminTokenPromptMode,
                 onSetSessionAdminToken = onSetSessionAdminToken,
                 onClearSessionAdminToken = onClearSessionAdminToken,
                 serverConfig = serverConfig,
@@ -242,161 +228,6 @@ fun ConsoleScreen(
                 onClearCache = onClearCache,
                 onDeploy = onDeploy,
             )
-        }
-    }
-}
-
-// ===========================
-// 预览
-// ===========================
-
-@Composable
-private fun ConfigPreviewTab(
-    rootAvailable: Boolean?,
-    serviceRunning: Boolean,
-    apiToken: String,
-    apiPort: Int,
-    apiHost: String,
-    serverConfig: ServerConfigResponse?,
-    loading: Boolean,
-    error: String?,
-    onRefresh: () -> Unit,
-) {
-    val clipboard = LocalClipboardManager.current
-    var query by remember { mutableStateOf("") }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            ManagerCard(title = "配置预览") {
-                Text(
-                    text = "用于快速查看 danmu-api 当前运行配置。",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onRefresh) {
-                        Icon(Icons.Filled.Refresh, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("刷新")
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                if (rootAvailable == false) {
-                    Text(
-                        "当前未获取 Root 权限，部分模块状态可能不可用。",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                if (!serviceRunning) {
-                    Text(
-                        "服务未运行：预览数据需要服务在线（先到仪表盘启动服务）。",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                } else {
-                    Text(
-                        "当前访问：token=$apiToken  host=$apiHost  port=$apiPort",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        }
-
-        item {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                label = { Text("搜索键/值") },
-                placeholder = { Text("例如：TOKEN / CACHE / redis") },
-            )
-        }
-
-        item {
-            if (loading) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Text("加载中…")
-                }
-            } else if (error != null) {
-                Text("加载失败：$error", color = MaterialTheme.colorScheme.error)
-            } else if (serverConfig == null) {
-                Text("暂无数据")
-            }
-        }
-
-        val q = query.trim().lowercase(Locale.getDefault())
-        serverConfig?.categorizedEnvVars?.forEach { (category, items) ->
-            val filtered = if (q.isBlank()) items else items.filter {
-                it.key.lowercase(Locale.getDefault()).contains(q) ||
-                    it.value.lowercase(Locale.getDefault()).contains(q) ||
-                    it.description.lowercase(Locale.getDefault()).contains(q)
-            }
-            if (filtered.isNotEmpty()) {
-                item {
-                    Text(
-                        text = categoryLabel(category),
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                }
-
-                items(filtered, key = { it.key }) { item ->
-                    val accent = categoryAccentColor(category)
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    item.key,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    item.type,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                IconButton(
-                                    onClick = { clipboard.setText(AnnotatedString(item.value)) },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(Icons.Filled.ContentCopy, contentDescription = "复制")
-                                }
-                            }
-
-                            if (item.description.isNotBlank()) {
-                                Text(
-                                    item.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(Modifier.height(6.dp))
-                            }
-
-                            Text(
-                                item.value.ifBlank { "(空)" },
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -2037,8 +1868,6 @@ private fun SystemSettingsTab(
     serviceRunning: Boolean,
     adminTokenFromEnv: String,
     sessionAdminToken: String,
-    adminTokenPromptMode: Int,
-    onSetAdminTokenPromptMode: (Int) -> Unit,
     onSetSessionAdminToken: (String) -> Unit,
     onClearSessionAdminToken: () -> Unit,
     serverConfig: ServerConfigResponse?,
@@ -2053,43 +1882,48 @@ private fun SystemSettingsTab(
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
-    val mode = remember(adminTokenPromptMode) { adminTokenPromptMode.coerceIn(0, 2) }
-    val modeLabel = when (mode) {
-        0 -> "每次进入都填"
-        1 -> "本次运行填一次"
-        else -> "不需要填"
-    }
+    // 0 = 预览模式（只读/脱敏），1 = 管理员模式（需要输入 ADMIN_TOKEN 才能解锁编辑）
+    var mode by remember { mutableIntStateOf(if (sessionAdminToken.isNotBlank()) 1 else 0) }
 
-    // “系统”页只认会话 Token：用户明确填写后才启用管理员能力。
     val hasSessionAdmin = sessionAdminToken.isNotBlank()
-    val canAdminOps = serviceRunning && hasSessionAdmin
+    val isAdminModeSelected = mode == 1
+    val canAdminOps = serviceRunning && isAdminModeSelected && hasSessionAdmin
+    val canEdit = canAdminOps
 
-    // In “always ask” mode, clear the session token when leaving this page.
-    DisposableEffect(mode) {
-        onDispose {
-            if (mode == 0) onClearSessionAdminToken()
+    // Token input (never persisted; never auto-filled)
+    var tokenInput by remember(isAdminModeSelected) { mutableStateOf("") }
+    var revealToken by remember { mutableStateOf(false) }
+
+    // Leaving admin mode should drop the in-memory token, so re-entering always requires re-typing.
+    LaunchedEffect(mode) {
+        if (mode == 0 && hasSessionAdmin) {
+            onClearSessionAdminToken()
         }
     }
 
-    // If user chose “never”, also clear session token to avoid accidental admin operations.
-    LaunchedEffect(mode) {
-        if (mode == 2) onClearSessionAdminToken()
+    fun toast(msg: String) {
+        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
     }
 
-    // Token input (not persisted)
-    var tokenInput by remember(mode) {
-        // In “always ask”, don't prefill.
-        mutableStateOf(if (mode == 0) "" else sessionAdminToken)
+    fun enterAdminMode() {
+        val v = tokenInput.trim()
+        if (v.isBlank()) {
+            toast("请填写 ADMIN_TOKEN")
+            return
+        }
+        onSetSessionAdminToken(v)
+        toast("已进入管理员模式（本次会话）")
+        // Clear input ASAP to reduce shoulder-surfing risk.
+        tokenInput = ""
+        revealToken = false
     }
-    var revealToken by remember { mutableStateOf(false) }
 
     var search by remember { mutableStateOf("") }
     var confirmDeleteKey by remember { mutableStateOf<String?>(null) }
 
-    // Refresh config when service/token changes.
-    LaunchedEffect(hasSessionAdmin, serviceRunning, mode) {
-        // Note: onRefreshConfig is a function type, so we can't use named arguments here.
-        if (serviceRunning) onRefreshConfig(hasSessionAdmin)
+    // Refresh config when service/admin mode changes.
+    LaunchedEffect(serviceRunning, canAdminOps) {
+        if (serviceRunning) onRefreshConfig(canAdminOps)
     }
 
     val meta = serverConfig?.envVarConfig.orEmpty()
@@ -2101,12 +1935,16 @@ private fun SystemSettingsTab(
         categories.values.flatten().associate { it.key to it.value }
     }
 
-    // Keep per-key edits
+    // Per-key edits (admin mode only)
     val edits = remember { mutableStateMapOf<String, String>() }
+    LaunchedEffect(canEdit) {
+        if (!canEdit) edits.clear()
+    }
+
+    // Category collapse state
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
 
     fun baseline(key: String): String {
-        // If it exists in .env (originalEnvVars), that's the baseline.
-        // Otherwise use the effective/default value from categorizedEnvVars.
         return original[key] ?: effectiveByKey[key].orEmpty()
     }
 
@@ -2130,7 +1968,7 @@ private fun SystemSettingsTab(
                         confirmDeleteKey = null
                         onDeleteEnv(key)
                     },
-                    enabled = canAdminOps
+                    enabled = canEdit
                 ) {
                     Text("删除")
                 }
@@ -2141,20 +1979,6 @@ private fun SystemSettingsTab(
         )
     }
 
-    fun toast(msg: String) {
-        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-    }
-
-    fun applyToken() {
-        val v = tokenInput.trim()
-        if (v.isBlank()) {
-            toast("请填写 ADMIN_TOKEN")
-            return
-        }
-        onSetSessionAdminToken(v)
-        toast("已启用管理员 Token（本次会话）")
-    }
-
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -2163,26 +1987,25 @@ private fun SystemSettingsTab(
         item {
             ManagerCard(title = "系统配置") {
                 Text(
-                    "环境变量可视化配置，用于调整 danmu-api 行为。",
+                    "以更清晰的方式管理 danmu-api 的环境变量配置。",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.height(8.dp))
 
                 if (!serviceRunning) {
-                    Text("服务未运行，无法通过 API 读取/写入配置。", color = MaterialTheme.colorScheme.error)
+                    Text("服务未运行：无法通过 API 读取/写入配置。", color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.height(8.dp))
                 }
                 if (rootAvailable == false) {
                     Text(
-                        "未获取 Root：无法使用 .env 兜底操作。",
+                        "未获取 Root：部分兜底操作不可用。",
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(Modifier.height(6.dp))
                 }
 
-                // Admin token section
-                Text("管理员 Token（ADMIN_TOKEN）", style = MaterialTheme.typography.titleSmall)
+                Text("模式", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(6.dp))
 
                 FlowRow(
@@ -2191,103 +2014,90 @@ private fun SystemSettingsTab(
                 ) {
                     FilterChip(
                         selected = mode == 0,
-                        onClick = { onSetAdminTokenPromptMode(0) },
-                        label = { Text("每次进入都填") }
+                        onClick = { mode = 0 },
+                        label = { Text("预览模式") }
                     )
                     FilterChip(
                         selected = mode == 1,
-                        onClick = { onSetAdminTokenPromptMode(1) },
-                        label = { Text("本次运行填一次") }
-                    )
-                    FilterChip(
-                        selected = mode == 2,
-                        onClick = { onSetAdminTokenPromptMode(2) },
-                        label = { Text("不需要填") }
+                        onClick = { mode = 1 },
+                        label = { Text("管理员模式") }
                     )
                 }
 
                 Spacer(Modifier.height(8.dp))
 
-                if (mode == 2) {
+                if (mode == 0) {
                     Text(
-                        "当前模式：$modeLabel。将以普通权限读取配置；敏感项可能被脱敏，且“清理缓存/重新部署/保存修改”等操作不可用。",
+                        "预览模式：只读展示，敏感变量将被隐藏。要修改配置请切换到“管理员模式”。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
                     if (!hasSessionAdmin) {
                         Text(
-                            "当前模式：$modeLabel。进入后默认需要填写管理员 Token（不会写入磁盘，仅本次会话有效）。",
+                            "管理员模式：需要手动输入 ADMIN_TOKEN 才能解锁编辑（不提供一键导入/不写入磁盘）。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         if (adminTokenFromEnv.isNotBlank()) {
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                "已检测到配置中的 ADMIN_TOKEN，可一键使用。",
+                                "提示：检测到系统已配置 ADMIN_TOKEN，但为避免误触/泄露，此处不会自动导入。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = tokenInput,
+                            onValueChange = { tokenInput = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("ADMIN_TOKEN") },
+                            placeholder = { Text("请输入管理员 Token") },
+                            visualTransformation = if (revealToken) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { revealToken = !revealToken }) {
+                                    Icon(
+                                        imageVector = if (revealToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = null
+                                    )
+                                }
+                            }
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                onClick = { enterAdminMode() },
+                                enabled = tokenInput.trim().isNotBlank() && serviceRunning
+                            ) {
+                                Text("进入管理员模式")
+                            }
+                            OutlinedButton(onClick = { mode = 0 }) {
+                                Text("返回预览")
+                            }
+                        }
                     } else {
                         Text(
-                            "管理员 Token 已启用（本次会话）。",
+                            "管理员模式已开启（本次会话）。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
-                    }
-
-                    Spacer(Modifier.height(8.dp))
-
-                    OutlinedTextField(
-                        value = tokenInput,
-                        onValueChange = { tokenInput = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("ADMIN_TOKEN") },
-                        placeholder = { Text("请输入管理员 Token") },
-                        visualTransformation = if (revealToken) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { revealToken = !revealToken }) {
-                                Icon(
-                                    imageVector = if (revealToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                    contentDescription = null
-                                )
-                            }
-                        }
-                    )
-
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Button(
-                            onClick = { applyToken() },
-                            enabled = tokenInput.trim().isNotBlank() && serviceRunning
-                        ) {
-                            Text("应用 Token")
-                        }
-                        if (adminTokenFromEnv.isNotBlank()) {
-                            OutlinedButton(
-                                onClick = {
-                                    tokenInput = adminTokenFromEnv
-                                    applyToken()
-                                },
-                                enabled = serviceRunning
-                            ) {
-                                Text("使用已配置")
-                            }
-                        }
+                        Spacer(Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
-                                tokenInput = ""
                                 onClearSessionAdminToken()
-                                toast("已清除本次 Token")
+                                mode = 0
+                                toast("已退出管理员模式")
                             },
-                            enabled = serviceRunning && hasSessionAdmin
+                            enabled = serviceRunning
                         ) {
-                            Text("清除本次 Token")
+                            Text("退出管理员模式")
                         }
                     }
                 }
@@ -2298,7 +2108,7 @@ private fun SystemSettingsTab(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedButton(
-                        onClick = { onRefreshConfig(hasSessionAdmin) },
+                        onClick = { onRefreshConfig(canAdminOps) },
                         enabled = serviceRunning && !loading
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
@@ -2323,7 +2133,7 @@ private fun SystemSettingsTab(
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = search,
                     onValueChange = { search = it },
@@ -2350,10 +2160,7 @@ private fun SystemSettingsTab(
             }
         }
 
-        // If user chose “not needed” or hasn't applied token yet, show config in read-only mode.
-        val canEdit = canAdminOps
-
-        if (!canEdit && serviceRunning && mode != 2) {
+        if (!canEdit && isAdminModeSelected && serviceRunning) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -2361,10 +2168,10 @@ private fun SystemSettingsTab(
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Column(Modifier.padding(12.dp)) {
-                        Text("只读模式", style = MaterialTheme.typography.titleSmall)
+                        Text("管理员模式未解锁", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "请先“应用 Token”开启管理员权限后再修改配置。",
+                            "请输入 ADMIN_TOKEN 后才能编辑/保存配置。当前仍以预览模式展示（敏感项已隐藏）。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2374,34 +2181,71 @@ private fun SystemSettingsTab(
         }
 
         val q = search.trim().lowercase(Locale.getDefault())
+        val searching = q.isNotBlank()
+
         categories.forEach { (category, items) ->
             val filtered = if (q.isBlank()) items else items.filter {
                 it.key.lowercase(Locale.getDefault()).contains(q) ||
                     getCurrent(it.key).lowercase(Locale.getDefault()).contains(q) ||
                     it.description.lowercase(Locale.getDefault()).contains(q)
             }
-            if (filtered.isNotEmpty()) {
-                item {
-                    Text(categoryLabel(category), style = MaterialTheme.typography.titleMedium)
-                }
+            if (filtered.isEmpty()) return@forEach
 
-                items(filtered, key = { it.key }) { env ->
-                    val metaItem = meta[env.key] ?: EnvVarMeta(category = category, type = env.type, description = env.description)
-                    val keyExistsInEnv = original.containsKey(env.key)
+            val isExpanded = searching || (expanded[category] ?: true)
+
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            expanded[category] = !(expanded[category] ?: true)
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        categoryLabel(category),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        contentDescription = null
+                    )
+                }
+            }
+
+            if (!isExpanded) return@forEach
+
+            items(filtered, key = { it.key }) { env ->
+                val metaItem = meta[env.key] ?: EnvVarMeta(category = category, type = env.type, description = env.description)
+                val keyExistsInEnv = original.containsKey(env.key)
+
+                val rawValue = getCurrent(env.key)
+                val maskedByBackend = keyExistsInEnv && original[env.key].orEmpty().trim().all { it == '*' } && original[env.key].orEmpty().isNotBlank()
+                val maskedForPreview = !canEdit && shouldMaskInPreview(
+                    key = env.key,
+                    type = metaItem.type.ifBlank { env.type },
+                    description = metaItem.description.ifBlank { env.description },
+                    value = rawValue,
+                )
+                val masked = maskedByBackend || maskedForPreview
+
+                if (canEdit) {
                     EnvEditorRow(
                         category = metaItem.category.ifBlank { category },
                         keyName = env.key,
                         description = metaItem.description.ifBlank { env.description },
                         type = metaItem.type,
                         options = metaItem.options,
-                        currentValue = getCurrent(env.key),
+                        currentValue = rawValue,
                         isDefaultValue = !keyExistsInEnv,
                         min = metaItem.min,
                         max = metaItem.max,
-                        masked = keyExistsInEnv && original[env.key].orEmpty().trim().all { it == '*' } && original[env.key].orEmpty().isNotBlank(),
+                        masked = maskedByBackend,
                         onValueChange = { edits[env.key] = it },
                         onCopyKey = { clipboard.setText(AnnotatedString(env.key)) },
-                        onCopyValue = { clipboard.setText(AnnotatedString(getCurrent(env.key))) },
+                        onCopyValue = { clipboard.setText(AnnotatedString(rawValue)) },
                         onSave = {
                             val v = getCurrent(env.key)
                             onSetEnv(env.key, v)
@@ -2414,13 +2258,137 @@ private fun SystemSettingsTab(
                                 edits.remove(env.key)
                             }
                         },
-                        saveEnabled = canEdit && isChanged(env.key),
-                        resetEnabled = canEdit && (keyExistsInEnv || edits.containsKey(env.key)),
+                        saveEnabled = isChanged(env.key),
+                        resetEnabled = (keyExistsInEnv || edits.containsKey(env.key)),
+                    )
+                } else {
+                    EnvPreviewRow(
+                        category = metaItem.category.ifBlank { category },
+                        keyName = env.key,
+                        description = metaItem.description.ifBlank { env.description },
+                        type = metaItem.type.ifBlank { env.type },
+                        value = rawValue,
+                        isDefaultValue = !keyExistsInEnv,
+                        masked = masked,
+                        onCopyKey = { clipboard.setText(AnnotatedString(env.key)) },
+                        onCopyValue = {
+                            if (!masked) clipboard.setText(AnnotatedString(rawValue))
+                        },
                     )
                 }
             }
         }
     }
+}
+
+
+@Composable
+private fun EnvPreviewRow(
+    category: String,
+    keyName: String,
+    description: String,
+    type: String,
+    value: String,
+    isDefaultValue: Boolean,
+    masked: Boolean,
+    onCopyKey: () -> Unit,
+    onCopyValue: () -> Unit,
+) {
+    val accent = categoryAccentColor(category)
+    val shown = when {
+        masked -> "（已隐藏）"
+        value.isBlank() -> "(空)"
+        else -> value
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.25f)),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(keyName, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                if (isDefaultValue) {
+                    Text(
+                        "默认",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accent,
+                        modifier = Modifier.padding(horizontal = 6.dp)
+                    )
+                }
+                Text(type, style = MaterialTheme.typography.labelSmall, color = accent)
+                Spacer(Modifier.width(4.dp))
+                IconButton(onClick = onCopyKey, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "复制键")
+                }
+            }
+
+            if (description.isNotBlank()) {
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Text(
+                    shown,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !masked && value.isNotBlank()) { onCopyValue() }
+                        .padding(10.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun shouldMaskInPreview(
+    key: String,
+    type: String,
+    description: String,
+    value: String,
+): Boolean {
+    // 1) Explicit type
+    if (type.equals("password", true)) return true
+
+    // 2) Already masked by backend
+    val v = value.trim()
+    if (v.isNotBlank() && v.all { it == '*' }) return true
+
+    // 3) Key-based heuristics
+    val k = key.trim().uppercase(Locale.getDefault())
+    val hit = listOf(
+        "TOKEN",
+        "ADMIN",
+        "PASSWORD",
+        "PASS",
+        "SECRET",
+        "KEY",
+        "COOKIE",
+        "SESS",
+        "AUTH",
+        "BEARER",
+        "JWT",
+        "SIGN",
+        "PRIVATE",
+        "ACCESS",
+    ).any { k.contains(it) }
+    if (hit) return true
+
+    // 4) Description-based heuristics (Chinese/English)
+    val d = description.lowercase(Locale.getDefault())
+    if (d.contains("token") || d.contains("password") || d.contains("secret") || d.contains("cookie")) return true
+    if (d.contains("密码") || d.contains("令牌") || d.contains("密钥") || d.contains("cookie")) return true
+
+    // 5) Value-based heuristics (JWT / URL with credentials)
+    if (v.startsWith("eyJ") && v.count { it == '.' } >= 2) return true
+    if (v.contains("://") && v.contains("@") && v.substringBefore("@").contains(":")) return true
+
+    return false
 }
 
 

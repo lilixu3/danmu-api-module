@@ -28,9 +28,6 @@ class SettingsRepository(private val context: Context) {
         val WEBDAV_PATH = stringPreferencesKey("webdav_path")
 
         // Console preferences
-        // 0 = always ask, 1 = ask once per app run, 2 = never ask
-        val ADMIN_TOKEN_PROMPT_MODE = intPreferencesKey("admin_token_prompt_mode")
-
         // Console log viewer: max lines/items to render (avoid jank on low-end devices)
         val CONSOLE_LOG_LIMIT = intPreferencesKey("console_log_limit")
     }
@@ -65,14 +62,6 @@ class SettingsRepository(private val context: Context) {
 
     val dynamicColor: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[Keys.DYNAMIC_COLOR] ?: true
-    }
-
-    /**
-     * Admin token prompt mode for “控制台 / 系统”页:
-     * 0 = every time entering, 1 = once per app run, 2 = never ask
-     */
-    val adminTokenPromptMode: Flow<Int> = context.dataStore.data.map { prefs ->
-        (prefs[Keys.ADMIN_TOKEN_PROMPT_MODE] ?: 1).coerceIn(0, 2)
     }
 
     /** Max log lines/items shown in the console log viewers. */
@@ -111,10 +100,6 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setDynamicColor(enabled: Boolean) {
         context.dataStore.edit { it[Keys.DYNAMIC_COLOR] = enabled }
-    }
-
-    suspend fun setAdminTokenPromptMode(mode: Int) {
-        context.dataStore.edit { it[Keys.ADMIN_TOKEN_PROMPT_MODE] = mode.coerceIn(0, 2) }
     }
 
     suspend fun setConsoleLogLimit(limit: Int) {
