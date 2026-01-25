@@ -431,14 +431,17 @@ private fun ServerLogsView(
     val displayText = remember(displayLogs) { displayLogs.joinToString("\n") { it.toLine() } }
 
     val warnColor = remember { Color(0xFFFFC107) }
+    val errorColor = MaterialTheme.colorScheme.error
+    val debugColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val normalColor = MaterialTheme.colorScheme.onSurface
 
     fun lineColor(levelRaw: String): Color {
         val lv = levelRaw.trim().uppercase(Locale.getDefault())
         return when {
-            lv == "ERROR" || lv == "FATAL" -> MaterialTheme.colorScheme.error
+            lv == "ERROR" || lv == "FATAL" -> errorColor
             lv == "WARN" || lv == "WARNING" -> warnColor
-            lv == "DEBUG" || lv == "TRACE" -> MaterialTheme.colorScheme.onSurfaceVariant
-            else -> MaterialTheme.colorScheme.onSurface
+            lv == "DEBUG" || lv == "TRACE" -> debugColor
+            else -> normalColor
         }
     }
 
@@ -1935,7 +1938,7 @@ private fun PushDanmuTab(
                             color = when (lastPushOk) {
                                 true -> MaterialTheme.colorScheme.primary
                                 false -> MaterialTheme.colorScheme.error
-                                else -> MaterialTheme.colorScheme.onSurface
+                                else -> normalColor
                             },
                             style = MaterialTheme.typography.bodySmall
                         )
