@@ -1938,7 +1938,7 @@ private fun PushDanmuTab(
                             color = when (lastPushOk) {
                                 true -> MaterialTheme.colorScheme.primary
                                 false -> MaterialTheme.colorScheme.error
-                                else -> normalColor
+                                else -> MaterialTheme.colorScheme.onSurface
                             },
                             style = MaterialTheme.typography.bodySmall
                         )
