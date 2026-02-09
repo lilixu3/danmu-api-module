@@ -222,7 +222,34 @@ EOF
 fi
 
 if [ ! -f "$ACTIVE_FILE" ]; then
-  ui_msg "- 已记录下载方式，重启后会自动下载核心"
+  if [ -x "$MODPATH/scripts/danmu_core.sh" ]; then
+    ui_msg "- 开始下载核心：${DEFAULT_CORE_REPO}@${DEFAULT_CORE_REF}"
+    TIMEOUT_CMD=""
+    if [ -x "$MODPATH/bin/busybox" ] && "$MODPATH/bin/busybox" timeout --help >/dev/null 2>&1; then
+      TIMEOUT_CMD="$MODPATH/bin/busybox timeout"
+    elif command -v timeout >/dev/null 2>&1; then
+      TIMEOUT_CMD="timeout"
+    fi
+    DL_TIMEOUT="${DANMU_CORE_TIMEOUT:-120}"
+
+    if [ -n "$TIMEOUT_CMD" ]; then
+      if DANMU_GH_MODE="$mode" DANMU_GH_PROXY_BASE="$proxy_base" \
+        $TIMEOUT_CMD "$DL_TIMEOUT" "$MODPATH/scripts/danmu_core.sh" core install "$DEFAULT_CORE_REPO" "$DEFAULT_CORE_REF" >/dev/null 2>&1; then
+        ui_msg "- 核心下载完成"
+      else
+        ui_msg "- 核心下载失败或超时，可在管理器里重试"
+      fi
+    else
+      if DANMU_GH_MODE="$mode" DANMU_GH_PROXY_BASE="$proxy_base" \
+        "$MODPATH/scripts/danmu_core.sh" core install "$DEFAULT_CORE_REPO" "$DEFAULT_CORE_REF" >/dev/null 2>&1; then
+        ui_msg "- 核心下载完成"
+      else
+        ui_msg "- 核心下载失败，可在管理器里重试"
+      fi
+    fi
+  else
+    ui_msg "- 未找到核心下载脚本，跳过下载"
+  fi
 fi
 
 # Ensure module points to persistent core symlink
