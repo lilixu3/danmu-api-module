@@ -73,7 +73,6 @@ jobs:
           API="https://api.github.com/repos/${REPO}/releases/latest"
 
           RESP="$(curl -sSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "$API" || true)"
 
@@ -84,20 +83,17 @@ jobs:
             MAJOR="${BASH_REMATCH[1]}"
             MINOR="${BASH_REMATCH[2]}"
             PATCH="${BASH_REMATCH[3]}"
+            if [ "$PATCH" -ge 9 ]; then
+              MINOR=$((MINOR + 1))
+              PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
+            NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           else
-            MAJOR=1
-            MINOR=0
-            PATCH=0
+            NEXT_VERSION="1.0.0"
           fi
 
-          if [ "$PATCH" -ge 9 ]; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          else
-            PATCH=$((PATCH + 1))
-          fi
-
-          NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "MODULE_VERSION=${NEXT_VERSION}" >> "$GITHUB_ENV"
           echo "module_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved module version: ${NEXT_VERSION}"
