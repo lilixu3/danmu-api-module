@@ -68,15 +68,42 @@ choose_github_mode() {
   ui_msg "- 是否可以直连 GitHub？"
   ui_msg "- 音量上：可以（直连）"
   ui_msg "- 音量下：不行（使用加速）"
+  ui_msg "- 10 秒内未选择将默认直连"
+
+  if command -v keycheck >/dev/null 2>&1; then
+    i=0
+    while [ "$i" -lt 10 ]; do
+      keycheck
+      code="$?"
+      case "$code" in
+        41|115) echo "direct"; return 0 ;; # 常见音量上
+        42|114) echo "proxy"; return 0 ;;  # 常见音量下
+      esac
+      i=$((i+1))
+    done
+  fi
 
   if [ -x /system/bin/getevent ]; then
-    while true; do
+    TIMEOUT_CMD=""
+    if [ -x "$MODPATH/bin/busybox" ] && "$MODPATH/bin/busybox" timeout --help >/dev/null 2>&1; then
+      TIMEOUT_CMD="$MODPATH/bin/busybox timeout"
+    elif command -v timeout >/dev/null 2>&1; then
+      TIMEOUT_CMD="timeout"
+    fi
+
+    if [ -n "$TIMEOUT_CMD" ]; then
+      key="$($TIMEOUT_CMD 10 /system/bin/getevent -qlc 1 2>/dev/null | grep -m1 'KEY_VOLUME')"
+      case "$key" in
+        *KEY_VOLUMEUP*) echo "direct"; return 0 ;;
+        *KEY_VOLUMEDOWN*) echo "proxy"; return 0 ;;
+      esac
+    else
       key="$(/system/bin/getevent -qlc 1 2>/dev/null | grep -m1 'KEY_VOLUME')"
       case "$key" in
         *KEY_VOLUMEUP*) echo "direct"; return 0 ;;
         *KEY_VOLUMEDOWN*) echo "proxy"; return 0 ;;
       esac
-    done
+    fi
   fi
 
   ui_msg "- 未找到 getevent，默认直连"
@@ -175,8 +202,23 @@ EOF
 else
   # shellcheck disable=SC1090
   . "$DOWNLOAD_CONF" 2>/dev/null || true
-  mode="${MODE:-direct}"
+  mode="${MODE:-}"
   proxy_base="${PROXY_BASE:-}"
+  if [ "$mode" != "direct" ] && [ "$mode" != "proxy" ]; then
+    mode="$(choose_github_mode)"
+    proxy_base=""
+    if [ "$mode" = "proxy" ]; then
+      proxy_base="$(pick_proxy_base)"
+      ui_msg "- 使用加速服务：$proxy_base"
+    else
+      ui_msg "- 使用直连下载"
+    fi
+    cat > "$DOWNLOAD_CONF" <<EOF
+MODE=$mode
+PROXY_BASE=$proxy_base
+EOF
+    chmod 600 "$DOWNLOAD_CONF" 2>/dev/null || true
+  fi
 fi
 
 if [ ! -f "$ACTIVE_FILE" ]; then
