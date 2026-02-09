@@ -388,14 +388,17 @@ download_file() {
 
   if have_cmd curl; then
     curl -fL --retry 3 --connect-timeout 10 --max-time 600 "$url" -o "$out" >/dev/null 2>&1 && return 0
+    curl -fkL --retry 3 --connect-timeout 10 --max-time 600 "$url" -o "$out" >/dev/null 2>&1 && return 0
   fi
 
   if have_cmd wget; then
     wget -O "$out" "$url" >/dev/null 2>&1 && return 0
+    wget --no-check-certificate -O "$out" "$url" >/dev/null 2>&1 && return 0
   fi
 
   if [ -n "${BB}" ] && "${BB}" wget --help >/dev/null 2>&1; then
     "${BB}" wget -O "$out" "$url" >/dev/null 2>&1 && return 0
+    "${BB}" wget --no-check-certificate -O "$out" "$url" >/dev/null 2>&1 && return 0
   fi
 
   return 1

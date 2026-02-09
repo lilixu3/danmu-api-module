@@ -101,6 +101,15 @@ sleep 5
 # Ensure companion Manager App gets updated even if autostart is disabled
 ensure_manager_app
 
+# Ensure core is downloaded after boot (best-effort)
+CORECTL="$PERSIST/bin/danmu_core.sh"
+if [ ! -x "$CORECTL" ]; then
+  CORECTL="$MODDIR/scripts/danmu_core.sh"
+fi
+if [ -x "$CORECTL" ]; then
+  "$CORECTL" ensure >/dev/null 2>&1 || true
+fi
+
 # Respect autostart flag for the core service
 if [ -f "$FLAG_NEW" ] || [ -f "$FLAG_OLD" ]; then
   exit 0

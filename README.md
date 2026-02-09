@@ -78,7 +78,7 @@
      - https://hk.gh-proxy.org/
      - https://cdn.gh-proxy.org/
      - https://edgeone.gh-proxy.org/
-3. 刷入完成后 **重启手机**
+3. 刷入完成后 **重启手机**（首次开机会自动下载核心）
 
 ### 3) 打开管理器 App
 

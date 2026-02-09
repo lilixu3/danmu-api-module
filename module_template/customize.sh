@@ -180,17 +180,7 @@ else
 fi
 
 if [ ! -f "$ACTIVE_FILE" ]; then
-  if [ -x "$MODPATH/scripts/danmu_core.sh" ]; then
-    ui_msg "- 开始下载核心：${DEFAULT_CORE_REPO}@${DEFAULT_CORE_REF}"
-    if DANMU_GH_MODE="$mode" DANMU_GH_PROXY_BASE="$proxy_base" \
-      "$MODPATH/scripts/danmu_core.sh" core install "$DEFAULT_CORE_REPO" "$DEFAULT_CORE_REF" >/dev/null 2>&1; then
-      ui_msg "- 核心下载完成"
-    else
-      ui_msg "- 核心下载失败，可稍后在管理器里重试"
-    fi
-  else
-    ui_msg "- 未找到核心下载脚本，跳过下载"
-  fi
+  ui_msg "- 已记录下载方式，重启后会自动下载核心"
 fi
 
 # Ensure module points to persistent core symlink
