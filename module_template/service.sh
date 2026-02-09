@@ -29,6 +29,23 @@ log() {
   echo "[danmu_api][service] $(date '+%F %T') $*" >> "$LOGFILE" 2>/dev/null || true
 }
 
+wait_for_pm() {
+  # 等待包管理器就绪
+  i=0
+  while [ "$i" -lt 30 ]; do
+    pm list packages >/dev/null 2>&1 && return 0
+    i=$((i+1))
+    sleep 2
+  done
+  return 1
+}
+
+ensure_pkg_enabled() {
+  PKG="$1"
+  # 确保用户0已启用
+  pm enable --user 0 "$PKG" >/dev/null 2>&1 || true
+}
+
 get_installed_vc() {
   # dumpsys output contains: versionCode=123 minSdk=...
   dumpsys package "$1" 2>/dev/null     | grep -m1 "versionCode="     | sed -E 's/.*versionCode=([0-9]+).*/\1/'     | head -n 1
@@ -50,19 +67,26 @@ ensure_manager_app() {
   INS_VC="$(get_installed_vc "$PKG")"
   [ -n "$INS_VC" ] || INS_VC="0"
 
+  wait_for_pm || true
+
   # Only update when needed
   if [ "$INS_VC" -ge "$EXP_VC" ] && [ "$INS_VC" -ne 0 ]; then
+    ensure_pkg_enabled "$PKG"
     return 0
   fi
 
   log "manager app update: installed_vc=$INS_VC expected_vc=$EXP_VC"
 
-  pm install -r "$APK" >/dev/null 2>&1 && { log "pm install -r success"; return 0; }
+  pm install -r --user 0 "$APK" >/dev/null 2>&1 && { log "pm install -r success"; ensure_pkg_enabled "$PKG"; return 0; }
+  pm install -r "$APK" >/dev/null 2>&1 && { log "pm install -r success (no user flag)"; ensure_pkg_enabled "$PKG"; return 0; }
 
   # Some ROMs need install-existing first (system app not yet installed for user)
-  cmd package install-existing "$PKG" >/dev/null 2>&1     || pm install-existing "$PKG" >/dev/null 2>&1     || true
+  cmd package install-existing --user 0 "$PKG" >/dev/null 2>&1     || cmd package install-existing "$PKG" >/dev/null 2>&1     || pm install-existing --user 0 "$PKG" >/dev/null 2>&1     || pm install-existing "$PKG" >/dev/null 2>&1     || true
 
-  pm install -r "$APK" >/dev/null 2>&1 && { log "pm install -r success after install-existing"; return 0; }
+  pm install -r --user 0 "$APK" >/dev/null 2>&1 && { log "pm install -r success after install-existing"; ensure_pkg_enabled "$PKG"; return 0; }
+  pm install -r "$APK" >/dev/null 2>&1 && { log "pm install -r success after install-existing (no user flag)"; ensure_pkg_enabled "$PKG"; return 0; }
+
+  ensure_pkg_enabled "$PKG"
 
   log "pm install failed"
   return 0
