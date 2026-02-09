@@ -4,79 +4,55 @@
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
-const yaml = require('js-yaml');
 
 // 配置文件路径在项目根目录（server.js 的上一级目录）
 const envPath = path.join(__dirname, '..', 'config', '.env');
-const yamlPath = path.join(__dirname, '..', 'config', 'config.yaml');
+let managedEnvKeys = new Set();
 
-/**
- * 从 YAML 文件加载配置
- * @returns {Object} 解析后的配置对象
- */
-function loadYamlConfig() {
-  try {
-    if (!fs.existsSync(yamlPath)) {
-      return {};
-    }
-    const yamlContent = fs.readFileSync(yamlPath, 'utf8');
-    const config = yaml.load(yamlContent) || {};
-    console.log('[server] config.yaml file loaded successfully');
-    return config;
-  } catch (e) {
-    console.log('[server] Error loading config.yaml:', e.message);
-    return {};
+function parseDotEnvKeys(envText) {
+  const keys = new Set();
+  const lines = envText.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (key) keys.add(key);
   }
-}
-
-/**
- * 将 YAML 配置对象转换为环境变量
- * @param {Object} config YAML 配置对象
- */
-function applyYamlConfig(config) {
-  if (!config || typeof config !== 'object') {
-    return;
-  }
-
-  // 递归处理嵌套对象，转换为 UPPER_SNAKE_CASE 环境变量
-  const flattenConfig = (obj, prefix = '') => {
-    for (const [key, value] of Object.entries(obj)) {
-      const envKey = prefix ? `${prefix}_${key.toUpperCase()}` : key.toUpperCase();
-
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-        // 递归处理嵌套对象
-        flattenConfig(value, envKey);
-      } else if (Array.isArray(value)) {
-        // 数组转换为逗号分隔的字符串
-        process.env[envKey] = value.join(',');
-      } else {
-        // 基本类型直接转换为字符串
-        process.env[envKey] = String(value);
-      }
-    }
-  };
-
-  flattenConfig(config);
+  return keys;
 }
 
 function loadEnv() {
   try {
-    // 先加载 YAML 配置（优先级较低）
-    const yamlConfig = loadYamlConfig();
-    applyYamlConfig(yamlConfig);
+    const envExists = fs.existsSync(envPath);
+    const newEnvKeys = envExists
+      ? parseDotEnvKeys(fs.readFileSync(envPath, 'utf8'))
+      : new Set();
 
-    // 再加载 .env 文件（优先级较高，会覆盖 YAML 配置）
-    dotenv.config({ path: envPath, override: true });
-    console.log('[server] .env file loaded successfully');
+    // 清理已移除的 .env 键，但不影响系统环境变量
+    for (const key of managedEnvKeys) {
+      if (!newEnvKeys.has(key)) {
+        delete process.env[key];
+      }
+    }
+    managedEnvKeys = newEnvKeys;
+
+    if (envExists) {
+      dotenv.config({ path: envPath, override: true });
+      console.log('[server] .env file loaded successfully');
+    } else {
+      console.log('[server] .env file not found, using system environment variables');
+    }
   } catch (e) {
-    console.log('[server] dotenv not available or .env file not found, using system environment variables');
+    console.log('[server] dotenv load failed, using system environment variables');
   }
 }
 
 // 初始加载
 loadEnv();
 
-// 监听 .env 和 config.yaml 文件变化（仅在文件存在时）
+// 监听 .env 文件变化（仅在文件存在时）
 let envWatcher = null;
 let reloadTimer = null;
 let mainServer = null;
@@ -84,20 +60,15 @@ let proxyServer = null;
 
 function setupEnvWatcher() {
   const envExists = fs.existsSync(envPath);
-  const yamlExists = fs.existsSync(yamlPath);
 
-  if (!envExists && !yamlExists) {
-    console.log('[server] Neither .env nor config.yaml found, skipping file watcher');
+  if (!envExists) {
+    console.log('[server] .env not found, skipping file watcher');
     return;
   }
 
   try {
     const chokidar = require('chokidar');
-    const watchPaths = [];
-    if (envExists) watchPaths.push(envPath);
-    if (yamlExists) watchPaths.push(yamlPath);
-
-    envWatcher = chokidar.watch(watchPaths, {
+    envWatcher = chokidar.watch([envPath], {
       persistent: true,
       awaitWriteFinish: {
         stabilityThreshold: 100,
@@ -115,57 +86,13 @@ function setupEnvWatcher() {
         const fileName = path.basename(changedPath);
         console.log(`[server] ${fileName} changed, reloading environment variables...`);
 
-        // 读取新的配置文件内容
         try {
-          const newEnvKeys = new Set();
-
-          // 如果是 .env 文件变化
-          if (changedPath === envPath && fs.existsSync(envPath)) {
-            const envContent = fs.readFileSync(envPath, 'utf8');
-            const lines = envContent.split('\n');
-
-            // 解析 .env 文件中的所有键
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (trimmed && !trimmed.startsWith('#')) {
-                const match = trimmed.match(/^([^=]+)=/);
-                if (match) {
-                  newEnvKeys.add(match[1]);
-                }
-              }
-            }
-          }
-
-          // 如果是 config.yaml 文件变化
-          if (changedPath === yamlPath && fs.existsSync(yamlPath)) {
-            const yamlConfig = loadYamlConfig();
-            const flattenKeys = (obj, prefix = '') => {
-              for (const [key, value] of Object.entries(obj)) {
-                const envKey = prefix ? `${prefix}_${key.toUpperCase()}` : key.toUpperCase();
-                newEnvKeys.add(envKey);
-                if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-                  flattenKeys(value, envKey);
-                }
-              }
-            };
-            flattenKeys(yamlConfig);
-          }
-
-          // 删除 process.env 中旧的键（不在新配置文件中的键）
-          for (const key of Object.keys(process.env)) {
-            if (!newEnvKeys.has(key)) {
-              delete process.env[key];
-            }
-          }
-
-          // 清除 dotenv 缓存并重新加载环境变量
           delete require.cache[require.resolve('dotenv')];
           loadEnv();
-
           console.log('[server] Environment variables reloaded successfully');
-          console.log('[server] Updated keys:', Array.from(newEnvKeys).join(', '));
+          console.log('[server] Updated keys:', Array.from(managedEnvKeys).join(', '));
         } catch (error) {
-          console.log('[server] Error reloading configuration files:', error.message);
+          console.log('[server] Error reloading .env:', error.message);
         }
 
         reloadTimer = null;
@@ -174,7 +101,11 @@ function setupEnvWatcher() {
 
     envWatcher.on('unlink', (deletedPath) => {
       const fileName = path.basename(deletedPath);
-      console.log(`[server] ${fileName} deleted, using remaining configuration files`);
+      console.log(`[server] ${fileName} deleted, removing managed env keys`);
+      for (const key of managedEnvKeys) {
+        delete process.env[key];
+      }
+      managedEnvKeys = new Set();
     });
 
     envWatcher.on('error', (error) => {
@@ -279,14 +210,39 @@ function needsAsyncStartup() {
   }
 }
 
+// 获取 fetch/Request/Response 兼容对象
+async function resolveFetchCompat() {
+  if (globalThis.fetch && globalThis.Request && globalThis.Response) {
+    return {
+      fetch: globalThis.fetch,
+      Request: globalThis.Request,
+      Response: globalThis.Response
+    };
+  }
+
+  try {
+    const mod = await import('node-fetch');
+    const fetch = mod.default || mod;
+    return {
+      fetch,
+      Request: mod.Request,
+      Response: mod.Response
+    };
+  } catch (e) {
+    const fetch = require('node-fetch');
+    return {
+      fetch: fetch.default || fetch,
+      Request: fetch.Request,
+      Response: fetch.Response
+    };
+  }
+}
+
 // --- 核心 HTTP 服务器（端口 9321）逻辑 ---
 // 创建主业务服务器实例（将 Node.js 请求转换为 Web API Request，并调用 worker.js 处理）
-function createServer() {
-  // 导入所需的 fetch 兼容对象
-  const fetch = require('node-fetch');
-  const { Request, Response } = fetch;
-  // 导入核心请求处理逻辑
-  const { handleRequest } = require('./worker.js'); // 直接导入 handleRequest 函数
+async function createServer() {
+  const { Request } = await resolveFetchCompat();
+  const { handleRequest } = await import('./worker.js'); // 直接导入 handleRequest 函数
 
   return http.createServer(async (req, res) => {
     try {
@@ -488,14 +444,14 @@ function createProxyServer() {
 
 // --- 启动函数 ---
 // 同步启动（最优/默认路径，适用于常规已兼容环境）
-function startServerSync() {
+async function startServerSync() {
   console.log('[server] Starting server synchronously (optimal path)');
 
   // 设置 .env 文件监听
   setupEnvWatcher();
 
   // 启动主业务服务器 (9321)
-  mainServer = createServer();
+  mainServer = await createServer();
   mainServer.listen(9321, '0.0.0.0', () => {
     console.log('Server running on http://0.0.0.0:9321');
   });
@@ -523,7 +479,7 @@ async function startServerAsync() {
     }
 
     // 启动主业务服务器 (9321)
-    mainServer = createServer();
+    mainServer = await createServer();
     mainServer.listen(9321, '0.0.0.0', () => {
       console.log('Server running on http://0.0.0.0:9321 (compatibility mode)');
     });
@@ -545,5 +501,8 @@ async function startServerAsync() {
 if (needsAsyncStartup()) {
   startServerAsync();
 } else {
-  startServerSync();
+  startServerSync().catch((error) => {
+    console.error('[server] Failed to start server:', error);
+    process.exit(1);
+  });
 }

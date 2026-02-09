@@ -2,6 +2,48 @@ import { globals } from '../configs/globals.js';
 import { log } from './log-util.js'
 
 // =====================
+// 内部工具
+// =====================
+
+function arrayBufferToBase64(arrayBuffer) {
+  const uint8Array = new Uint8Array(arrayBuffer);
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(uint8Array).toString('base64');
+  }
+
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < uint8Array.length; i += chunkSize) {
+    const chunk = uint8Array.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+  return btoa(binary);
+}
+
+async function inflateDeflate(arrayBuffer) {
+  if (typeof DecompressionStream !== 'undefined') {
+    const decompressionStream = new DecompressionStream("deflate");
+    const decompressedStream = new Response(
+      new Blob([arrayBuffer]).stream().pipeThrough(decompressionStream)
+    );
+    return await decompressedStream.text();
+  }
+
+  // Node.js 兼容：使用 zlib 解压
+  try {
+    const { inflate } = await import('zlib');
+    return await new Promise((resolve, reject) => {
+      inflate(Buffer.from(arrayBuffer), (err, buf) => {
+        if (err) return reject(err);
+        resolve(buf.toString('utf8'));
+      });
+    });
+  } catch (error) {
+    throw new Error(`DecompressionStream 不可用且 zlib 解压失败: ${error.message}`);
+  }
+}
+
+// =====================
 // 请求工具方法
 // =====================
 
@@ -47,16 +89,7 @@ export async function httpGet(url, options = {}) {
 
         // 先拿二进制
         const arrayBuffer = await response.arrayBuffer();
-        const uint8Array = new Uint8Array(arrayBuffer);
-
-        // 转换为 Base64
-        let binary = '';
-        const chunkSize = 0x8000; // 分块防止大文件卡死
-        for (let i = 0; i < uint8Array.length; i += chunkSize) {
-          let chunk = uint8Array.subarray(i, i + chunkSize);
-          binary += String.fromCharCode.apply(null, chunk);
-        }
-        data = btoa(binary); // 得到 base64 字符串
+        data = arrayBufferToBase64(arrayBuffer);
 
       } else if (options.zlibMode) {
         log("info", "zlib模式")
@@ -64,23 +97,16 @@ export async function httpGet(url, options = {}) {
         // 获取 ArrayBuffer
         const arrayBuffer = await response.arrayBuffer();
 
-        // 使用 DecompressionStream 进行解压
-        // "deflate" 对应 zlib 的 inflate
-        const decompressionStream = new DecompressionStream("deflate");
-        const decompressedStream = new Response(
-          new Blob([arrayBuffer]).stream().pipeThrough(decompressionStream)
-        );
-
-        // 读取解压后的文本
+        // 使用兼容方式进行解压
         let decodedData;
         try {
-          decodedData = await decompressedStream.text();
+          decodedData = await inflateDeflate(arrayBuffer);
         } catch (e) {
           log("error", "[请求模拟] 解压缩失败", e);
           throw e;
         }
 
-        data = decodedData; // 更新解压后的数据
+        data = decodedData;
       } else {
         data = await response.text();
       }

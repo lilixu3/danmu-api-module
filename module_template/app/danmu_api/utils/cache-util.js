@@ -342,14 +342,25 @@ export async function getLocalCaches() {
       log("info", 'getLocalCaches start.');
 
       // 从本地缓存文件读取数据并恢复到 globals 中
-      globals.animes = JSON.parse(readCacheFromFile('animes')) || globals.animes;
-      globals.episodeIds = JSON.parse(readCacheFromFile('episodeIds')) || globals.episodeIds;
-      globals.episodeNum = JSON.parse(readCacheFromFile('episodeNum')) || globals.episodeNum;
+      const cachedAnimes = readCacheFromFile('animes');
+      if (cachedAnimes !== null && cachedAnimes !== undefined) {
+        globals.animes = cachedAnimes;
+      }
+
+      const cachedEpisodeIds = readCacheFromFile('episodeIds');
+      if (cachedEpisodeIds !== null && cachedEpisodeIds !== undefined) {
+        globals.episodeIds = cachedEpisodeIds;
+      }
+
+      const cachedEpisodeNum = readCacheFromFile('episodeNum');
+      if (cachedEpisodeNum !== null && cachedEpisodeNum !== undefined) {
+        globals.episodeNum = cachedEpisodeNum;
+      }
 
       // 恢复 lastSelectMap 并转换为 Map 对象
       const lastSelectMapData = readCacheFromFile('lastSelectMap');
-      if (lastSelectMapData) {
-        globals.lastSelectMap = new Map(Object.entries(JSON.parse(lastSelectMapData)));
+      if (lastSelectMapData !== null && lastSelectMapData !== undefined) {
+        globals.lastSelectMap = new Map(Object.entries(lastSelectMapData));
         log("info", `Restored lastSelectMap from local cache with ${globals.lastSelectMap.size} entries`);
       }
 

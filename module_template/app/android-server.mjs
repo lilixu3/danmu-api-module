@@ -3,7 +3,6 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { URL, fileURLToPath } from 'url';
-import yaml from 'js-yaml';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
 import { handleRequest } from './danmu_api/worker.js';
@@ -19,6 +18,7 @@ const LOG_DIR = process.env.DANMU_API_LOG_DIR || path.join(HOME, 'logs');
 const HOST = process.env.DANMU_API_HOST || '0.0.0.0';
 const PORT = Number(process.env.DANMU_API_PORT || 9321);
 const PROXY_PORT = Number(process.env.DANMU_API_PROXY_PORT || 5321);
+let managedEnvKeys = new Set();
 
 function log(...args) {
   console.log('[danmu_api]', ...args);
@@ -48,28 +48,6 @@ function parseDotEnv(envText) {
   return out;
 }
 
-function flattenObject(obj, prefix = '') {
-  const result = {};
-  if (!obj || typeof obj !== 'object') return result;
-
-  for (const [k, v] of Object.entries(obj)) {
-    if (!k) continue;
-    const newKey = prefix ? `${prefix}_${k}` : k;
-
-    if (v === null || v === undefined) continue;
-
-    if (Array.isArray(v)) {
-      // arrays -> JSON string
-      result[newKey] = JSON.stringify(v);
-    } else if (typeof v === 'object') {
-      Object.assign(result, flattenObject(v, newKey));
-    } else {
-      result[newKey] = String(v);
-    }
-  }
-  return result;
-}
-
 function applyEnv(kv, { override = true } = {}) {
   for (const [k, v] of Object.entries(kv)) {
     if (!override && process.env[k] !== undefined) continue;
@@ -81,41 +59,39 @@ function loadConfigOnce() {
   ensureDirs();
 
   const envFile = path.join(CONFIG_DIR, '.env');
-  const yamlFile = path.join(CONFIG_DIR, 'config.yaml');
 
-  // 1) YAML first (lower priority)
-  if (fs.existsSync(yamlFile)) {
-    try {
-      const y = fs.readFileSync(yamlFile, 'utf-8');
-      const parsed = yaml.load(y) || {};
-      const flat = flattenObject(parsed);
-      applyEnv(flat, { override: true });
-      log('Loaded config.yaml:', yamlFile);
-    } catch (e) {
-      log('Failed to load config.yaml:', e?.message || e);
-    }
-  } else {
-    log('config.yaml not found, skipping:', yamlFile);
-  }
-
-  // 2) .env second (higher priority)
+  // 仅使用 .env（最高优先级）
   if (fs.existsSync(envFile)) {
     try {
       const t = fs.readFileSync(envFile, 'utf-8');
       const kv = parseDotEnv(t);
+      const newKeys = new Set(Object.keys(kv));
+
+      // 清理已移除的 .env 键
+      for (const key of managedEnvKeys) {
+        if (!newKeys.has(key)) {
+          delete process.env[key];
+        }
+      }
+      managedEnvKeys = newKeys;
+
       applyEnv(kv, { override: true });
       log('Loaded .env:', envFile);
     } catch (e) {
       log('Failed to load .env:', e?.message || e);
     }
   } else {
+    // 删除旧的 .env 键，避免残留
+    for (const key of managedEnvKeys) {
+      delete process.env[key];
+    }
+    managedEnvKeys = new Set();
     log('.env not found, skipping:', envFile);
   }
 }
 
 function watchConfigs() {
   const envFile = path.join(CONFIG_DIR, '.env');
-  const yamlFile = path.join(CONFIG_DIR, 'config.yaml');
 
   let timer = null;
   const scheduleReload = () => {
@@ -132,7 +108,7 @@ function watchConfigs() {
   //
   // If fs.watch is not available on a given filesystem, we simply disable hot reload
   // and require a manual restart via Action button / Manager App.
-  for (const f of [envFile, yamlFile]) {
+  for (const f of [envFile]) {
     try {
       if (!fs.existsSync(f)) continue;
       fs.watch(f, { persistent: false }, () => scheduleReload());

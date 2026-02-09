@@ -73,23 +73,6 @@ if [ ! -f "$CFG_DIR/.env" ] && [ -f "$OLD_MOD_CFG/.env" ]; then
   cp -f "$OLD_MOD_CFG/.env" "$CFG_DIR/.env" 2>/dev/null
 fi
 
-# 如果旧版只存在 config.yaml，则尽量转换为 .env（仅支持顶层 KEY: VALUE）
-if [ ! -f "$CFG_DIR/.env" ] && [ -f "$OLD_MOD_CFG/config.yaml" ]; then
-  awk '
-    /^[[:space:]]*#/ {next}
-    /^[[:space:]]*$/ {next}
-    {
-      if (match($0, /^[[:space:]]*([A-Za-z0-9_]+)[[:space:]]*:[[:space:]]*(.*)$/, a)) {
-        key=a[1]; val=a[2];
-        sub(/[[:space:]]+#.*$/, "", val);
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", val);
-        if (val ~ /^\".*\"$/) { val=substr(val,2,length(val)-2); }
-        print key "=" val;
-      }
-    }
-  ' "$OLD_MOD_CFG/config.yaml" > "$CFG_DIR/.env" 2>/dev/null
-fi
-
 # If still missing, seed from defaults (do not overwrite user config)
 if [ ! -f "$CFG_DIR/.env" ] && [ -f "$MODPATH/defaults/config/.env.example" ]; then
   cp -f "$MODPATH/defaults/config/.env.example" "$CFG_DIR/.env" 2>/dev/null

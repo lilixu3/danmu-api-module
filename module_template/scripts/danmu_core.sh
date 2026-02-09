@@ -200,21 +200,6 @@ ensure_core_config_link() {
       cp -f "${bk}/.env" "${CFG_DIR}/.env" 2>/dev/null || true
     fi
 
-    if [ ! -f "${CFG_DIR}/.env" ] && [ -f "${bk}/config.yaml" ]; then
-      awk '
-        /^[[:space:]]*#/ {next}
-        /^[[:space:]]*$/ {next}
-        {
-          if (match($0, /^[[:space:]]*([A-Za-z0-9_]+)[[:space:]]*:[[:space:]]*(.*)$/, a)) {
-            key=a[1]; val=a[2];
-            sub(/[[:space:]]+#.*$/, "", val);
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", val);
-            if (val ~ /^\".*\"$/) { val=substr(val,2,length(val)-2); }
-            print key "=" val;
-          }
-        }
-      ' "${bk}/config.yaml" > "${CFG_DIR}/.env" 2>/dev/null || true
-    fi
   fi
 
   # Seed global .env if missing (do NOT overwrite user config)

@@ -6,8 +6,8 @@ import { globals } from '../configs/globals.js';
 
 export function log(level, ...args) {
   // 根据日志级别决定是否输出
-  const levels = { error: 0, warn: 1, info: 2 };
-  const currentLevelValue = levels[globals.logLevel] !== undefined ? levels[globals.logLevel] : 1;
+  const levels = { error: 0, warn: 1, info: 2, debug: 3 };
+  const currentLevelValue = levels[globals.logLevel] !== undefined ? levels[globals.logLevel] : levels.info;
   if ((levels[level] || 0) > currentLevelValue) {
     return; // 日志级别不符合，不输出
   }
@@ -35,7 +35,8 @@ export function log(level, ...args) {
 
   globals.logBuffer.push({ timestamp, level, message });
   if (globals.logBuffer.length > globals.MAX_LOGS) globals.logBuffer.shift();
-  console[level](...processedArgs);
+  const logger = console[level] ? console[level] : console.log;
+  logger(...processedArgs);
 }
 
 // 隐藏敏感信息的辅助函数
