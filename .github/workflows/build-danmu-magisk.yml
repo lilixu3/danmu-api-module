@@ -723,9 +723,23 @@ jobs:
 
       - name: Upload Flashable Modules
         uses: actions/upload-artifact@v4
+        if: ${{ !inputs.publish_release }}
         with:
           name: Danmu_API_v${{ env.MODULE_VERSION }}
           path: build/out/*.zip
+
+      - name: Verify build outputs
+        if: ${{ inputs.publish_release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lh build/out || true
+          shopt -s nullglob
+          files=(build/out/*.zip)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "!!! 错误: 未找到构建产物（build/out/*.zip）"
+            exit 1
+          fi
 
       - name: Create Release
         if: ${{ inputs.publish_release }}
@@ -734,3 +748,4 @@ jobs:
           tag_name: v${{ env.MODULE_VERSION }}
           files: build/out/*.zip
           generate_release_notes: true
+          fail_on_unmatched_files: true
