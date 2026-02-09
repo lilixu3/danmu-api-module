@@ -35,12 +35,6 @@ on:
         default: both
         required: true
 
-      module_version:
-        description: "模块版本号"
-        type: string
-        required: true
-        default: "1.1.2"
-
       publish_release:
         description: "是否上传到 GitHub Release"
         type: boolean
@@ -69,6 +63,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y zip unzip rsync curl jq binutils zstd xz-utils dpkg
 
+      - name: Resolve module version
+        id: module_version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPO="${GITHUB_REPOSITORY}"
+          API="https://api.github.com/repos/${REPO}/releases/latest"
+
+          RESP="$(curl -sSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "$API" || true)"
+
+          TAG="$(echo "$RESP" | jq -r '.tag_name // empty')"
+          BASE="$(echo "${TAG:-}" | sed -E 's/^v//')"
+
+          if [[ "$BASE" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+          else
+            MAJOR=1
+            MINOR=0
+            PATCH=0
+          fi
+
+          if [ "$PATCH" -ge 9 ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "MODULE_VERSION=${NEXT_VERSION}" >> "$GITHUB_ENV"
+          echo "module_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved module version: ${NEXT_VERSION}"
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -83,7 +116,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${{ inputs.module_version }}"
+          VERSION="${MODULE_VERSION}"
 
           calc_version_code() {
             local v="$1"
@@ -158,7 +191,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${{ inputs.module_version }}"
+          VERSION="${MODULE_VERSION}"
 
           calc_version_code() {
             local v="$1"
@@ -695,13 +728,13 @@ jobs:
       - name: Upload Flashable Modules
         uses: actions/upload-artifact@v4
         with:
-          name: Danmu_API_v${{ inputs.module_version }}
+          name: Danmu_API_v${{ env.MODULE_VERSION }}
           path: build/out/*.zip
 
       - name: Create Release
         if: ${{ inputs.publish_release }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.module_version }}
+          tag_name: v${{ env.MODULE_VERSION }}
           files: build/out/*.zip
           generate_release_notes: true
