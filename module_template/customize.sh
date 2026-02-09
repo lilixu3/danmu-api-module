@@ -35,6 +35,53 @@ PERSIST="/data/adb/danmu_api_server"
 CFG_DIR="$PERSIST/config"
 LOGDIR="$PERSIST/logs"
 BIN_DIR="$PERSIST/bin"
+DOWNLOAD_CONF="$PERSIST/core_download.conf"
+DEFAULT_CORE_REPO="huangxd-/danmu_api"
+DEFAULT_CORE_REF="main"
+
+ui_msg() {
+  if command -v ui_print >/dev/null 2>&1; then
+    ui_print "$1"
+  else
+    echo "$1"
+  fi
+}
+
+rand_num() {
+  if [ -r /dev/urandom ]; then
+    od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' '
+  else
+    date +%s 2>/dev/null || echo 0
+  fi
+}
+
+pick_proxy_base() {
+  n="$(rand_num)"
+  case $((n % 3)) in
+    0) echo "https://hk.gh-proxy.org/" ;;
+    1) echo "https://cdn.gh-proxy.org/" ;;
+    *) echo "https://edgeone.gh-proxy.org/" ;;
+  esac
+}
+
+choose_github_mode() {
+  ui_msg "- 是否可以直连 GitHub？"
+  ui_msg "- 音量上：可以（直连）"
+  ui_msg "- 音量下：不行（使用加速）"
+
+  if [ -x /system/bin/getevent ]; then
+    while true; do
+      key="$(/system/bin/getevent -qlc 1 2>/dev/null | grep -m1 'KEY_VOLUME')"
+      case "$key" in
+        *KEY_VOLUMEUP*) echo "direct"; return 0 ;;
+        *KEY_VOLUMEDOWN*) echo "proxy"; return 0 ;;
+      esac
+    done
+  fi
+
+  ui_msg "- 未找到 getevent，默认直连"
+  echo "direct"
+}
 
 # Older versions stored config inside the module folder (and sometimes bind-mounted).
 # We'll migrate once and then use ONLY $CFG_DIR as the single source of truth.
@@ -109,58 +156,40 @@ ACTIVE_FILE="$PERSIST/active_core_id"
 
 mkdir -p "$CORES_DIR" 2>/dev/null
 
-# Seed bundled core only when there is no existing core store
-if [ ! -f "$ACTIVE_FILE" ]; then
-  BUNDLED_CORE="$MODPATH/app/danmu_api"
-  if [ -d "$BUNDLED_CORE" ] && [ -f "$BUNDLED_CORE/worker.js" ]; then
-    repo="unknown"; ref="unknown"; sha=""; ver=""
-    if [ -f "$MODPATH/defaults/core_source.txt" ]; then
-      repo="$(grep -m1 '^repo=' "$MODPATH/defaults/core_source.txt" 2>/dev/null | cut -d= -f2- || true)"
-      ref="$(grep -m1 '^ref=' "$MODPATH/defaults/core_source.txt" 2>/dev/null | cut -d= -f2- || true)"
-      sha="$(grep -m1 '^sha=' "$MODPATH/defaults/core_source.txt" 2>/dev/null | cut -d= -f2- || true)"
-      ver="$(grep -m1 '^version=' "$MODPATH/defaults/core_source.txt" 2>/dev/null | cut -d= -f2- || true)"
-    fi
+# 首次安装：提示并下载核心（仅 danmu_api 目录）
+if [ ! -f "$DOWNLOAD_CONF" ]; then
+  mode="$(choose_github_mode)"
+  proxy_base=""
+  if [ "$mode" = "proxy" ]; then
+    proxy_base="$(pick_proxy_base)"
+    ui_msg "- 使用加速服务：$proxy_base"
+  else
+    ui_msg "- 使用直连下载"
+  fi
 
-    sha_short=""
-    if [ -n "$sha" ]; then sha_short="$(echo "$sha" | cut -c1-7)"; fi
-    id_raw="bundled_${repo}_${ref}_${sha_short}"
-    id="$(echo "$id_raw" | tr '/:@ ' '____' | tr -cd 'A-Za-z0-9._-')"
-    [ -n "$id" ] || id="bundled"
-
-    dest_root="$CORES_DIR/$id"
-    dest_core="$dest_root/danmu_api"
-    mkdir -p "$dest_core" 2>/dev/null
-    cp -a "$BUNDLED_CORE/." "$dest_core/" 2>/dev/null
-
-    if [ -z "$ver" ] && [ -f "$dest_core/configs/globals.js" ]; then
-      ver="$(grep -m1 -E 'VERSION[[:space:]]*:' "$dest_core/configs/globals.js" 2>/dev/null | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" | head -n 1)"
-    fi
-
-    installed="$(date '+%F %T')"
-    sizeb="0"
-    if command -v du >/dev/null 2>&1; then
-      sizeb="$(du -sk "$dest_core" 2>/dev/null | awk '{print $1*1024}' || echo 0)"
-    fi
-
-    # meta.json (simple)
-    sha_short_json=""
-    if [ -n "$sha" ]; then sha_short_json="$(echo "$sha" | cut -c1-7)"; fi
-    cat > "$dest_root/meta.json" <<EOF
-{
-  "id": "$id",
-  "repo": "$repo",
-  "ref": "$ref",
-  "sha": "$sha",
-  "shaShort": "$sha_short_json",
-  "version": "$ver",
-  "installedAt": "$installed",
-  "sizeBytes": $sizeb
-}
+  cat > "$DOWNLOAD_CONF" <<EOF
+MODE=$mode
+PROXY_BASE=$proxy_base
 EOF
+  chmod 600 "$DOWNLOAD_CONF" 2>/dev/null || true
+else
+  # shellcheck disable=SC1090
+  . "$DOWNLOAD_CONF" 2>/dev/null || true
+  mode="${MODE:-direct}"
+  proxy_base="${PROXY_BASE:-}"
+fi
 
-    rm -f "$CORE_LINK" 2>/dev/null
-    ln -s "$dest_core" "$CORE_LINK" 2>/dev/null
-    echo "$id" > "$ACTIVE_FILE" 2>/dev/null
+if [ ! -f "$ACTIVE_FILE" ]; then
+  if [ -x "$MODPATH/scripts/danmu_core.sh" ]; then
+    ui_msg "- 开始下载核心：${DEFAULT_CORE_REPO}@${DEFAULT_CORE_REF}"
+    if DANMU_GH_MODE="$mode" DANMU_GH_PROXY_BASE="$proxy_base" \
+      "$MODPATH/scripts/danmu_core.sh" core install "$DEFAULT_CORE_REPO" "$DEFAULT_CORE_REF" >/dev/null 2>&1; then
+      ui_msg "- 核心下载完成"
+    else
+      ui_msg "- 核心下载失败，可稍后在管理器里重试"
+    fi
+  else
+    ui_msg "- 未找到核心下载脚本，跳过下载"
   fi
 fi
 

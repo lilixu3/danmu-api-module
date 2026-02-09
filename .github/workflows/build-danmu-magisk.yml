@@ -3,28 +3,6 @@ name: Build Danmu API Magisk Modules
 on:
   workflow_dispatch:
     inputs:
-      repo_source:
-        description: "选择 danmu_api 源仓库"
-        type: choice
-        options:
-          - huangxd-/danmu_api
-          - lilixu3/danmu_api
-          - custom
-        default: huangxd-/danmu_api
-        required: true
-
-      custom_repo:
-        description: "自定义仓库（owner/repo）"
-        type: string
-        required: false
-        default: ""
-
-      repo_ref:
-        description: "分支 / Tag / Commit"
-        type: string
-        required: true
-        default: main
-
       build_variant:
         description: "构建版本"
         type: choice
@@ -49,7 +27,6 @@ jobs:
 
     env:
       MODULE_TEMPLATE_DIR: module_template
-      UPSTREAM_SUBDIR: danmu_api
       # Gradle project root lives in manager_app/manager_app in this repo layout
       MANAGER_APP_DIR: manager_app/manager_app
       MANAGER_APP_APK_PATH: manager_app/manager_app/app/build/outputs/apk/release/app-release.apk
@@ -169,19 +146,6 @@ jobs:
           test -f "$MANAGER_APP_APK_PATH"
           ls -l "$MANAGER_APP_APK_PATH"
 
-      - name: Fetch upstream danmu_api
-        run: |
-          set -euo pipefail
-          REPO="${{ inputs.repo_source }}"
-          [ "$REPO" = "custom" ] && REPO="${{ inputs.custom_repo }}"
-          echo ">>> Cloning $REPO..."
-          rm -rf upstream
-          git clone --depth 1 "https://github.com/${REPO}.git" upstream
-          cd upstream
-          git fetch --depth 1 origin "${{ inputs.repo_ref }}" || true
-          git checkout -q "${{ inputs.repo_ref }}" 2>/dev/null || git checkout -q FETCH_HEAD
-          cd ..
-
       - name: Build modules
         shell: bash
         run: |
@@ -220,20 +184,6 @@ jobs:
           VERSION_CODE="$(calc_version_code "$VERSION")"
           [ -z "$VERSION_CODE" ] && VERSION_CODE=1
 
-          # Resolve selected upstream for core_source.txt
-          CORE_REPO="${{ inputs.repo_source }}"
-          [ "$CORE_REPO" = "custom" ] && CORE_REPO="${{ inputs.custom_repo }}"
-          CORE_REF="${{ inputs.repo_ref }}"
-
-          # Upstream commit SHA + core version (from globals.js)
-          CORE_SHA="$(git -C upstream rev-parse HEAD 2>/dev/null || true)"
-          CORE_VERSION=""
-          if [ -f "upstream/${UPSTREAM_SUBDIR}/configs/globals.js" ]; then
-            CORE_VERSION="$(grep -m1 -E "VERSION[[:space:]]*:" "upstream/${UPSTREAM_SUBDIR}/configs/globals.js" \
-              | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" \
-              | head -n 1 \
-              || true)"
-          fi
           BUILD_TIME_UTC="$(date -u +%FT%TZ)"
 
           mkdir -p build/tmp build/out
@@ -657,16 +607,12 @@ jobs:
             copy_template "build/tmp/no_node"
             MODULE_ROOT="build/tmp/no_node"
 
-            mkdir -p "$MODULE_ROOT/app/danmu_api"
-            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
-
-            # Core source info for seeding persistent core
+            # 不再内置核心
+            rm -rf "$MODULE_ROOT/app/danmu_api"
             mkdir -p "$MODULE_ROOT/defaults"
             {
-              echo "repo=${CORE_REPO}"
-              echo "ref=${CORE_REF}"
-              echo "sha=${CORE_SHA}"
-              echo "version=${CORE_VERSION}"
+              echo "repo=huangxd-/danmu_api"
+              echo "ref=main"
               echo "built_at=${BUILD_TIME_UTC}"
             } > "$MODULE_ROOT/defaults/core_source.txt"
 
@@ -690,16 +636,12 @@ jobs:
             copy_template "build/tmp/node"
             MODULE_ROOT="build/tmp/node"
 
-            mkdir -p "$MODULE_ROOT/app/danmu_api"
-            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
-
-            # Core source info for seeding persistent core
+            # 不再内置核心
+            rm -rf "$MODULE_ROOT/app/danmu_api"
             mkdir -p "$MODULE_ROOT/defaults"
             {
-              echo "repo=${CORE_REPO}"
-              echo "ref=${CORE_REF}"
-              echo "sha=${CORE_SHA}"
-              echo "version=${CORE_VERSION}"
+              echo "repo=huangxd-/danmu_api"
+              echo "ref=main"
               echo "built_at=${BUILD_TIME_UTC}"
             } > "$MODULE_ROOT/defaults/core_source.txt"
 

@@ -25,6 +25,12 @@ TMP_DIR="${PERSIST}/tmp"
 LOGDIR="${PERSIST}/logs"
 LOGFILE="${LOGDIR}/core_manager.log"
 
+DOWNLOAD_CONF="${PERSIST}/core_download.conf"
+DEFAULT_CORE_REPO="huangxd-/danmu_api"
+DEFAULT_CORE_REF="main"
+GH_MODE="direct"
+GH_PROXY_BASE=""
+
 PIDFILE="${PERSIST}/danmu_api.pid"
 
 # flags
@@ -70,6 +76,67 @@ fi
 log() {
   # best-effort
   echo "[danmu_api][core] $(date '+%F %T') $*" >> "${LOGFILE}" 2>/dev/null || true
+}
+
+rand_num() {
+  if [ -r /dev/urandom ]; then
+    od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' '
+  else
+    date +%s 2>/dev/null || echo 0
+  fi
+}
+
+pick_proxy_base() {
+  n="$(rand_num)"
+  case $((n % 3)) in
+    0) echo "https://hk.gh-proxy.org/" ;;
+    1) echo "https://cdn.gh-proxy.org/" ;;
+    *) echo "https://edgeone.gh-proxy.org/" ;;
+  esac
+}
+
+load_download_config() {
+  GH_MODE="direct"
+  GH_PROXY_BASE=""
+
+  if [ -f "${DOWNLOAD_CONF}" ]; then
+    # shellcheck disable=SC1090
+    . "${DOWNLOAD_CONF}" 2>/dev/null || true
+    if [ -n "${MODE:-}" ]; then GH_MODE="${MODE}"; fi
+    if [ -n "${PROXY_BASE:-}" ]; then GH_PROXY_BASE="${PROXY_BASE}"; fi
+  fi
+
+  if [ -n "${DANMU_GH_MODE:-}" ]; then
+    GH_MODE="${DANMU_GH_MODE}"
+  fi
+  if [ -n "${DANMU_GH_PROXY_BASE:-}" ]; then
+    GH_PROXY_BASE="${DANMU_GH_PROXY_BASE}"
+  fi
+
+  if [ "${GH_MODE}" = "proxy" ]; then
+    if [ -z "${GH_PROXY_BASE}" ]; then
+      GH_PROXY_BASE="$(pick_proxy_base)"
+    fi
+    case "${GH_PROXY_BASE}" in
+      */) : ;;
+      *) GH_PROXY_BASE="${GH_PROXY_BASE}/" ;;
+    esac
+  else
+    GH_PROXY_BASE=""
+  fi
+}
+
+apply_proxy_url() {
+  url="$1"
+  if [ "${GH_MODE}" = "proxy" ] && [ -n "${GH_PROXY_BASE}" ]; then
+    case "${url}" in
+      https://github.com/*|https://api.github.com/*|https://codeload.github.com/*)
+        echo "${GH_PROXY_BASE}${url}"
+        return 0
+        ;;
+    esac
+  fi
+  echo "${url}"
 }
 
 have_cmd() {
@@ -355,6 +422,7 @@ resolve_sha() {
   repo="$1"
   ref="$2"
   url="https://api.github.com/repos/${repo}/commits/${ref}"
+  url="$(apply_proxy_url "${url}")"
 
   # Optional token (to avoid rate limits)
   auth_args=""
@@ -376,6 +444,8 @@ resolve_sha() {
 install_core() {
   repo_raw="$1"
   ref="$2"
+
+  load_download_config
 
   repo="$(normalize_repo "$repo_raw")"
   case "$repo" in
@@ -414,6 +484,7 @@ install_core() {
   mkdir -p "${dest_root}" 2>/dev/null || true
 
   url="https://codeload.github.com/${repo}/zip/${zip_ref}"
+  url="$(apply_proxy_url "${url}")"
   zipf="${TMP_DIR}/${id}.zip"
   exdir="${TMP_DIR}/extract_${id}"
 
@@ -489,6 +560,8 @@ delete_core() {
 }
 
 ensure_seed() {
+  load_download_config
+
   # If we already have an active core + link, just ensure layout + config link
   active="$(read_active_id)"
   if [ -n "${active}" ] && [ -L "${CORE_LINK}" ]; then
@@ -507,36 +580,10 @@ ensure_seed() {
     fi
   done
 
-  # Seed bundled core from module (first install)
-  if [ -d "${MODDIR}/app/danmu_api" ] && [ -f "${MODDIR}/app/danmu_api/worker.js" ]; then
-    repo="unknown"; ref="unknown"; sha=""; ver=""
-    if [ -f "${MODDIR}/defaults/core_source.txt" ]; then
-      repo="$(grep -m1 '^repo=' "${MODDIR}/defaults/core_source.txt" 2>/dev/null | cut -d= -f2- || true)"
-      ref="$(grep -m1 '^ref=' "${MODDIR}/defaults/core_source.txt" 2>/dev/null | cut -d= -f2- || true)"
-      sha="$(grep -m1 '^sha=' "${MODDIR}/defaults/core_source.txt" 2>/dev/null | cut -d= -f2- || true)"
-      ver="$(grep -m1 '^version=' "${MODDIR}/defaults/core_source.txt" 2>/dev/null | cut -d= -f2- || true)"
-    fi
-
-    sha_short=""
-    if [ -n "${sha}" ]; then sha_short="$(printf '%s' "${sha}" | cut -c1-7)"; fi
-    id="$(sanitize_id "bundled_${repo}_${ref}_${sha_short}")"
-    [ -n "${id}" ] || id="bundled"
-    dest_root="${CORES_DIR}/${id}"
-    dest_core="${dest_root}/danmu_api"
-    mkdir -p "${dest_core}" 2>/dev/null || true
-    cp -a "${MODDIR}/app/danmu_api/." "${dest_core}/" 2>/dev/null || true
-
-    if [ -z "${ver}" ]; then
-      ver="$(read_version_from_globals "${dest_core}")"
-    fi
-    installed="$(date '+%F %T')"
-    sizeb="0"
-    if have_cmd du; then
-      sizeb="$(du -sk "${dest_core}" 2>/dev/null | awk '{print $1*1024}' || echo 0)"
-    fi
-    write_meta_json "${id}" "${repo}" "${ref}" "${sha}" "${ver}" "${installed}" "${sizeb}"
-    activate_core "${id}" >/dev/null 2>&1 || true
-  fi
+  # No bundled core: auto download default core from GitHub
+  log "no core found, auto downloading: ${DEFAULT_CORE_REPO} ${DEFAULT_CORE_REF} (mode=${GH_MODE})"
+  install_core "${DEFAULT_CORE_REPO}" "${DEFAULT_CORE_REF}" >/dev/null 2>&1 || \
+    log "auto download failed"
   ensure_symlink_layout
   return 0
 }

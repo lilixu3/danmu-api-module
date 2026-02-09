@@ -1,4 +1,4 @@
-把 `danmu-api` 核心打包成 **Magisk 可刷入模块**，并在系统里安装一个 **Danmu API 管理器 App**，用于：
+提供 **Magisk 可刷入模块**，刷入时自动从 GitHub 下载 `danmu-api` 核心，并在系统里安装一个 **Danmu API 管理器 App**，用于：
 
 * 启动/停止/重启服务
 * 开机自启开关（不轮询、事件驱动）
@@ -72,7 +72,13 @@
 ### 2) Magisk 刷入
 
 1. Magisk → 模块 → 从本地安装 → 选择下载的 zip
-2. 刷入完成后 **重启手机**
+2. 刷入过程中会提示是否可以直连 GitHub：
+   - 选择“可以”：直连下载核心
+   - 选择“不行”：使用加速服务（随机从以下三选一，不会自动切换）
+     - https://hk.gh-proxy.org/
+     - https://cdn.gh-proxy.org/
+     - https://edgeone.gh-proxy.org/
+3. 刷入完成后 **重启手机**
 
 ### 3) 打开管理器 App
 
@@ -99,6 +105,8 @@
 * 安装/切换到不同核心仓库
 * 输入自定义仓库与 ref（branch/tag/commit）
 * 对已安装核心执行：**切换 / 删除 / 更新检测**
+
+> 首次刷入默认从 `huangxd-/danmu_api` 仓库下载 `danmu_api` 目录内容并启用。
 
 > 安全提醒：切换核心等价于下载并运行第三方代码（root 下运行），请只使用你信任的仓库。
 
@@ -193,13 +201,10 @@
 2. Actions → 选择 workflow → Run workflow
 3. 选择参数：
 
-   * 上游仓库（或自定义仓库）
-   * ref（branch/tag/commit）
    * build 版本（both/node/no_node）
-   * 模块版本号
 4. 构建完成后在 Artifacts 或 Release 下载 zip，直接刷入
 
-> 你不需要本地 Android Studio，也不需要电脑，Actions 会完成 APK 编译与模块打包。
+> Actions 会完成 APK 编译与模块打包；核心在刷入时再从 GitHub 下载，不再内置到模块包内。
 
 ---
 
