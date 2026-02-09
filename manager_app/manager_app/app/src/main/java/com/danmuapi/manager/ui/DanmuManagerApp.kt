@@ -237,6 +237,7 @@ fun DanmuManagerApp(applicationContext: Context) {
                     if (vm.status?.service?.running == true) {
                         vm.refreshServerConfig(useAdminToken = false)
                         vm.refreshServerLogs()
+                        vm.refreshRequestRecords()
                     }
                 }
 
@@ -277,6 +278,11 @@ fun DanmuManagerApp(applicationContext: Context) {
                             onResult(text)
                         }
                     },
+                    requestRecords = vm.requestRecords,
+                    requestRecordsLoading = vm.requestRecordsLoading,
+                    requestRecordsError = vm.requestRecordsError,
+                    todayReqNum = vm.todayReqNum,
+                    onRefreshRequestRecords = { vm.refreshRequestRecords() },
                     requestApi = { method, path, query, bodyJson, useAdminToken ->
                         vm.requestDanmuApi(
                             method = method,

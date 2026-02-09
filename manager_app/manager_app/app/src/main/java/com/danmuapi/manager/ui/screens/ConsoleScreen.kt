@@ -140,6 +140,11 @@ fun ConsoleScreen(
     onRefreshModuleLogs: () -> Unit,
     onClearModuleLogs: () -> Unit,
     onReadModuleLogTail: (path: String, lines: Int, onResult: (String) -> Unit) -> Unit,
+    requestRecords: List<com.danmuapi.manager.data.model.RequestRecord>,
+    requestRecordsLoading: Boolean,
+    requestRecordsError: String?,
+    todayReqNum: Int,
+    onRefreshRequestRecords: () -> Unit,
     requestApi: suspend (
         method: String,
         path: String,
@@ -149,7 +154,7 @@ fun ConsoleScreen(
     ) -> HttpResult,
     validateAdminToken: suspend (token: String) -> Pair<Boolean, String?>,
 ) {
-    val tabs = listOf("日志", "接口", "推送", "系统")
+    val tabs = listOf("日志", "请求记录", "接口", "推送", "系统")
     var selectedTab by remember { mutableIntStateOf(0) }
 
     // Console admin features are unlocked only when user explicitly enters ADMIN_TOKEN in this run.
@@ -163,6 +168,9 @@ fun ConsoleScreen(
         }
         if (serviceRunning && serverLogs.isEmpty() && !serverLogsLoading) {
             onRefreshServerLogs()
+        }
+        if (serviceRunning && requestRecords.isEmpty() && !requestRecordsLoading) {
+            onRefreshRequestRecords()
         }
     }
 
@@ -202,20 +210,30 @@ fun ConsoleScreen(
                 onReadModuleLogTail = onReadModuleLogTail,
             )
 
-            1 -> ApiTestTab(
+            1 -> RequestRecordsScreen(
+                paddingValues = PaddingValues(0.dp),
+                serviceRunning = serviceRunning,
+                records = requestRecords,
+                todayReqNum = todayReqNum,
+                loading = requestRecordsLoading,
+                error = requestRecordsError,
+                onRefresh = onRefreshRequestRecords,
+            )
+
+            2 -> ApiTestTab(
                 serviceRunning = serviceRunning,
                 adminToken = effectiveAdminToken,
                 requestApi = requestApi,
             )
 
-            2 -> PushDanmuTab(
+            3 -> PushDanmuTab(
                 serviceRunning = serviceRunning,
                 apiToken = apiToken,
                 apiPort = apiPort,
                 requestApi = requestApi,
             )
 
-            3 -> SystemSettingsTab(
+            4 -> SystemSettingsTab(
                 rootAvailable = rootAvailable,
                 serviceRunning = serviceRunning,
                 adminTokenFromEnv = adminToken,

@@ -54,8 +54,7 @@ jobs:
       contents: write
 
     env:
-      TEMPLATE_NO_NODE: danmu_api_server.zip
-      TEMPLATE_NODE: danmu_api_server_node.zip
+      MODULE_TEMPLATE_DIR: module_template
       UPSTREAM_SUBDIR: danmu_api
       # Gradle project root lives in manager_app/manager_app in this repo layout
       MANAGER_APP_DIR: manager_app/manager_app
@@ -610,6 +609,13 @@ jobs:
             (cd "$root" && zip -r "../../out/${out_name}" .)
           }
 
+          copy_template() {
+            local target="$1"
+            rm -rf "$target"
+            mkdir -p "$target"
+            rsync -a --delete "${MODULE_TEMPLATE_DIR}/" "$target/"
+          }
+
           # Path to built Manager APK
           MANAGER_APK="$MANAGER_APP_APK_PATH"
           if [ ! -f "$MANAGER_APK" ]; then
@@ -619,8 +625,8 @@ jobs:
 
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
             echo ">>> [TASK] 构建 No-Node 版本..."
-            unzip -q "${TEMPLATE_NO_NODE}" -d build/tmp/no_node
-            MODULE_ROOT=$(find build/tmp/no_node -name "module.prop" | head -n 1 | xargs dirname)
+            copy_template "build/tmp/no_node"
+            MODULE_ROOT="build/tmp/no_node"
 
             mkdir -p "$MODULE_ROOT/app/danmu_api"
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
@@ -652,8 +658,8 @@ jobs:
 
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "node" ]]; then
             echo ">>> [TASK] 构建 Node 完整版..."
-            unzip -q "${TEMPLATE_NODE}" -d build/tmp/node
-            MODULE_ROOT=$(find build/tmp/node -name "module.prop" | head -n 1 | xargs dirname)
+            copy_template "build/tmp/node"
+            MODULE_ROOT="build/tmp/node"
 
             mkdir -p "$MODULE_ROOT/app/danmu_api"
             rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"

@@ -18,6 +18,8 @@ import com.danmuapi.manager.data.model.EnvVarMeta
 import com.danmuapi.manager.data.model.ServerConfigResponse
 import com.danmuapi.manager.data.model.ServerLogEntry
 import com.danmuapi.manager.data.model.StatusResponse
+import com.danmuapi.manager.data.model.RequestRecord
+import com.danmuapi.manager.data.model.RequestRecordsResponse
 import com.danmuapi.manager.network.DanmuApiClient
 import com.danmuapi.manager.network.HttpResult
 import com.danmuapi.manager.network.WebDavClient
@@ -99,6 +101,15 @@ class MainViewModel(
     var serverLogsLoading: Boolean by mutableStateOf(false)
         private set
 
+    var requestRecords: List<RequestRecord> by mutableStateOf(emptyList())
+        private set
+    var requestRecordsError: String? by mutableStateOf(null)
+        private set
+    var requestRecordsLoading: Boolean by mutableStateOf(false)
+        private set
+    var todayReqNum: Int by mutableStateOf(0)
+        private set
+
     // 添加以下内容
     var moduleUpdateInfo: ModuleUpdateInfo? by mutableStateOf(null)
         private set
@@ -168,6 +179,10 @@ class MainViewModel(
 
         // Access info is useful on the dashboard: show URLs with token/port.
         refreshAccessInfoInternal()
+
+        if (status?.service?.running == true) {
+            refreshRequestRecordsInternal()
+        }
     }
 
     private fun parseDotEnv(envText: String): Map<String, String> {
@@ -267,6 +282,14 @@ class MainViewModel(
         viewModelScope.launch {
             withBusy("刷新日志中…") {
                 logs = repo.listLogs()
+            }
+        }
+    }
+
+    fun refreshRequestRecords() {
+        viewModelScope.launch {
+            withBusy("刷新请求记录中…") {
+                refreshRequestRecordsInternal()
             }
         }
     }
@@ -722,6 +745,66 @@ class MainViewModel(
         } catch (_: Throwable) {
             null
         }
+    }
+
+    private fun parseRequestRecords(body: String): RequestRecordsResponse? {
+        return try {
+            val obj = JSONObject(body)
+            val todayNum = obj.optInt("todayReqNum", 0)
+            val arr = obj.optJSONArray("records") ?: JSONArray()
+            val list = mutableListOf<RequestRecord>()
+
+            fun stringifyParam(any: Any?): String? {
+                if (any == null || any == JSONObject.NULL) return null
+                return when (any) {
+                    is JSONObject -> any.toString(2)
+                    is JSONArray -> any.toString(2)
+                    else -> any.toString()
+                }
+            }
+
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val path = item.optString("interface").ifBlank { item.optString("path") }
+                val method = item.optString("method").ifBlank { "GET" }
+                val ts = item.optString("timestamp")
+                val ip = item.optString("clientIp")
+                val params = stringifyParam(item.opt("params"))
+                list.add(
+                    RequestRecord(
+                        path = path,
+                        method = method,
+                        timestamp = ts,
+                        clientIp = ip,
+                        params = params,
+                    )
+                )
+            }
+
+            RequestRecordsResponse(records = list, todayReqNum = todayNum)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private suspend fun refreshRequestRecordsInternal() {
+        requestRecordsLoading = true
+        requestRecordsError = null
+
+        val res = requestDanmuApi("GET", "/api/reqrecords")
+        if (res.isSuccessful) {
+            val parsed = parseRequestRecords(res.body)
+            if (parsed != null) {
+                requestRecords = parsed.records
+                todayReqNum = parsed.todayReqNum
+            } else {
+                requestRecordsError = "解析请求记录失败"
+            }
+        } else {
+            requestRecordsError = res.error ?: "请求失败（HTTP ${res.code}）"
+        }
+
+        requestRecordsLoading = false
     }
     private fun parseServerLogs(text: String): List<ServerLogEntry> {
         // The backend log format may vary by build / runtime.
