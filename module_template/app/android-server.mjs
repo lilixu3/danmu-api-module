@@ -1,0 +1,337 @@
+import http from 'http';
+import https from 'https';
+import fs from 'fs';
+import path from 'path';
+import { URL, fileURLToPath } from 'url';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+
+import { handleRequest } from './danmu_api/worker.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Persistent home (config/logs are stored outside the module folder)
+const HOME = process.env.DANMU_API_HOME || __dirname;
+const CONFIG_DIR = process.env.DANMU_API_CONFIG_DIR || path.join(HOME, 'config');
+const LOG_DIR = process.env.DANMU_API_LOG_DIR || path.join(HOME, 'logs');
+
+const HOST = process.env.DANMU_API_HOST || '0.0.0.0';
+const PORT = Number(process.env.DANMU_API_PORT || 9321);
+const PROXY_PORT = Number(process.env.DANMU_API_PROXY_PORT || 5321);
+let managedEnvKeys = new Set();
+
+function log(...args) {
+  console.log('[danmu_api]', ...args);
+}
+
+function ensureDirs() {
+  try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); } catch {}
+  try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch {}
+}
+
+function parseDotEnv(envText) {
+  const out = {};
+  const lines = envText.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    // strip surrounding quotes
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    out[key] = val;
+  }
+  return out;
+}
+
+function applyEnv(kv, { override = true } = {}) {
+  for (const [k, v] of Object.entries(kv)) {
+    if (!override && process.env[k] !== undefined) continue;
+    process.env[k] = v;
+  }
+}
+
+function loadConfigOnce() {
+  ensureDirs();
+
+  const envFile = path.join(CONFIG_DIR, '.env');
+
+  // 仅使用 .env（最高优先级）
+  if (fs.existsSync(envFile)) {
+    try {
+      const t = fs.readFileSync(envFile, 'utf-8');
+      const kv = parseDotEnv(t);
+      const newKeys = new Set(Object.keys(kv));
+
+      // 清理已移除的 .env 键
+      for (const key of managedEnvKeys) {
+        if (!newKeys.has(key)) {
+          delete process.env[key];
+        }
+      }
+      managedEnvKeys = newKeys;
+
+      applyEnv(kv, { override: true });
+      log('Loaded .env:', envFile);
+    } catch (e) {
+      log('Failed to load .env:', e?.message || e);
+    }
+  } else {
+    // 删除旧的 .env 键，避免残留
+    for (const key of managedEnvKeys) {
+      delete process.env[key];
+    }
+    managedEnvKeys = new Set();
+    log('.env not found, skipping:', envFile);
+  }
+}
+
+function watchConfigs() {
+  const envFile = path.join(CONFIG_DIR, '.env');
+
+  let timer = null;
+  const scheduleReload = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      log('Config changed, reloading ...');
+      loadConfigOnce();
+    }, 500);
+  };
+
+  // IMPORTANT (battery): avoid fs.watchFile polling on Android.
+  // - fs.watch: event-driven (inotify), low power
+  // - fs.watchFile: stat polling, can wake up the CPU periodically (bad for standby)
+  //
+  // If fs.watch is not available on a given filesystem, we simply disable hot reload
+  // and require a manual restart via Action button / Manager App.
+  for (const f of [envFile]) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      fs.watch(f, { persistent: false }, () => scheduleReload());
+      log('Watching config (event-driven):', f);
+    } catch (e) {
+      log('Config hot reload disabled (fs.watch not available):', f);
+    }
+  }
+}
+
+function getClientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff) return xff.split(',')[0].trim();
+  const xrip = req.headers['x-real-ip'];
+  if (typeof xrip === 'string' && xrip) return xrip.trim();
+  return req.socket?.remoteAddress || '';
+}
+
+function bufferFromArrayBuffer(ab) {
+  return Buffer.from(ab);
+}
+
+async function toNodeResponse(webResponse, res) {
+  res.statusCode = webResponse.status;
+
+  // Copy headers
+  // Handle set-cookie specially
+  if (typeof webResponse.headers.getSetCookie === 'function') {
+    const cookies = webResponse.headers.getSetCookie();
+    if (cookies && cookies.length) res.setHeader('set-cookie', cookies);
+  } else {
+    const sc = webResponse.headers.get('set-cookie');
+    if (sc) res.setHeader('set-cookie', sc);
+  }
+
+  webResponse.headers.forEach((value, key) => {
+    if (key.toLowerCase() === 'set-cookie') return;
+    try { res.setHeader(key, value); } catch {}
+  });
+
+  const ab = await webResponse.arrayBuffer();
+  res.end(bufferFromArrayBuffer(ab));
+}
+
+async function readRequestBody(req) {
+  return await new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function createMainServer() {
+  const server = http.createServer(async (req, res) => {
+    try {
+      const host = req.headers.host || `127.0.0.1:${PORT}`;
+      const fullUrl = new URL(req.url || '/', `http://${host}`);
+
+      // Build headers (Node gives lower-cased keys)
+      const headers = {};
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (typeof v === 'undefined') continue;
+        headers[k] = v;
+      }
+
+      const method = (req.method || 'GET').toUpperCase();
+      let body;
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        const buf = await readRequestBody(req);
+        body = buf.length ? buf : undefined;
+      }
+
+      const webReq = new Request(fullUrl.toString(), {
+        method,
+        headers,
+        body,
+      });
+
+      const clientIp = getClientIp(req);
+      const webRes = await handleRequest(webReq, process.env, 'node', clientIp);
+      await toNodeResponse(webRes, res);
+    } catch (e) {
+      res.statusCode = 500;
+      res.setHeader('content-type', 'text/plain; charset=utf-8');
+      res.end(`danmu_api server error: ${e?.stack || e}`);
+    }
+  });
+
+  return server;
+}
+
+// Proxy server mostly copied from upstream server.js, but rewritten for ESM
+function createProxyServer() {
+  const server = http.createServer(async (req, res) => {
+    if (!req.url) {
+      res.writeHead(400);
+      res.end('Invalid request');
+      return;
+    }
+
+    try {
+      const urlObj = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+
+      if (urlObj.pathname !== '/proxy') {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
+        return;
+      }
+
+      const targetUrl = urlObj.searchParams.get('url');
+      if (!targetUrl) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Missing url parameter');
+        return;
+      }
+
+      // Parse PROXY_URL:
+      // - If it ends with '/', treat as reverse proxy base and append encoded targetUrl
+      // - Otherwise treat as forward proxy (http/https proxy)
+      const proxyConfig = process.env.PROXY_URL || '';
+      let reverseProxyUrl = null;
+      let proxyAgent = null;
+
+      if (proxyConfig) {
+        if (proxyConfig.endsWith('/')) {
+          reverseProxyUrl = proxyConfig;
+        } else {
+          try {
+            proxyAgent = new HttpsProxyAgent(proxyConfig);
+          } catch (e) {
+            log('Invalid PROXY_URL for proxy agent:', e?.message || e);
+          }
+        }
+      }
+
+      // Build final URL (reverse proxy preferred)
+      const finalUrl = reverseProxyUrl
+        ? `${reverseProxyUrl}${encodeURIComponent(targetUrl)}`
+        : targetUrl;
+
+      const targetUrlObj = new URL(finalUrl);
+      const protocol = targetUrlObj.protocol === 'https:' ? https : http;
+
+      const requestOptions = {
+        hostname: targetUrlObj.hostname,
+        port: targetUrlObj.port || (targetUrlObj.protocol === 'https:' ? 443 : 80),
+        path: targetUrlObj.pathname + targetUrlObj.search,
+        method: req.method || 'GET',
+        headers: {
+          ...req.headers,
+          host: targetUrlObj.host,
+        },
+      };
+
+      if (proxyAgent && !reverseProxyUrl) requestOptions.agent = proxyAgent;
+
+      // Read body if needed
+      let bodyBuf = null;
+      if ((req.method || 'GET').toUpperCase() !== 'GET') {
+        bodyBuf = await readRequestBody(req);
+      }
+
+      const proxyReq = protocol.request(requestOptions, (proxyRes) => {
+        // Copy status + headers
+        res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+
+        proxyRes.on('data', (chunk) => res.write(chunk));
+        proxyRes.on('end', () => res.end());
+      });
+
+      proxyReq.on('error', (err) => {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end(`Proxy error: ${err.message}`);
+      });
+
+      if (bodyBuf && bodyBuf.length) proxyReq.write(bodyBuf);
+      proxyReq.end();
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end(`Error: ${error.message}`);
+    }
+  });
+
+  return server;
+}
+
+async function main() {
+  ensureDirs();
+  loadConfigOnce();
+  watchConfigs();
+
+  const mainServer = createMainServer();
+  const proxyServer = createProxyServer();
+
+  await new Promise((resolve, reject) => {
+    mainServer.listen(PORT, HOST, () => {
+      log(`Main server listening on http://${HOST}:${PORT}`);
+      resolve();
+    });
+    mainServer.on('error', reject);
+  });
+
+  await new Promise((resolve, reject) => {
+    proxyServer.listen(PROXY_PORT, HOST, () => {
+      log(`Proxy server listening on http://${HOST}:${PROXY_PORT}/proxy?url=...`);
+      resolve();
+    });
+    proxyServer.on('error', reject);
+  });
+
+  const shutdown = () => {
+    log('Shutting down ...');
+    try { mainServer.close(); } catch {}
+    try { proxyServer.close(); } catch {}
+    setTimeout(() => process.exit(0), 500);
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+}
+
+main().catch((e) => {
+  log('Fatal error:', e?.stack || e);
+  process.exit(1);
+});

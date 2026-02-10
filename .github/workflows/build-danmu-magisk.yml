@@ -3,28 +3,6 @@ name: Build Danmu API Magisk Modules
 on:
   workflow_dispatch:
     inputs:
-      repo_source:
-        description: "选择 danmu_api 源仓库"
-        type: choice
-        options:
-          - huangxd-/danmu_api
-          - lilixu3/danmu_api
-          - custom
-        default: huangxd-/danmu_api
-        required: true
-
-      custom_repo:
-        description: "自定义仓库（owner/repo）"
-        type: string
-        required: false
-        default: ""
-
-      repo_ref:
-        description: "分支 / Tag / Commit"
-        type: string
-        required: true
-        default: main
-
       build_variant:
         description: "构建版本"
         type: choice
@@ -34,12 +12,6 @@ on:
           - node
         default: both
         required: true
-
-      module_version:
-        description: "模块版本号"
-        type: string
-        required: true
-        default: "1.1.2"
 
       publish_release:
         description: "是否上传到 GitHub Release"
@@ -54,9 +26,7 @@ jobs:
       contents: write
 
     env:
-      TEMPLATE_NO_NODE: danmu_api_server.zip
-      TEMPLATE_NODE: danmu_api_server_node.zip
-      UPSTREAM_SUBDIR: danmu_api
+      MODULE_TEMPLATE_DIR: module_template
       # Gradle project root lives in manager_app/manager_app in this repo layout
       MANAGER_APP_DIR: manager_app/manager_app
       MANAGER_APP_APK_PATH: manager_app/manager_app/app/build/outputs/apk/release/app-release.apk
@@ -69,6 +39,41 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y zip unzip rsync curl jq binutils zstd xz-utils dpkg
+
+      - name: Resolve module version
+        id: module_version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPO="${GITHUB_REPOSITORY}"
+          API="https://api.github.com/repos/${REPO}/releases/latest"
+
+          RESP="$(curl -sSL \
+            -H "Accept: application/vnd.github+json" \
+            "$API" || true)"
+
+          TAG="$(echo "$RESP" | jq -r '.tag_name // empty')"
+          BASE="$(echo "${TAG:-}" | sed -E 's/^v//')"
+
+          if [[ "$BASE" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+            if [ "$PATCH" -ge 9 ]; then
+              MINOR=$((MINOR + 1))
+              PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
+            NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          else
+            NEXT_VERSION="1.0.0"
+          fi
+
+          echo "MODULE_VERSION=${NEXT_VERSION}" >> "$GITHUB_ENV"
+          echo "module_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved module version: ${NEXT_VERSION}"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -84,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${{ inputs.module_version }}"
+          VERSION="${MODULE_VERSION}"
 
           calc_version_code() {
             local v="$1"
@@ -141,25 +146,12 @@ jobs:
           test -f "$MANAGER_APP_APK_PATH"
           ls -l "$MANAGER_APP_APK_PATH"
 
-      - name: Fetch upstream danmu_api
-        run: |
-          set -euo pipefail
-          REPO="${{ inputs.repo_source }}"
-          [ "$REPO" = "custom" ] && REPO="${{ inputs.custom_repo }}"
-          echo ">>> Cloning $REPO..."
-          rm -rf upstream
-          git clone --depth 1 "https://github.com/${REPO}.git" upstream
-          cd upstream
-          git fetch --depth 1 origin "${{ inputs.repo_ref }}" || true
-          git checkout -q "${{ inputs.repo_ref }}" 2>/dev/null || git checkout -q FETCH_HEAD
-          cd ..
-
       - name: Build modules
         shell: bash
         run: |
           set -euo pipefail
 
-          VERSION="${{ inputs.module_version }}"
+          VERSION="${MODULE_VERSION}"
 
           calc_version_code() {
             local v="$1"
@@ -192,20 +184,6 @@ jobs:
           VERSION_CODE="$(calc_version_code "$VERSION")"
           [ -z "$VERSION_CODE" ] && VERSION_CODE=1
 
-          # Resolve selected upstream for core_source.txt
-          CORE_REPO="${{ inputs.repo_source }}"
-          [ "$CORE_REPO" = "custom" ] && CORE_REPO="${{ inputs.custom_repo }}"
-          CORE_REF="${{ inputs.repo_ref }}"
-
-          # Upstream commit SHA + core version (from globals.js)
-          CORE_SHA="$(git -C upstream rev-parse HEAD 2>/dev/null || true)"
-          CORE_VERSION=""
-          if [ -f "upstream/${UPSTREAM_SUBDIR}/configs/globals.js" ]; then
-            CORE_VERSION="$(grep -m1 -E "VERSION[[:space:]]*:" "upstream/${UPSTREAM_SUBDIR}/configs/globals.js" \
-              | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" \
-              | head -n 1 \
-              || true)"
-          fi
           BUILD_TIME_UTC="$(date -u +%FT%TZ)"
 
           mkdir -p build/tmp build/out
@@ -607,7 +585,15 @@ jobs:
             echo ">>> 打包: $out_name"
             find "$root" -type f -name "*.sh" -exec chmod 0755 {} \;
             [ -f "$root/bin/busybox" ] && chmod 0755 "$root/bin/busybox" || true
-            (cd "$root" && zip -r "../../out/${out_name}" .)
+            # APK 文件用存储模式（-0），避免二次压缩导致 CRC 校验失败
+            (cd "$root" && find . -type f -name "*.apk" -print | zip -0 "../../out/${out_name}" -@ && zip -r "../../out/${out_name}" . -x "*.apk")
+          }
+
+          copy_template() {
+            local target="$1"
+            rm -rf "$target"
+            mkdir -p "$target"
+            rsync -a --delete "${MODULE_TEMPLATE_DIR}/" "$target/"
           }
 
           # Path to built Manager APK
@@ -619,19 +605,15 @@ jobs:
 
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
             echo ">>> [TASK] 构建 No-Node 版本..."
-            unzip -q "${TEMPLATE_NO_NODE}" -d build/tmp/no_node
-            MODULE_ROOT=$(find build/tmp/no_node -name "module.prop" | head -n 1 | xargs dirname)
+            copy_template "build/tmp/no_node"
+            MODULE_ROOT="build/tmp/no_node"
 
-            mkdir -p "$MODULE_ROOT/app/danmu_api"
-            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
-
-            # Core source info for seeding persistent core
+            # 不再内置核心
+            rm -rf "$MODULE_ROOT/app/danmu_api"
             mkdir -p "$MODULE_ROOT/defaults"
             {
-              echo "repo=${CORE_REPO}"
-              echo "ref=${CORE_REF}"
-              echo "sha=${CORE_SHA}"
-              echo "version=${CORE_VERSION}"
+              echo "repo=huangxd-/danmu_api"
+              echo "ref=main"
               echo "built_at=${BUILD_TIME_UTC}"
             } > "$MODULE_ROOT/defaults/core_source.txt"
 
@@ -652,19 +634,15 @@ jobs:
 
           if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "node" ]]; then
             echo ">>> [TASK] 构建 Node 完整版..."
-            unzip -q "${TEMPLATE_NODE}" -d build/tmp/node
-            MODULE_ROOT=$(find build/tmp/node -name "module.prop" | head -n 1 | xargs dirname)
+            copy_template "build/tmp/node"
+            MODULE_ROOT="build/tmp/node"
 
-            mkdir -p "$MODULE_ROOT/app/danmu_api"
-            rsync -a --delete "upstream/${UPSTREAM_SUBDIR}/" "$MODULE_ROOT/app/danmu_api/"
-
-            # Core source info for seeding persistent core
+            # 不再内置核心
+            rm -rf "$MODULE_ROOT/app/danmu_api"
             mkdir -p "$MODULE_ROOT/defaults"
             {
-              echo "repo=${CORE_REPO}"
-              echo "ref=${CORE_REF}"
-              echo "sha=${CORE_SHA}"
-              echo "version=${CORE_VERSION}"
+              echo "repo=huangxd-/danmu_api"
+              echo "ref=main"
               echo "built_at=${BUILD_TIME_UTC}"
             } > "$MODULE_ROOT/defaults/core_source.txt"
 
@@ -688,14 +666,29 @@ jobs:
 
       - name: Upload Flashable Modules
         uses: actions/upload-artifact@v4
+        if: ${{ !inputs.publish_release }}
         with:
-          name: Danmu_API_v${{ inputs.module_version }}
+          name: Danmu_API_v${{ env.MODULE_VERSION }}
           path: build/out/*.zip
+
+      - name: Verify build outputs
+        if: ${{ inputs.publish_release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lh build/out || true
+          shopt -s nullglob
+          files=(build/out/*.zip)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "!!! 错误: 未找到构建产物（build/out/*.zip）"
+            exit 1
+          fi
 
       - name: Create Release
         if: ${{ inputs.publish_release }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.module_version }}
+          tag_name: v${{ env.MODULE_VERSION }}
           files: build/out/*.zip
           generate_release_notes: true
+          fail_on_unmatched_files: true

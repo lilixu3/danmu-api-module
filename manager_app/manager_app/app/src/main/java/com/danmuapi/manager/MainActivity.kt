@@ -10,10 +10,17 @@ import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.danmuapi.manager.ui.DanmuManagerApp
+import com.danmuapi.manager.ui.RootPermissionScreen
 import com.danmuapi.manager.ui.theme.DanmuManagerTheme
 import com.danmuapi.manager.data.SettingsRepository
+import com.danmuapi.manager.root.RootShell
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,12 +42,35 @@ class MainActivity : ComponentActivity() {
                 else -> androidx.compose.foundation.isSystemInDarkTheme()
             }
 
+            var rootGranted by remember { mutableStateOf<Boolean?>(null) }
+            val scope = rememberCoroutineScope()
+
+            LaunchedEffect(Unit) {
+                rootGranted = RootShell.isRootAvailable()
+            }
+
             DanmuManagerTheme(
                 darkTheme = darkTheme,
                 dynamicColor = dynamicColor,
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    DanmuManagerApp(applicationContext = applicationContext)
+                    when (rootGranted) {
+                        null -> {
+                            // 检测中，显示空白或加载界面
+                        }
+                        false -> {
+                            RootPermissionScreen(
+                                onRetry = {
+                                    scope.launch {
+                                        rootGranted = RootShell.isRootAvailable()
+                                    }
+                                }
+                            )
+                        }
+                        true -> {
+                            DanmuManagerApp(applicationContext = applicationContext)
+                        }
+                    }
                 }
             }
         }

@@ -18,6 +18,8 @@ import com.danmuapi.manager.data.model.EnvVarMeta
 import com.danmuapi.manager.data.model.ServerConfigResponse
 import com.danmuapi.manager.data.model.ServerLogEntry
 import com.danmuapi.manager.data.model.StatusResponse
+import com.danmuapi.manager.data.model.RequestRecord
+import com.danmuapi.manager.data.model.RequestRecordsResponse
 import com.danmuapi.manager.network.DanmuApiClient
 import com.danmuapi.manager.network.HttpResult
 import com.danmuapi.manager.network.WebDavClient
@@ -74,6 +76,16 @@ class MainViewModel(
     var adminToken: String by mutableStateOf("")
         private set
 
+    /**
+     * Runtime admin token entered in the app.
+     *
+     * - Not persisted to disk (avoids accidentally storing secrets).
+     * - Used to access admin endpoints when the user doesn't want to write ADMIN_TOKEN into .env.
+     */
+    @set:JvmName("setSessionAdminTokenState")
+    var sessionAdminToken: String by mutableStateOf("")
+        private set
+
     // ===== danmu-api Console (Compose replica of Web UI) =====
     var serverConfig: ServerConfigResponse? by mutableStateOf(null)
         private set
@@ -87,6 +99,15 @@ class MainViewModel(
     var serverLogsError: String? by mutableStateOf(null)
         private set
     var serverLogsLoading: Boolean by mutableStateOf(false)
+        private set
+
+    var requestRecords: List<RequestRecord> by mutableStateOf(emptyList())
+        private set
+    var requestRecordsError: String? by mutableStateOf(null)
+        private set
+    var requestRecordsLoading: Boolean by mutableStateOf(false)
+        private set
+    var todayReqNum: Int by mutableStateOf(0)
         private set
 
     // 添加以下内容
@@ -131,6 +152,9 @@ class MainViewModel(
     val dynamicColor: StateFlow<Boolean> = settings.dynamicColor
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    val consoleLogLimit: StateFlow<Int> = settings.consoleLogLimit
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 300)
+
     val snackbars = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
     init {
@@ -155,6 +179,10 @@ class MainViewModel(
 
         // Access info is useful on the dashboard: show URLs with token/port.
         refreshAccessInfoInternal()
+
+        if (status?.service?.running == true) {
+            refreshRequestRecordsInternal()
+        }
     }
 
     private fun parseDotEnv(envText: String): Map<String, String> {
@@ -231,6 +259,21 @@ class MainViewModel(
         }
     }
 
+    fun setConsoleLogLimit(limit: Int) {
+        viewModelScope.launch {
+            settings.setConsoleLogLimit(limit)
+        }
+    }
+
+    fun setSessionAdminToken(token: String) {
+        sessionAdminToken = token.trim()
+    }
+
+    fun clearSessionAdminToken() {
+        sessionAdminToken = ""
+    }
+
+
     /**
      * Refresh only the log list.
      * Useful when navigating to the Logs screen while the service is writing new files.
@@ -239,6 +282,14 @@ class MainViewModel(
         viewModelScope.launch {
             withBusy("刷新日志中…") {
                 logs = repo.listLogs()
+            }
+        }
+    }
+
+    fun refreshRequestRecords() {
+        viewModelScope.launch {
+            withBusy("刷新请求记录中…") {
+                refreshRequestRecordsInternal()
             }
         }
     }
@@ -390,8 +441,23 @@ class MainViewModel(
 
     // ====== danmu-api Console ======
 
+    private fun effectiveAdminToken(): String {
+        // Security note:
+        // The in-app “控制台” only treats *session* admin token as admin privilege.
+        // Even if ADMIN_TOKEN exists in .env, we do NOT automatically use it to unlock admin endpoints,
+        // so the user must explicitly enter ADMIN_TOKEN to enter “管理员模式”.
+        return sessionAdminToken.trim()
+    }
+
+    private fun hasAdminToken(): Boolean = effectiveAdminToken().isNotBlank()
+
     private fun pickTokenSegment(useAdminToken: Boolean): String {
-        return if (useAdminToken && adminToken.isNotBlank()) adminToken else apiToken
+        return if (useAdminToken) {
+            val t = effectiveAdminToken()
+            if (t.isNotBlank()) t else apiToken
+        } else {
+            apiToken
+        }
     }
 
     /**
@@ -413,6 +479,41 @@ class MainViewModel(
             query = query,
             bodyJson = bodyJson,
         )
+    }
+
+    /**
+     * Validate whether [candidate] is a correct ADMIN_TOKEN.
+     *
+     * This method **does not** persist anything. It simply probes `/api/config` using the
+     * provided token as the first path segment and checks whether the server accepts it.
+     *
+     * @return Pair(ok, errorMessage). When ok=true, errorMessage is null.
+     */
+    suspend fun validateAdminToken(candidate: String): Pair<Boolean, String?> {
+        val token = candidate.trim()
+        if (token.isBlank()) return false to "请填写 ADMIN_TOKEN"
+
+        val res = danmuApiClient.request(
+            method = "GET",
+            host = apiHost,
+            port = apiPort,
+            tokenSegment = token,
+            path = "/api/config",
+            query = emptyMap(),
+            bodyJson = null,
+        )
+
+        if (!res.isSuccessful) {
+            val msg = when (res.code) {
+                401, 403 -> "ADMIN_TOKEN 输入错误"
+                -1 -> res.error ?: "验证失败"
+                else -> res.error ?: "验证失败（HTTP ${res.code}）"
+            }
+            return false to msg
+        }
+
+        // If the server accepted the token for /api/config, treat it as valid.
+        return true to null
     }
 
     fun refreshServerConfig(useAdminToken: Boolean = false) {
@@ -451,8 +552,8 @@ class MainViewModel(
 
     fun clearServerLogs() {
         viewModelScope.launch {
-            if (adminToken.isBlank()) {
-                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行清空服务日志")
+            if (!hasAdminToken()) {
+                snackbars.tryEmit("未提供管理员 Token，无法执行清空服务日志")
                 return@launch
             }
             val res = requestDanmuApi(
@@ -472,8 +573,8 @@ class MainViewModel(
 
     fun clearServerCache() {
         viewModelScope.launch {
-            if (adminToken.isBlank()) {
-                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行清理缓存")
+            if (!hasAdminToken()) {
+                snackbars.tryEmit("未提供管理员 Token，无法执行清理缓存")
                 return@launch
             }
             val res = requestDanmuApi(
@@ -490,8 +591,8 @@ class MainViewModel(
 
     fun deployServer() {
         viewModelScope.launch {
-            if (adminToken.isBlank()) {
-                snackbars.tryEmit("未配置 ADMIN_TOKEN，无法执行重新部署")
+            if (!hasAdminToken()) {
+                snackbars.tryEmit("未提供管理员 Token，无法执行重新部署")
                 return@launch
             }
             val res = requestDanmuApi(
@@ -508,7 +609,7 @@ class MainViewModel(
 
     fun setServerEnvVar(key: String, value: String) {
         viewModelScope.launch {
-            val tokenIsAdmin = adminToken.isNotBlank()
+            val tokenIsAdmin = hasAdminToken()
             val body = JSONObject().apply {
                 put("key", key)
                 put("value", value)
@@ -532,7 +633,7 @@ class MainViewModel(
 
     fun deleteServerEnvVar(key: String) {
         viewModelScope.launch {
-            val tokenIsAdmin = adminToken.isNotBlank()
+            val tokenIsAdmin = hasAdminToken()
             val body = JSONObject().apply {
                 put("key", key)
             }.toString()
@@ -646,25 +747,119 @@ class MainViewModel(
         }
     }
 
+    private fun parseRequestRecords(body: String): RequestRecordsResponse? {
+        return try {
+            val obj = JSONObject(body)
+            val todayNum = obj.optInt("todayReqNum", 0)
+            val arr = obj.optJSONArray("records") ?: JSONArray()
+            val list = mutableListOf<RequestRecord>()
+
+            fun stringifyParam(any: Any?): String? {
+                if (any == null || any == JSONObject.NULL) return null
+                return when (any) {
+                    is JSONObject -> any.toString(2)
+                    is JSONArray -> any.toString(2)
+                    else -> any.toString()
+                }
+            }
+
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val path = item.optString("interface").ifBlank { item.optString("path") }
+                val method = item.optString("method").ifBlank { "GET" }
+                val ts = item.optString("timestamp")
+                val ip = item.optString("clientIp")
+                val params = stringifyParam(item.opt("params"))
+                list.add(
+                    RequestRecord(
+                        path = path,
+                        method = method,
+                        timestamp = ts,
+                        clientIp = ip,
+                        params = params,
+                    )
+                )
+            }
+
+            RequestRecordsResponse(records = list, todayReqNum = todayNum)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private suspend fun refreshRequestRecordsInternal() {
+        requestRecordsLoading = true
+        requestRecordsError = null
+
+        val res = requestDanmuApi("GET", "/api/reqrecords")
+        if (res.isSuccessful) {
+            val parsed = parseRequestRecords(res.body)
+            if (parsed != null) {
+                requestRecords = parsed.records
+                todayReqNum = parsed.todayReqNum
+            } else {
+                requestRecordsError = "解析请求记录失败"
+            }
+        } else {
+            requestRecordsError = res.error ?: "请求失败（HTTP ${res.code}）"
+        }
+
+        requestRecordsLoading = false
+    }
     private fun parseServerLogs(text: String): List<ServerLogEntry> {
-        // Expected format per line: "[2024-01-01 12:00:00] info: message"
-        val regex = Regex("^\\[(.+?)]\\s+(\\w+):\\s+(.*)")
+        // The backend log format may vary by build / runtime.
+        // Supported examples:
+        // 1) "[2024-01-01 12:00:00] info: message"
+        // 2) "2026-01-25T12:28:36.155+08:00  ERROR  message"
+        // 3) "2026-01-25 12:28:36.155  WARN  message"
+
+        fun normLevel(raw: String): String {
+            val s = raw.trim().uppercase()
+            return when {
+                s == "WARNING" -> "WARN"
+                s == "WRN" -> "WARN"
+                s.startsWith("ERR") -> "ERROR"
+                s == "FATAL" -> "ERROR"
+                else -> s
+            }
+        }
+
+        val bracketed = Regex("""^\[(.+?)]\s+(\w+):\s+(.*)$""")
+        val iso = Regex("""^(\d{4}-\d{2}-\d{2}T[^\s]+)\s+(\w+)\s+(.*)$""")
+        val plain = Regex("""^(\d{4}-\d{2}-\d{2}\s+[^\s]+)\s+(\w+)\s+(.*)$""")
+
         return text
             .lineSequence()
             .mapNotNull { raw ->
-                val line = raw.trim()
+                val line = raw.trimEnd()
                 if (line.isBlank()) return@mapNotNull null
 
-                val m = regex.find(line)
-                if (m == null) {
-                    // Keep unknown format lines (rare, but happens on some deployments).
-                    return@mapNotNull ServerLogEntry("", "", line)
+                // Format 1
+                bracketed.find(line)?.let { m ->
+                    val ts = m.groupValues.getOrNull(1).orEmpty()
+                    val level = normLevel(m.groupValues.getOrNull(2).orEmpty())
+                    val msg = m.groupValues.getOrNull(3).orEmpty()
+                    return@mapNotNull ServerLogEntry(ts, level, msg)
                 }
 
-                val ts = m.groupValues.getOrNull(1).orEmpty()
-                val level = m.groupValues.getOrNull(2).orEmpty()
-                val msg = m.groupValues.getOrNull(3).orEmpty()
-                ServerLogEntry(ts, level, msg)
+                // Format 2
+                iso.find(line)?.let { m ->
+                    val ts = m.groupValues.getOrNull(1).orEmpty()
+                    val level = normLevel(m.groupValues.getOrNull(2).orEmpty())
+                    val msg = m.groupValues.getOrNull(3).orEmpty()
+                    return@mapNotNull ServerLogEntry(ts, level, msg)
+                }
+
+                // Format 3
+                plain.find(line)?.let { m ->
+                    val ts = m.groupValues.getOrNull(1).orEmpty()
+                    val level = normLevel(m.groupValues.getOrNull(2).orEmpty())
+                    val msg = m.groupValues.getOrNull(3).orEmpty()
+                    return@mapNotNull ServerLogEntry(ts, level, msg)
+                }
+
+                // Unknown format: keep full line as message.
+                ServerLogEntry("", "", line.trim())
             }
             .toList()
     }

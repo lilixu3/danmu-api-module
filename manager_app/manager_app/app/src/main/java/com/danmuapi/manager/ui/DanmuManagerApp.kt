@@ -44,7 +44,9 @@ import com.danmuapi.manager.network.GitHubApi
 import com.danmuapi.manager.root.DanmuCli
 import com.danmuapi.manager.ui.screens.CoresScreen
 import com.danmuapi.manager.ui.screens.DashboardScreen
-import com.danmuapi.manager.ui.screens.ConsoleScreen
+import com.danmuapi.manager.ui.screens.console.ConsoleActions
+import com.danmuapi.manager.ui.screens.console.ConsoleScreen
+import com.danmuapi.manager.ui.screens.console.ConsoleState
 import com.danmuapi.manager.ui.screens.SettingsScreen
 import com.danmuapi.manager.ui.screens.AboutScreen
 import com.danmuapi.manager.worker.LogCleanupScheduler
@@ -237,17 +239,21 @@ fun DanmuManagerApp(applicationContext: Context) {
                     if (vm.status?.service?.running == true) {
                         vm.refreshServerConfig(useAdminToken = false)
                         vm.refreshServerLogs()
+                        vm.refreshRequestRecords()
                     }
                 }
 
-                ConsoleScreen(
-                    paddingValues = padding,
+                val logLimit by vm.consoleLogLimit.collectAsStateWithLifecycle()
+
+                val consoleState = ConsoleState(
                     rootAvailable = vm.rootAvailable,
                     serviceRunning = (vm.status?.service?.running == true),
                     apiToken = vm.apiToken,
                     apiPort = vm.apiPort,
                     apiHost = vm.apiHost,
                     adminToken = vm.adminToken,
+                    sessionAdminToken = vm.sessionAdminToken,
+                    consoleLogLimit = logLimit,
                     serverConfig = vm.serverConfig,
                     serverConfigLoading = vm.serverConfigLoading,
                     serverConfigError = vm.serverConfigError,
@@ -255,6 +261,16 @@ fun DanmuManagerApp(applicationContext: Context) {
                     serverLogsLoading = vm.serverLogsLoading,
                     serverLogsError = vm.serverLogsError,
                     moduleLogs = vm.logs,
+                    requestRecords = vm.requestRecords,
+                    requestRecordsLoading = vm.requestRecordsLoading,
+                    requestRecordsError = vm.requestRecordsError,
+                    todayReqNum = vm.todayReqNum,
+                )
+
+                val consoleActions = ConsoleActions(
+                    onSetConsoleLogLimit = { vm.setConsoleLogLimit(it) },
+                    onSetSessionAdminToken = { vm.setSessionAdminToken(it) },
+                    onClearSessionAdminToken = { vm.clearSessionAdminToken() },
                     onRefreshConfig = { useAdmin -> vm.refreshServerConfig(useAdminToken = useAdmin) },
                     onRefreshServerLogs = { vm.refreshServerLogs() },
                     onClearServerLogs = { vm.clearServerLogs() },
@@ -270,15 +286,20 @@ fun DanmuManagerApp(applicationContext: Context) {
                             onResult(text)
                         }
                     },
+                    onRefreshRequestRecords = { vm.refreshRequestRecords() },
                     requestApi = { method, path, query, bodyJson, useAdminToken ->
                         vm.requestDanmuApi(
-                            method = method,
-                            path = path,
-                            query = query,
-                            bodyJson = bodyJson,
-                            useAdminToken = useAdminToken
+                            method = method, path = path, query = query,
+                            bodyJson = bodyJson, useAdminToken = useAdminToken
                         )
-                    }
+                    },
+                    validateAdminToken = { token -> vm.validateAdminToken(token) },
+                )
+
+                ConsoleScreen(
+                    paddingValues = padding,
+                    state = consoleState,
+                    actions = consoleActions,
                 )
             }
             composable(NavItem.SETTINGS.route) {

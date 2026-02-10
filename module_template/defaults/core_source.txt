@@ -1,0 +1,3 @@
+repo=huangxd-/danmu_api
+ref=main
+built_at=unknown
