@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,8 +38,6 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -74,7 +71,8 @@ import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.data.model.EnvVarMeta
 import com.danmuapi.manager.data.model.ServerConfigResponse
 import com.danmuapi.manager.network.HttpResult
-import com.danmuapi.manager.ui.components.ManagerCard
+import com.danmuapi.manager.ui.screens.console.components.ConsoleCard
+import com.danmuapi.manager.ui.screens.console.components.MethodBadge
 import com.danmuapi.manager.util.rememberLanIpv4Addresses
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -110,6 +108,7 @@ private data class ApiEndpoint(
     val hasBody: Boolean = false,
     val bodyTemplate: String? = null,
 )
+
 
 @Composable
 fun ApiTestTabContent(
@@ -209,7 +208,9 @@ fun ApiTestTabContent(
                     ApiParam("fileName", "文件名", "text", true, "例如：生万物 S02E08")
                 ),
                 hasBody = true,
-                bodyTemplate = "{\n  \"fileName\": \"\"\n}"
+                bodyTemplate = "{
+  \"fileName\": \"\"
+}"
             ),
             ApiEndpoint(
                 key = "getBangumi",
@@ -258,7 +259,13 @@ fun ApiTestTabContent(
                     ApiParam("format", "格式", "select", false, options = listOf("json", "xml"), default = "json"),
                 ),
                 hasBody = true,
-                bodyTemplate = "{\n  \"url\": \"\",\n  \"platform\": \"qq\",\n  \"cid\": \"\",\n  \"start\": 0,\n  \"duration\": 600\n}"
+                bodyTemplate = "{
+  \"url\": \"\",
+  \"platform\": \"qq\",
+  \"cid\": \"\",
+  \"start\": 0,
+  \"duration\": 600
+}"
             ),
         )
     }
@@ -358,7 +365,9 @@ fun ApiTestTabContent(
                 val previewMaxChars = 60_000
                 responsePreview = if (pretty.length > previewMaxChars) {
                     responseHint = "响应较大：仅预览前 ${previewMaxChars} 字符（建议使用导出保存完整内容）。"
-                    pretty.take(previewMaxChars) + "\n\n…（预览已截断）"
+                    pretty.take(previewMaxChars) + "
+
+…（预览已截断）"
                 } else {
                     responseHint = if (result.truncated) {
                         "响应过大：已被客户端限制读取约 ${humanBytes(result.bodyBytesKept)}。"
@@ -370,7 +379,9 @@ fun ApiTestTabContent(
                 error = result.error ?: "请求失败"
                 responseContentType = result.contentType
                 responseRaw = result.body
-                responsePreview = if (result.body.length > 60_000) result.body.take(60_000) + "\n\n…（预览已截断）" else result.body
+                responsePreview = if (result.body.length > 60_000) result.body.take(60_000) + "
+
+…（预览已截断）" else result.body
                 responseTruncatedByClient = result.truncated
                 if (result.truncated) {
                     responseHint = "错误响应过大：已被客户端截断读取。"
@@ -386,8 +397,11 @@ fun ApiTestTabContent(
             text = {
                 val size = responseRaw.toByteArray(Charsets.UTF_8).size.toLong()
                 Text(
-                    "当前已读取内容约 ${humanBytes(size)}。\n\n" +
-                        "由于系统剪贴板有大小限制，复制完整内容可能导致闪退。\n" +
+                    "当前已读取内容约 ${humanBytes(size)}。
+
+" +
+                        "由于系统剪贴板有大小限制，复制完整内容可能导致闪退。
+" +
                         "建议：导出为文件，或仅复制预览。"
                 )
             },
@@ -428,52 +442,76 @@ fun ApiTestTabContent(
             .verticalScroll(pageScroll),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        ManagerCard(title = "接口调试") {
-            Text("在 App 内直接调用 danmu-api 接口，用于调试与排错。", style = MaterialTheme.typography.bodyMedium)
+        ConsoleCard {
+            Text("接口调试", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "在 App 内直接调用 danmu-api 接口，用于调试与排错。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             if (!serviceRunning) {
-                Spacer(Modifier.height(8.dp))
                 Text("服务未运行，无法请求接口。", color = MaterialTheme.colorScheme.error)
             }
         }
 
-        Text("选择接口", style = MaterialTheme.typography.titleMedium)
-        endpoints.forEach { ep ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { selectedKey = ep.key },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (selectedKey == ep.key) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer
-                )
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+        ConsoleCard {
+            Text("选择接口", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "点击卡片选择需要调试的接口。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            endpoints.forEach { ep ->
+                val isSelected = selectedKey == ep.key
+                ConsoleCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { selectedKey = ep.key },
+                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                    else MaterialTheme.colorScheme.surface,
+                    borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    contentPadding = PaddingValues(12.dp)
                 ) {
-                    Text(ep.icon, modifier = Modifier.width(28.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(ep.name, style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "${ep.method}  ${ep.path}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (ep.description.isNotBlank()) {
-                            Text(
-                                ep.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(ep.icon, modifier = Modifier.width(28.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(ep.name, style = MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                MethodBadge(method = ep.method)
+                                Text(
+                                    ep.path,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (ep.description.isNotBlank()) {
+                                Text(
+                                    ep.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
             }
-            Spacer(Modifier.height(8.dp))
         }
 
-        ManagerCard(title = "参数") {
+        ConsoleCard {
+            Text("参数与请求", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "按接口提示填写参数后发送请求。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             selected.params.forEach { p ->
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 when (p.type) {
                     "select" -> {
                         Text(p.label, style = MaterialTheme.typography.labelMedium)
@@ -516,7 +554,6 @@ fun ApiTestTabContent(
                 )
             }
 
-            Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -530,7 +567,6 @@ fun ApiTestTabContent(
                 )
             }
 
-            Spacer(Modifier.height(12.dp))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -589,40 +625,47 @@ fun ApiTestTabContent(
             }
         }
 
-        if (error != null) {
-            Text("错误：$error", color = MaterialTheme.colorScheme.error)
-        }
-        if (responseMeta.isNotBlank()) {
-            Text(responseMeta, style = MaterialTheme.typography.labelMedium)
-        }
-        if (responseHint != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(responseHint!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (responsePreview.isNotBlank()) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-            ) {
-                val scroll = rememberScrollState()
-                SelectionContainer {
-                    Text(
-                        responsePreview,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 140.dp, max = 520.dp)
-                            .verticalScroll(scroll)
-                            .padding(12.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                    )
+        ConsoleCard {
+            Text("响应结果", style = MaterialTheme.typography.titleSmall)
+
+            if (error != null) {
+                Text("错误：$error", color = MaterialTheme.colorScheme.error)
+            }
+            if (responseMeta.isNotBlank()) {
+                Text(responseMeta, style = MaterialTheme.typography.labelMedium)
+            }
+            if (responseHint != null) {
+                Text(responseHint!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (responsePreview.isNotBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    val scroll = rememberScrollState()
+                    SelectionContainer {
+                        Text(
+                            responsePreview,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 140.dp, max = 520.dp)
+                                .verticalScroll(scroll)
+                                .padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
                 }
+            } else {
+                Text("暂无响应", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
 private fun prettifyIfJson(raw: String, maxChars: Int = 120_000): String {
+(raw: String, maxChars: Int = 120_000): String {
     if (raw.length > maxChars) return raw
     val t = raw.trim()
     if (!(t.startsWith("{") && t.endsWith("}")) && !(t.startsWith("[") && t.endsWith("]"))) return raw
@@ -712,6 +755,7 @@ private data class EpisodeItem(
     val title: String,
     val episodeNumber: String = "",
 )
+
 
 @Composable
 fun PushTabContent(
@@ -1032,20 +1076,22 @@ fun PushTabContent(
             .verticalScroll(pageScroll),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        ManagerCard(title = "弹幕推送") {
-            Text("搜索番剧 → 选择剧集 → 推送到局域网播放器。", style = MaterialTheme.typography.bodyMedium)
+        ConsoleCard {
+            Text("弹幕推送", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "搜索番剧 → 选择剧集 → 推送到局域网播放器。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             if (!serviceRunning) {
-                Spacer(Modifier.height(8.dp))
                 Text("服务未运行，无法搜索/生成弹幕链接。", color = MaterialTheme.colorScheme.error)
             }
-            Spacer(Modifier.height(8.dp))
             if (lanIp == null) {
                 Text("未检测到局域网 IPv4，跨设备推送可能不可用。", color = MaterialTheme.colorScheme.error)
             } else {
                 Text("本机 IP：$lanIp", style = MaterialTheme.typography.bodySmall)
             }
             if (detectedSubnets.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
                 Text(
                     "已检测网段：${detectedSubnets.joinToString { "$it.*" }}",
                     style = MaterialTheme.typography.bodySmall,
@@ -1054,7 +1100,8 @@ fun PushTabContent(
             }
         }
 
-        ManagerCard(title = "搜索番剧") {
+        ConsoleCard {
+            Text("搜索番剧", style = MaterialTheme.typography.titleSmall)
             OutlinedTextField(
                 value = keyword,
                 onValueChange = { keyword = it },
@@ -1063,7 +1110,6 @@ fun PushTabContent(
                 label = { Text("关键词") },
                 placeholder = { Text("例如：鬼灭 / 进击 / 你的名字") },
             )
-            Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { search() }, enabled = !searching && serviceRunning) {
                     if (searching) {
@@ -1087,43 +1133,39 @@ fun PushTabContent(
                 }
             }
             if (searchError != null) {
-                Spacer(Modifier.height(8.dp))
                 Text(searchError!!, color = MaterialTheme.colorScheme.error)
             }
         }
 
         if (animes.isNotEmpty()) {
-            Text("搜索结果", style = MaterialTheme.typography.titleMedium)
+            Text("搜索结果", style = MaterialTheme.typography.titleSmall)
             animes.forEach { anime ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { loadEpisodes(anime) },
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (selectedAnime?.animeId == anime.animeId)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else
-                            MaterialTheme.colorScheme.surfaceContainer
-                    )
+                val isSelected = selectedAnime?.animeId == anime.animeId
+                ConsoleCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { loadEpisodes(anime) },
+                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                    else MaterialTheme.colorScheme.surface,
+                    borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    contentPadding = PaddingValues(14.dp)
                 ) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(anime.title, style = MaterialTheme.typography.titleSmall)
-                        if (anime.typeDesc.isNotBlank()) {
-                            Text(
-                                anime.typeDesc,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text("ID: ${anime.animeId}", style = MaterialTheme.typography.labelSmall)
+                    Text(anime.title, style = MaterialTheme.typography.titleSmall)
+                    if (anime.typeDesc.isNotBlank()) {
+                        Text(
+                            anime.typeDesc,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
+                    Text("ID: ${anime.animeId}", style = MaterialTheme.typography.labelSmall)
                 }
-                Spacer(Modifier.height(8.dp))
             }
         }
 
         if (selectedAnime != null) {
-            ManagerCard(title = "目标设备") {
+            ConsoleCard {
+                Text("目标设备", style = MaterialTheme.typography.titleSmall)
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1144,9 +1186,7 @@ fun PushTabContent(
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
-                Text("本次推送参数", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(6.dp))
+                Text("本次推送参数", style = MaterialTheme.typography.labelMedium)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1170,32 +1210,25 @@ fun PushTabContent(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     )
                 }
-                Spacer(Modifier.height(4.dp))
                 Text(
                     "仅对本次推送请求生效，不会写入配置。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
                 if (danmuSize.trim().isNotBlank() || danmuOffset.trim().isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                danmuSize = ""
-                                danmuOffset = ""
-                            }
-                        ) {
-                            Icon(Icons.Filled.Clear, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("重置参数")
+                    OutlinedButton(
+                        onClick = {
+                            danmuSize = ""
+                            danmuOffset = ""
                         }
+                    ) {
+                        Icon(Icons.Filled.Clear, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("重置参数")
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1213,9 +1246,7 @@ fun PushTabContent(
                 }
 
                 if (foundDevices.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
                     Text("发现设备（点选）", style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.height(6.dp))
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1229,7 +1260,6 @@ fun PushTabContent(
                         }
                     }
                 } else {
-                    Spacer(Modifier.height(10.dp))
                     Text(
                         "未发现设备：请确认播放器已开启 ${currentPort()} 端口。",
                         style = MaterialTheme.typography.bodySmall,
@@ -1237,12 +1267,10 @@ fun PushTabContent(
                     )
                 }
 
-                Spacer(Modifier.height(10.dp))
                 val pushTemplate = currentPushTemplate()
                 Text("推送接口", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
                 Surface(
-                    shape = MaterialTheme.shapes.small,
+                    shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.surfaceVariant,
                 ) {
                     Row(
@@ -1268,7 +1296,6 @@ fun PushTabContent(
                 }
 
                 if (lastPushMessage != null) {
-                    Spacer(Modifier.height(10.dp))
                     Text(
                         lastPushMessage!!,
                         color = when (lastPushOk) {
@@ -1283,9 +1310,8 @@ fun PushTabContent(
         }
 
         if (episodes.isNotEmpty()) {
-            Text("剧集列表", style = MaterialTheme.typography.titleMedium)
+            Text("剧集列表", style = MaterialTheme.typography.titleSmall)
             if (loadingEpisodes) {
-                Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -1295,44 +1321,36 @@ fun PushTabContent(
 
             episodes.forEach { ep ->
                 val commentUrl = buildCommentUrl(ep.episodeId)
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
-                ) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("${ep.episodeNumber} ${ep.title}".trim(), style = MaterialTheme.typography.titleSmall)
-                        Text("弹幕ID: ${ep.episodeId}", style = MaterialTheme.typography.labelSmall)
+                ConsoleCard {
+                    Text("${ep.episodeNumber} ${ep.title}".trim(), style = MaterialTheme.typography.titleSmall)
+                    Text("弹幕ID: ${ep.episodeId}", style = MaterialTheme.typography.labelSmall)
 
-                        Spacer(Modifier.height(8.dp))
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                    Surface(
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Text(
+                            commentUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { pushOne(ep) },
+                            enabled = serviceRunning
                         ) {
-                            Text(
-                                commentUrl,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(10.dp)
-                            )
+                            Text("推送")
                         }
-
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = { pushOne(ep) },
-                                enabled = serviceRunning
-                            ) {
-                                Text("推送")
-                            }
-                            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(commentUrl)) }) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("复制链接")
-                            }
+                        OutlinedButton(onClick = { clipboard.setText(AnnotatedString(commentUrl)) }) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("复制链接")
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
             }
         }
     }
@@ -1476,7 +1494,9 @@ fun SystemTabContent(
         AlertDialog(
             onDismissRequest = { confirmDeleteKey = null },
             title = { Text("确认删除") },
-            text = { Text("将从 .env 中移除：${confirmDeleteKey}\n\n这会让该项回到默认值（如有）。") },
+            text = { Text("将从 .env 中移除：${confirmDeleteKey}
+
+这会让该项回到默认值（如有）。") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -1502,17 +1522,20 @@ fun SystemTabContent(
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(0.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                ManagerCard(title = "系统配置") {
-                    Text("以更清晰的方式管理 danmu-api 的环境变量配置。", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(8.dp))
+                ConsoleCard {
+                    Text("系统配置", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "以更清晰的方式管理 danmu-api 的环境变量配置。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
                     if (!serviceRunning) {
                         Text("服务未运行：无法通过 API 读取/写入配置。", color = MaterialTheme.colorScheme.error)
-                        Spacer(Modifier.height(8.dp))
                     }
                     if (rootAvailable == false) {
                         Text(
@@ -1520,12 +1543,9 @@ fun SystemTabContent(
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall
                         )
-                        Spacer(Modifier.height(6.dp))
                     }
 
-                    Text("模式", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(6.dp))
-
+                    Text("模式", style = MaterialTheme.typography.labelMedium)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1542,8 +1562,6 @@ fun SystemTabContent(
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
-
                     if (mode == 0) {
                         Text(
                             "预览模式：只读展示，敏感变量将被隐藏。要修改配置请切换到管理员模式。",
@@ -1554,13 +1572,13 @@ fun SystemTabContent(
                         when {
                             !adminTokenConfigured -> {
                                 Text(
-                                    "管理员模式：当前服务端未配置 ADMIN_TOKEN，无法进入管理员模式。\n" +
+                                    "管理员模式：当前服务端未配置 ADMIN_TOKEN，无法进入管理员模式。
+" +
                                         "请先设置 ADMIN_TOKEN 并保存，保存后再进入管理员模式。",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
 
-                                Spacer(Modifier.height(10.dp))
                                 OutlinedTextField(
                                     value = setupAdminToken,
                                     onValueChange = { setupAdminToken = it },
@@ -1579,7 +1597,6 @@ fun SystemTabContent(
                                     }
                                 )
 
-                                Spacer(Modifier.height(8.dp))
                                 FlowRow(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1613,7 +1630,6 @@ fun SystemTabContent(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 if (adminTokenFromEnv.isNotBlank()) {
-                                    Spacer(Modifier.height(4.dp))
                                     Text(
                                         "提示：检测到系统已配置 ADMIN_TOKEN，但为避免误触/泄露，此处不会自动导入。",
                                         style = MaterialTheme.typography.bodySmall,
@@ -1621,7 +1637,6 @@ fun SystemTabContent(
                                     )
                                 }
 
-                                Spacer(Modifier.height(10.dp))
                                 OutlinedTextField(
                                     value = tokenInput,
                                     onValueChange = {
@@ -1644,7 +1659,6 @@ fun SystemTabContent(
                                     }
                                 )
                                 if (adminAuthError != null) {
-                                    Spacer(Modifier.height(4.dp))
                                     Text(
                                         adminAuthError!!,
                                         style = MaterialTheme.typography.bodySmall,
@@ -1652,7 +1666,6 @@ fun SystemTabContent(
                                     )
                                 }
 
-                                Spacer(Modifier.height(8.dp))
                                 FlowRow(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1681,7 +1694,6 @@ fun SystemTabContent(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.primary
                                 )
-                                Spacer(Modifier.height(8.dp))
                                 OutlinedButton(
                                     onClick = {
                                         onClearSessionAdminToken()
@@ -1695,8 +1707,17 @@ fun SystemTabContent(
                             }
                         }
                     }
+                }
+            }
 
-                    Spacer(Modifier.height(10.dp))
+            item {
+                ConsoleCard {
+                    Text("系统操作", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "刷新配置或执行缓存/部署操作。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1726,8 +1747,12 @@ fun SystemTabContent(
                             Text("重新部署")
                         }
                     }
+                }
+            }
 
-                    Spacer(Modifier.height(10.dp))
+            item {
+                ConsoleCard {
+                    Text("搜索过滤", style = MaterialTheme.typography.titleSmall)
                     OutlinedTextField(
                         value = search,
                         onValueChange = { search = it },
@@ -1736,10 +1761,8 @@ fun SystemTabContent(
                         label = { Text("搜索") },
                         placeholder = { Text("例如：TOKEN / PORT / CACHE") },
                     )
-
                     when {
                         serverConfigLoading -> {
-                            Spacer(Modifier.height(8.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
@@ -1747,7 +1770,6 @@ fun SystemTabContent(
                             }
                         }
                         serverConfigError != null -> {
-                            Spacer(Modifier.height(8.dp))
                             Text("加载失败：$serverConfigError", color = MaterialTheme.colorScheme.error)
                         }
                     }
@@ -1756,20 +1778,13 @@ fun SystemTabContent(
 
             if (!canEdit && isAdminModeSelected && serviceRunning && adminTokenConfigured) {
                 item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text("管理员模式未解锁", style = MaterialTheme.typography.titleSmall)
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                "请输入 ADMIN_TOKEN 后才能编辑/保存配置。当前仍以预览模式展示（敏感项已隐藏）。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                    ConsoleCard {
+                        Text("管理员模式未解锁", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "请输入 ADMIN_TOKEN 后才能编辑/保存配置。当前仍以预览模式展示（敏感项已隐藏）。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -1917,12 +1932,13 @@ private fun EnvPreviewRow(
         else -> value
     }
 
-    Card(
+    ConsoleCard(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.25f)),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = accent.copy(alpha = 0.25f),
+        contentPadding = PaddingValues(12.dp)
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(keyName, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 if (isDefaultValue) {
@@ -2030,12 +2046,13 @@ private fun EnvEditorRow(
 
     val accent = categoryAccentColor(category)
 
-    Card(
+    ConsoleCard(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.25f)),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = accent.copy(alpha = 0.25f),
+        contentPadding = PaddingValues(12.dp)
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(keyName, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 if (isDefaultValue) {
