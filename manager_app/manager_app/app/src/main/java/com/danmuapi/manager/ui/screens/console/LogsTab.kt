@@ -293,15 +293,6 @@ private fun ServerLogItem(log: ServerLogEntry) {
                 }
             }
 
-            // 分类
-            if (!log.category.isNullOrEmpty()) {
-                Text(
-                    text = log.category,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
             // 消息
             Text(
                 text = log.message ?: "",

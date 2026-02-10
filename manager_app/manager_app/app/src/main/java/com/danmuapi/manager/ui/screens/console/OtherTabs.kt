@@ -134,9 +134,10 @@ fun ApiTestTabContent(
                                 requestBody.takeIf { it.isNotBlank() },
                                 useAdmin
                             )
-                            response = when (result) {
-                                is HttpResult.Success -> "状态码: ${result.code}\n\n${result.body}"
-                                is HttpResult.Error -> "错误: ${result.message}"
+                            response = if (result.error != null) {
+                                "错误: ${result.error}"
+                            } else {
+                                "状态码: ${result.code}\n\n${result.body}"
                             }
                             loading = false
                         }
