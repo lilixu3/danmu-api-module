@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -208,9 +209,11 @@ fun ApiTestTabContent(
                     ApiParam("fileName", "文件名", "text", true, "例如：生万物 S02E08")
                 ),
                 hasBody = true,
-                bodyTemplate = "{
-  \"fileName\": \"\"
-}"
+                bodyTemplate = """
+{
+  "fileName": ""
+}
+""".trimIndent()
             ),
             ApiEndpoint(
                 key = "getBangumi",
@@ -259,13 +262,15 @@ fun ApiTestTabContent(
                     ApiParam("format", "格式", "select", false, options = listOf("json", "xml"), default = "json"),
                 ),
                 hasBody = true,
-                bodyTemplate = "{
-  \"url\": \"\",
-  \"platform\": \"qq\",
-  \"cid\": \"\",
-  \"start\": 0,
-  \"duration\": 600
-}"
+                bodyTemplate = """
+{
+  "url": "",
+  "platform": "qq",
+  "cid": "",
+  "start": 0,
+  "duration": 600
+}
+""".trimIndent()
             ),
         )
     }
@@ -365,9 +370,7 @@ fun ApiTestTabContent(
                 val previewMaxChars = 60_000
                 responsePreview = if (pretty.length > previewMaxChars) {
                     responseHint = "响应较大：仅预览前 ${previewMaxChars} 字符（建议使用导出保存完整内容）。"
-                    pretty.take(previewMaxChars) + "
-
-…（预览已截断）"
+                    pretty.take(previewMaxChars) + "\n\n…（预览已截断）"
                 } else {
                     responseHint = if (result.truncated) {
                         "响应过大：已被客户端限制读取约 ${humanBytes(result.bodyBytesKept)}。"
@@ -379,9 +382,7 @@ fun ApiTestTabContent(
                 error = result.error ?: "请求失败"
                 responseContentType = result.contentType
                 responseRaw = result.body
-                responsePreview = if (result.body.length > 60_000) result.body.take(60_000) + "
-
-…（预览已截断）" else result.body
+                responsePreview = if (result.body.length > 60_000) result.body.take(60_000) + "\n\n…（预览已截断）" else result.body
                 responseTruncatedByClient = result.truncated
                 if (result.truncated) {
                     responseHint = "错误响应过大：已被客户端截断读取。"
@@ -397,11 +398,8 @@ fun ApiTestTabContent(
             text = {
                 val size = responseRaw.toByteArray(Charsets.UTF_8).size.toLong()
                 Text(
-                    "当前已读取内容约 ${humanBytes(size)}。
-
-" +
-                        "由于系统剪贴板有大小限制，复制完整内容可能导致闪退。
-" +
+                    "当前已读取内容约 ${humanBytes(size)}。\n\n" +
+                        "由于系统剪贴板有大小限制，复制完整内容可能导致闪退。\n" +
                         "建议：导出为文件，或仅复制预览。"
                 )
             },
@@ -665,7 +663,6 @@ fun ApiTestTabContent(
 }
 
 private fun prettifyIfJson(raw: String, maxChars: Int = 120_000): String {
-(raw: String, maxChars: Int = 120_000): String {
     if (raw.length > maxChars) return raw
     val t = raw.trim()
     if (!(t.startsWith("{") && t.endsWith("}")) && !(t.startsWith("[") && t.endsWith("]"))) return raw
@@ -1494,9 +1491,7 @@ fun SystemTabContent(
         AlertDialog(
             onDismissRequest = { confirmDeleteKey = null },
             title = { Text("确认删除") },
-            text = { Text("将从 .env 中移除：${confirmDeleteKey}
-
-这会让该项回到默认值（如有）。") },
+            text = { Text("将从 .env 中移除：${confirmDeleteKey}\n\n这会让该项回到默认值（如有）。") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -1572,8 +1567,7 @@ fun SystemTabContent(
                         when {
                             !adminTokenConfigured -> {
                                 Text(
-                                    "管理员模式：当前服务端未配置 ADMIN_TOKEN，无法进入管理员模式。
-" +
+                                    "管理员模式：当前服务端未配置 ADMIN_TOKEN，无法进入管理员模式。\n" +
                                         "请先设置 ADMIN_TOKEN 并保存，保存后再进入管理员模式。",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
