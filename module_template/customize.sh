@@ -215,7 +215,60 @@ EOF
   fi
 fi
 
-if [ ! -f "$ACTIVE_FILE" ]; then
+# ============================================================
+# 核心下载逻辑：检测版本，仅在需要时下载
+# ============================================================
+check_and_download_core() {
+  # 检查是否已有核心
+  if [ -f "$ACTIVE_FILE" ]; then
+    active_id="$(cat "$ACTIVE_FILE" 2>/dev/null || true)"
+    if [ -n "$active_id" ]; then
+      core_dir="$CORES_DIR/$active_id/danmu_api"
+      if [ -d "$core_dir" ] && [ -f "$core_dir/configs/globals.js" ]; then
+        # 读取本地版本
+        local_version="$(grep -m1 -E "VERSION[[:space:]]*:" "$core_dir/configs/globals.js" 2>/dev/null | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" | head -n 1)"
+
+        if [ -n "$local_version" ]; then
+          ui_msg "- 检测到本地核心版本：$local_version"
+
+          # 获取远程版本（通过 GitHub API）
+          ui_msg "- 正在检查远程版本..."
+          remote_version=""
+
+          # 构建 API URL
+          api_url="https://api.github.com/repos/${DEFAULT_CORE_REPO}/contents/danmu_api/configs/globals.js?ref=${DEFAULT_CORE_REF}"
+          if [ "$mode" = "proxy" ] && [ -n "$proxy_base" ]; then
+            api_url="${proxy_base}${api_url}"
+          fi
+
+          # 尝试获取远程版本
+          if command -v curl >/dev/null 2>&1; then
+            remote_content="$(curl -fsSL -H 'Accept: application/vnd.github.v3.raw' "$api_url" 2>/dev/null || true)"
+            if [ -n "$remote_content" ]; then
+              remote_version="$(echo "$remote_content" | grep -m1 -E "VERSION[[:space:]]*:" | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" | head -n 1)"
+            fi
+          fi
+
+          if [ -n "$remote_version" ]; then
+            ui_msg "- 远程核心版本：$remote_version"
+
+            # 比较版本
+            if [ "$local_version" = "$remote_version" ]; then
+              ui_msg "- 本地版本已是最新，跳过下载"
+              return 0
+            else
+              ui_msg "- 发现新版本，准备更新"
+            fi
+          else
+            ui_msg "- 无法获取远程版本，跳过更新检查"
+            return 0
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  # 需要下载核心
   if [ -x "$MODPATH/scripts/danmu_core.sh" ]; then
     ui_msg "- 开始下载核心：${DEFAULT_CORE_REPO}@${DEFAULT_CORE_REF}"
     TIMEOUT_CMD=""
@@ -244,7 +297,10 @@ if [ ! -f "$ACTIVE_FILE" ]; then
   else
     ui_msg "- 未找到核心下载脚本，跳过下载"
   fi
-fi
+}
+
+# 执行核心检查和下载
+check_and_download_core
 
 # Ensure module points to persistent core symlink
 rm -rf "$MODPATH/app/danmu_api" 2>/dev/null
