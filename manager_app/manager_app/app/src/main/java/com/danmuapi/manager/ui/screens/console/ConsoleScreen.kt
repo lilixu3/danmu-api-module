@@ -148,13 +148,15 @@ fun ConsoleScreen(
 
                 ConsoleTab.Push -> PushTabContent(
                     serviceRunning = serviceRunning,
-                    adminToken = effectiveAdminToken,
+                    apiToken = apiToken,
+                    apiPort = apiPort,
                     requestApi = requestApi,
                 )
 
                 ConsoleTab.System -> SystemTabContent(
+                    rootAvailable = rootAvailable,
                     serviceRunning = serviceRunning,
-                    adminToken = effectiveAdminToken,
+                    adminTokenFromEnv = adminToken,
                     sessionAdminToken = sessionAdminToken,
                     onSetSessionAdminToken = onSetSessionAdminToken,
                     onClearSessionAdminToken = onClearSessionAdminToken,
