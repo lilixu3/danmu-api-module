@@ -44,7 +44,7 @@ import com.danmuapi.manager.network.GitHubApi
 import com.danmuapi.manager.root.DanmuCli
 import com.danmuapi.manager.ui.screens.CoresScreen
 import com.danmuapi.manager.ui.screens.DashboardScreen
-import com.danmuapi.manager.ui.screens.ConsoleScreen
+import com.danmuapi.manager.ui.screens.console.ConsoleScreen
 import com.danmuapi.manager.ui.screens.SettingsScreen
 import com.danmuapi.manager.ui.screens.AboutScreen
 import com.danmuapi.manager.worker.LogCleanupScheduler
