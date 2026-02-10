@@ -64,50 +64,42 @@ pick_proxy_base() {
   esac
 }
 
-choose_github_mode() {
-  ui_msg "- 是否可以直连 GitHub？"
-  ui_msg "- 音量上：可以（直连）"
-  ui_msg "- 音量下：不行（使用加速）"
-  ui_msg "- 10 秒内未选择将默认直连"
+CHOSEN_MODE=""
 
-  if command -v keycheck >/dev/null 2>&1; then
-    i=0
-    while [ "$i" -lt 10 ]; do
-      keycheck
-      code="$?"
-      case "$code" in
-        41|115) echo "direct"; return 0 ;; # 常见音量上
-        42|114) echo "proxy"; return 0 ;;  # 常见音量下
-      esac
-      i=$((i+1))
-    done
-  fi
+choose_github_mode() {
+  CHOSEN_MODE="direct"
+
+  ui_msg ""
+  ui_msg "========================================"
+  ui_msg "  是否可以直连 GitHub？"
+  ui_msg "  音量 [+] ：可以（直连）"
+  ui_msg "  音量 [-] ：不行（使用加速）"
+  ui_msg "  请按音量键选择..."
+  ui_msg "========================================"
+  ui_msg ""
 
   if [ -x /system/bin/getevent ]; then
-    TIMEOUT_CMD=""
-    if [ -x "$MODPATH/bin/busybox" ] && "$MODPATH/bin/busybox" timeout --help >/dev/null 2>&1; then
-      TIMEOUT_CMD="$MODPATH/bin/busybox timeout"
-    elif command -v timeout >/dev/null 2>&1; then
-      TIMEOUT_CMD="timeout"
-    fi
-
-    if [ -n "$TIMEOUT_CMD" ]; then
-      key="$($TIMEOUT_CMD 10 /system/bin/getevent -qlc 1 2>/dev/null | grep -m1 'KEY_VOLUME')"
-      case "$key" in
-        *KEY_VOLUMEUP*) echo "direct"; return 0 ;;
-        *KEY_VOLUMEDOWN*) echo "proxy"; return 0 ;;
+    while true; do
+      ev="$(/system/bin/getevent -lqc 1 2>/dev/null)"
+      case "$ev" in
+        *KEY_VOLUMEUP*)
+          CHOSEN_MODE="direct"
+          ui_msg "  >> 已选择：直连 GitHub"
+          break
+          ;;
+        *KEY_VOLUMEDOWN*)
+          CHOSEN_MODE="proxy"
+          ui_msg "  >> 已选择：使用加速服务"
+          break
+          ;;
       esac
-    else
-      key="$(/system/bin/getevent -qlc 1 2>/dev/null | grep -m1 'KEY_VOLUME')"
-      case "$key" in
-        *KEY_VOLUMEUP*) echo "direct"; return 0 ;;
-        *KEY_VOLUMEDOWN*) echo "proxy"; return 0 ;;
-      esac
-    fi
+      # 非音量键事件，继续等待
+    done
+  else
+    ui_msg "- 未找到按键检测工具，默认直连"
+    CHOSEN_MODE="direct"
   fi
-
-  ui_msg "- 未找到 getevent，默认直连"
-  echo "direct"
+  ui_msg ""
 }
 
 # Older versions stored config inside the module folder (and sometimes bind-mounted).
@@ -185,7 +177,8 @@ mkdir -p "$CORES_DIR" 2>/dev/null
 
 # 首次安装：提示并下载核心（仅 danmu_api 目录）
 if [ ! -f "$DOWNLOAD_CONF" ]; then
-  mode="$(choose_github_mode)"
+  choose_github_mode
+  mode="$CHOSEN_MODE"
   proxy_base=""
   if [ "$mode" = "proxy" ]; then
     proxy_base="$(pick_proxy_base)"
@@ -205,7 +198,8 @@ else
   mode="${MODE:-}"
   proxy_base="${PROXY_BASE:-}"
   if [ "$mode" != "direct" ] && [ "$mode" != "proxy" ]; then
-    mode="$(choose_github_mode)"
+    choose_github_mode
+    mode="$CHOSEN_MODE"
     proxy_base=""
     if [ "$mode" = "proxy" ]; then
       proxy_base="$(pick_proxy_base)"
