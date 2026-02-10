@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.network.HttpResult
 import com.danmuapi.manager.ui.screens.console.components.*
+import kotlinx.coroutines.launch
 
 /**
  * API 测试 Tab
@@ -119,7 +120,7 @@ fun ApiTestTabContent(
                 Button(
                     onClick = {
                         loading = true
-                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                        scope.launch {
                             val queryMap = queryParams.split("&")
                                 .filter { it.contains("=") }
                                 .associate {
@@ -225,6 +226,8 @@ fun SystemTabContent(
     onDeploy: () -> Unit,
     validateAdminToken: suspend (token: String) -> Pair<Boolean, String?>
 ) {
+    val scope = rememberCoroutineScope()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -265,7 +268,7 @@ fun SystemTabContent(
                     Button(
                         onClick = {
                             validating = true
-                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                            scope.launch {
                                 val (valid, _) = validateAdminToken(tokenInput)
                                 if (valid) {
                                     onSetSessionAdminToken(tokenInput)

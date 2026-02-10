@@ -179,7 +179,7 @@ private fun RequestRecordItem(record: RequestRecord) {
 
                     // 时间和 IP
                     Text(
-                        text = "${record.timestamp ?: ""} • ${record.ip ?: ""}",
+                        text = "${record.timestamp ?: ""} • ${record.clientIp ?: ""}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -199,7 +199,7 @@ private fun RequestRecordItem(record: RequestRecord) {
                 Spacer(Modifier.height(8.dp))
 
                 // 查询参数
-                if (!record.query.isNullOrEmpty()) {
+                if (!record.params.isNullOrEmpty()) {
                     Text(
                         text = "查询参数",
                         style = MaterialTheme.typography.labelMedium,
@@ -212,7 +212,7 @@ private fun RequestRecordItem(record: RequestRecord) {
                         shape = MaterialTheme.shapes.small
                     ) {
                         Text(
-                            text = record.query,
+                            text = record.params,
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = FontFamily.Monospace
                             ),
@@ -222,20 +222,8 @@ private fun RequestRecordItem(record: RequestRecord) {
                     Spacer(Modifier.height(8.dp))
                 }
 
-                // User-Agent
-                if (!record.userAgent.isNullOrEmpty()) {
-                    Text(
-                        text = "User-Agent",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = record.userAgent,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                // User-Agent (如果有的话，从 params 中解析或者移除这部分)
+                // 注意：RequestRecord 模型中没有 userAgent 字段
             }
         }
     }

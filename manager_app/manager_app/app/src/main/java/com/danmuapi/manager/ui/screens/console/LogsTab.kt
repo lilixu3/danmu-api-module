@@ -268,8 +268,9 @@ private fun ServerLogItem(log: ServerLogEntry) {
                 )
 
                 if (!log.level.isNullOrEmpty()) {
+                    val levelUpper = log.level.uppercase()
                     Surface(
-                        color = when (log.level.uppercase()) {
+                        color = when (levelUpper) {
                             "ERROR" -> MaterialTheme.colorScheme.errorContainer
                             "WARN" -> MaterialTheme.colorScheme.tertiaryContainer
                             "INFO" -> MaterialTheme.colorScheme.primaryContainer
@@ -278,10 +279,10 @@ private fun ServerLogItem(log: ServerLogEntry) {
                         shape = MaterialTheme.shapes.small
                     ) {
                         Text(
-                            text = log.level.uppercase(),
+                            text = levelUpper,
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            color = when (log.level.uppercase()) {
+                            color = when (levelUpper) {
                                 "ERROR" -> MaterialTheme.colorScheme.onErrorContainer
                                 "WARN" -> MaterialTheme.colorScheme.onTertiaryContainer
                                 "INFO" -> MaterialTheme.colorScheme.onPrimaryContainer
