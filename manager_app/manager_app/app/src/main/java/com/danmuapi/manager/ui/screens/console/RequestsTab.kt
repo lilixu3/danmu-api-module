@@ -51,119 +51,54 @@ fun RequestsTabContent(
     onRefresh: () -> Unit
 ) {
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        contentPadding = PaddingValues(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // Header
         item {
-            ConsoleCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "请求记录", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = "查看最近的 API 请求历史，便于排查调用问题。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(
-                        onClick = onRefresh,
-                        enabled = serviceRunning && !loading
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
-                }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("请求记录", style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = onRefresh, enabled = serviceRunning && !loading) { Icon(Icons.Default.Refresh, contentDescription = "刷新") }
             }
         }
 
+        // Stats
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                StatCard(
-                    title = "今日请求",
-                    value = todayReqNum.toString(),
-                    icon = Icons.Default.TrendingUp,
-                    modifier = Modifier.weight(1f)
-                )
-                StatCard(
-                    title = "总记录",
-                    value = records.size.toString(),
-                    icon = Icons.Default.Storage,
-                    modifier = Modifier.weight(1f)
-                )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatCard(title = "今日请求", value = todayReqNum.toString(), icon = Icons.Default.TrendingUp, modifier = Modifier.weight(1f))
+                StatCard(title = "总记录", value = records.size.toString(), icon = Icons.Default.Storage, modifier = Modifier.weight(1f))
             }
         }
 
         if (!serviceRunning) {
             item {
-                ConsoleCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(Icons.Default.CloudOff, contentDescription = null)
-                        Column {
-                            Text("服务未运行", style = MaterialTheme.typography.titleSmall)
-                            Text("启动服务后才能获取请求记录。", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Default.CloudOff, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Text("启动服务后才能获取请求记录。", style = MaterialTheme.typography.bodySmall)
                 }
             }
         } else {
             if (loading && records.isEmpty()) {
                 item {
-                    ConsoleCard {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                            Text("正在加载请求记录…", style = MaterialTheme.typography.bodySmall)
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text("正在加载…", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
-
             if (!error.isNullOrBlank()) {
-                item {
-                    ConsoleCard {
-                        Text("加载失败", style = MaterialTheme.typography.titleSmall)
-                        Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    }
-                }
+                item { Text("加载失败：$error", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
-
             if (records.isEmpty() && !loading && error.isNullOrBlank()) {
                 item {
-                    ConsoleCard {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Icon(Icons.Default.Inbox, contentDescription = null)
-                            Column {
-                                Text("暂无请求记录", style = MaterialTheme.typography.titleSmall)
-                                Text("产生请求后会自动记录。", style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.Default.Inbox, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("暂无请求记录", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-
-            items(records) { record ->
-                RequestRecordCard(record = record)
-            }
+            items(records) { record -> RequestRecordCard(record = record) }
         }
     }
 }
@@ -175,68 +110,29 @@ private fun RequestRecordCard(record: RequestRecord) {
     ConsoleCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = { expanded = !expanded },
-        containerColor = MaterialTheme.colorScheme.surface,
-        borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+        contentPadding = PaddingValues(10.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     MethodBadge(method = record.method)
-                    Text(
-                        text = record.path.ifBlank { "/" },
-                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Text(record.path.ifBlank { "/" }, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
                 }
-
-                Spacer(Modifier.height(6.dp))
-
-                val timeText = record.timestamp.ifBlank { "-" }
-                val ipText = record.clientIp.ifBlank { "-" }
-                Text(
-                    text = "$timeText • $ipText",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(Modifier.height(4.dp))
+                Text("${record.timestamp.ifBlank { "-" }} · ${record.clientIp.ifBlank { "-" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-
-            Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
         }
 
         if (expanded) {
-            Spacer(Modifier.height(8.dp))
             val params = record.params?.trim().orEmpty()
             if (params.isNotBlank()) {
                 Text("查询参数", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(6.dp))
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    Text(
-                        text = params,
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        modifier = Modifier.padding(10.dp)
-                    )
+                Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) {
+                    Text(params, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), modifier = Modifier.padding(8.dp))
                 }
             } else {
-                Text(
-                    text = "无参数",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("无参数", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

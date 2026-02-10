@@ -37,7 +37,7 @@ import androidx.compose.ui.unit.dp
 import com.danmuapi.manager.data.model.LogFileInfo
 import com.danmuapi.manager.data.model.LogsResponse
 import com.danmuapi.manager.ui.screens.console.components.ConsoleCard
-import java.util.Locale
+import com.danmuapi.manager.ui.screens.console.components.humanBytes
 
 @Composable
 fun LogsScreen(
@@ -200,16 +200,4 @@ private fun LogItem(
             }
         }
     }
-}
-
-private fun humanBytes(bytes: Long): String {
-    val b = bytes.coerceAtLeast(0L)
-    val units = arrayOf("B", "KB", "MB", "GB")
-    var v = b.toDouble()
-    var i = 0
-    while (v >= 1024.0 && i < units.lastIndex) {
-        v /= 1024.0
-        i++
-    }
-    return if (i == 0) "${b}${units[i]}" else String.format(Locale.getDefault(), "%.1f%s", v, units[i])
 }

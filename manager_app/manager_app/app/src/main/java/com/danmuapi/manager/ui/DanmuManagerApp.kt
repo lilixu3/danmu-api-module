@@ -44,7 +44,9 @@ import com.danmuapi.manager.network.GitHubApi
 import com.danmuapi.manager.root.DanmuCli
 import com.danmuapi.manager.ui.screens.CoresScreen
 import com.danmuapi.manager.ui.screens.DashboardScreen
+import com.danmuapi.manager.ui.screens.console.ConsoleActions
 import com.danmuapi.manager.ui.screens.console.ConsoleScreen
+import com.danmuapi.manager.ui.screens.console.ConsoleState
 import com.danmuapi.manager.ui.screens.SettingsScreen
 import com.danmuapi.manager.ui.screens.AboutScreen
 import com.danmuapi.manager.worker.LogCleanupScheduler
@@ -243,8 +245,7 @@ fun DanmuManagerApp(applicationContext: Context) {
 
                 val logLimit by vm.consoleLogLimit.collectAsStateWithLifecycle()
 
-                ConsoleScreen(
-                    paddingValues = padding,
+                val consoleState = ConsoleState(
                     rootAvailable = vm.rootAvailable,
                     serviceRunning = (vm.status?.service?.running == true),
                     apiToken = vm.apiToken,
@@ -253,9 +254,6 @@ fun DanmuManagerApp(applicationContext: Context) {
                     adminToken = vm.adminToken,
                     sessionAdminToken = vm.sessionAdminToken,
                     consoleLogLimit = logLimit,
-                    onSetConsoleLogLimit = { vm.setConsoleLogLimit(it) },
-                    onSetSessionAdminToken = { vm.setSessionAdminToken(it) },
-                    onClearSessionAdminToken = { vm.clearSessionAdminToken() },
                     serverConfig = vm.serverConfig,
                     serverConfigLoading = vm.serverConfigLoading,
                     serverConfigError = vm.serverConfigError,
@@ -263,6 +261,16 @@ fun DanmuManagerApp(applicationContext: Context) {
                     serverLogsLoading = vm.serverLogsLoading,
                     serverLogsError = vm.serverLogsError,
                     moduleLogs = vm.logs,
+                    requestRecords = vm.requestRecords,
+                    requestRecordsLoading = vm.requestRecordsLoading,
+                    requestRecordsError = vm.requestRecordsError,
+                    todayReqNum = vm.todayReqNum,
+                )
+
+                val consoleActions = ConsoleActions(
+                    onSetConsoleLogLimit = { vm.setConsoleLogLimit(it) },
+                    onSetSessionAdminToken = { vm.setSessionAdminToken(it) },
+                    onClearSessionAdminToken = { vm.clearSessionAdminToken() },
                     onRefreshConfig = { useAdmin -> vm.refreshServerConfig(useAdminToken = useAdmin) },
                     onRefreshServerLogs = { vm.refreshServerLogs() },
                     onClearServerLogs = { vm.clearServerLogs() },
@@ -278,21 +286,20 @@ fun DanmuManagerApp(applicationContext: Context) {
                             onResult(text)
                         }
                     },
-                    requestRecords = vm.requestRecords,
-                    requestRecordsLoading = vm.requestRecordsLoading,
-                    requestRecordsError = vm.requestRecordsError,
-                    todayReqNum = vm.todayReqNum,
                     onRefreshRequestRecords = { vm.refreshRequestRecords() },
                     requestApi = { method, path, query, bodyJson, useAdminToken ->
                         vm.requestDanmuApi(
-                            method = method,
-                            path = path,
-                            query = query,
-                            bodyJson = bodyJson,
-                            useAdminToken = useAdminToken
+                            method = method, path = path, query = query,
+                            bodyJson = bodyJson, useAdminToken = useAdminToken
                         )
                     },
                     validateAdminToken = { token -> vm.validateAdminToken(token) },
+                )
+
+                ConsoleScreen(
+                    paddingValues = padding,
+                    state = consoleState,
+                    actions = consoleActions,
                 )
             }
             composable(NavItem.SETTINGS.route) {
