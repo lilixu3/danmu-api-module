@@ -1,0 +1,34 @@
+#!/usr/bin/env sh
+set -eu
+
+APP_HOME="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+
+is_termux_host=false
+if [ -n "${TERMUX_VERSION:-}" ]; then
+  is_termux_host=true
+elif [ -n "${PREFIX:-}" ] && printf '%s' "$PREFIX" | grep -q 'com.termux'; then
+  is_termux_host=true
+fi
+
+AAPT2_PROP=""
+if "$is_termux_host"; then
+  AAPT2_OVERRIDE="$APP_HOME/tools/aapt2/aapt2"
+  if [ ! -x "$AAPT2_OVERRIDE" ] && [ -x "/data/data/com.termux/files/usr/bin/aapt2" ]; then
+    AAPT2_OVERRIDE="/data/data/com.termux/files/usr/bin/aapt2"
+  fi
+
+  if [ -x "$AAPT2_OVERRIDE" ]; then
+    case " $* ${GRADLE_OPTS:-} ${JAVA_OPTS:-} " in
+      *"android.aapt2FromMavenOverride"*) ;;
+      *) AAPT2_PROP="-Pandroid.aapt2FromMavenOverride=$AAPT2_OVERRIDE" ;;
+    esac
+  fi
+fi
+
+if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+  JAVA_EXEC="${JAVA_HOME}/bin/java"
+else
+  JAVA_EXEC="java"
+fi
+
+exec "${JAVA_EXEC}" ${JAVA_OPTS:-} ${GRADLE_OPTS:-} -classpath "${APP_HOME}/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain ${AAPT2_PROP:-} "$@"
