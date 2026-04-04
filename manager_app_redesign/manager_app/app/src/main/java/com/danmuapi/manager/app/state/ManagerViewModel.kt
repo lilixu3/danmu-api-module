@@ -17,6 +17,7 @@ import com.danmuapi.manager.core.data.network.WebDavClient
 import com.danmuapi.manager.core.data.network.WebDavResult
 import com.danmuapi.manager.core.model.CoreCatalog
 import com.danmuapi.manager.core.model.CoreUpdateInfo
+import com.danmuapi.manager.core.model.CoreUpdateState
 import com.danmuapi.manager.core.model.EnvVarItem
 import com.danmuapi.manager.core.model.EnvVarMeta
 import com.danmuapi.manager.core.model.LogDirectory
@@ -333,8 +334,16 @@ class ManagerViewModel(
                 }
             }
             updateInfo = results
-            val count = results.values.count { it.updateAvailable }
-            snackbars.tryEmit(if (count > 0) "发现 $count 个核心可更新" else "所有核心都已是最新")
+            val updateCount = results.values.count { it.updateAvailable }
+            val unknownCount = results.values.count { it.state == CoreUpdateState.Unknown }
+            snackbars.tryEmit(
+                when {
+                    updateCount > 0 && unknownCount > 0 -> "发现 $updateCount 个核心可更新，另有 $unknownCount 个状态未确认"
+                    updateCount > 0 -> "发现 $updateCount 个核心可更新"
+                    unknownCount > 0 -> "有 $unknownCount 个核心暂时无法确认是否最新"
+                    else -> "所有核心都已是最新"
+                },
+            )
         }
     }
 
@@ -352,7 +361,13 @@ class ManagerViewModel(
             updateInfo = updateInfo.toMutableMap().apply {
                 put(core.id, info)
             }
-            snackbars.tryEmit(if (info.updateAvailable) "当前核心有更新" else "当前核心已是最新")
+            snackbars.tryEmit(
+                when {
+                    info.updateAvailable -> "当前核心有更新"
+                    info.state == CoreUpdateState.UpToDate -> "当前核心已是最新"
+                    else -> "当前核心暂时无法确认是否最新"
+                },
+            )
         }
     }
 

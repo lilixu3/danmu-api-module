@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Danmu API Manager</string>
-    <string name="nav_overview">主页</string>
+    <string name="nav_overview">总览</string>
     <string name="nav_core_hub">核心</string>
-    <string name="nav_console">监控</string>
+    <string name="nav_console">记录</string>
     <string name="nav_settings">设置</string>
+    <string name="nav_settings_access">访问与更新</string>
+    <string name="nav_settings_backup">备份与恢复</string>
+    <string name="nav_settings_appearance">外观与显示</string>
+    <string name="nav_settings_maintenance">日志与维护</string>
+    <string name="nav_settings_advanced">高级工具</string>
+    <string name="nav_env_editor">.env 编辑</string>
+    <string name="nav_core_detail">核心详情</string>
+    <string name="nav_api_debug">API 调试</string>
+    <string name="nav_server_env">服务端环境</string>
 </resources>

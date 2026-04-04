@@ -1,398 +1,559 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.danmuapi.manager.feature.overview
 
-import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.filled.StopCircle
-import androidx.compose.material3.ElevatedButton
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdateAlt
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
+import androidx.compose.ui.unit.sp
 import com.danmuapi.manager.app.state.ManagerViewModel
-import com.danmuapi.manager.core.designsystem.component.ActionHintRow
-import com.danmuapi.manager.core.designsystem.component.CodeBlock
-import com.danmuapi.manager.core.designsystem.component.EmptyHint
-import com.danmuapi.manager.core.designsystem.component.InfoRow
-import com.danmuapi.manager.core.designsystem.component.MetricPill
-import com.danmuapi.manager.core.designsystem.component.PageHeader
-import com.danmuapi.manager.core.designsystem.component.SectionCard
-import com.danmuapi.manager.core.designsystem.component.StatusTag
-import com.danmuapi.manager.core.designsystem.component.StatusTone
+import com.danmuapi.manager.core.designsystem.theme.DanmuMonoFamily
 import com.danmuapi.manager.core.model.CoreRecord
+import com.danmuapi.manager.core.model.ManagerStatus
 import com.danmuapi.manager.core.util.rememberLanIpv4Addresses
 
-private data class AccessEntry(
-    val label: String,
-    val url: String,
+private data class OverviewColors(
+    val backdropTop: Color,
+    val backdropMid: Color,
+    val backdropBottom: Color,
+    val haloPrimary: Color,
+    val haloSecondary: Color,
+    val card: Color,
+    val cardStrong: Color,
+    val cardBorder: Color,
+    val mutedBorder: Color,
+    val subtleText: Color,
+    val accent: Color,
+    val accentContainer: Color,
+    val positive: Color,
+    val positiveContainer: Color,
+    val danger: Color,
+    val dangerContainer: Color,
+    val disabledContainer: Color,
+    val cardMuted: Color,
+    val chip: Color,
+    val chipBorder: Color,
 )
 
-private data class HomeReminder(
-    val title: String,
-    val detail: String,
-    val tone: StatusTone,
-    val actionLabel: String? = null,
-    val onAction: (() -> Unit)? = null,
-)
-
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OverviewScreen(
     contentPadding: PaddingValues,
     viewModel: ManagerViewModel,
+    onOpenSettings: () -> Unit,
+    onOpenCoreHub: () -> Unit,
 ) {
-    val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val colors = rememberOverviewColors()
     val lanIpv4Addresses = rememberLanIpv4Addresses()
     val status = viewModel.status
+    val running = status?.isRunning == true
     val rootReady = viewModel.rootAvailable == true
+    val autostartEnabled = isAutostartEnabled(status?.autostart)
     val activeCore = status?.activeCore ?: remember(status, viewModel.cores) {
         val activeId = status?.activeCoreId ?: viewModel.cores?.activeCoreId
         viewModel.cores?.cores.orEmpty().firstOrNull { it.id == activeId }
     }
     val activeUpdate = activeCore?.id?.let(viewModel.updateInfo::get)
     val moduleUpdate = viewModel.moduleUpdateInfo
-    val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/plain"),
-    ) { uri ->
-        if (uri != null) {
-            viewModel.exportEnvToUri(uri)
-        }
+    val displayCoreName = activeCore.shortDisplayName()
+    val maskedToken = maskToken(viewModel.apiToken)
+    val localAccessUrl = remember(viewModel.apiPort, viewModel.apiToken) {
+        "http://127.0.0.1:${viewModel.apiPort}/${viewModel.apiToken}"
+    }
+    val moduleVersion = status?.module?.version?.takeIf { it.isNotBlank() }
+        ?: moduleUpdate?.currentVersion?.takeIf { it.isNotBlank() }
+        ?: "--"
+    val primaryLanAccessUrl = remember(lanIpv4Addresses, viewModel.apiPort, viewModel.apiToken) {
+        lanIpv4Addresses.firstOrNull()?.let { "http://$it:${viewModel.apiPort}/${viewModel.apiToken}" }
     }
 
-    val accessEntries = remember(viewModel.apiPort, viewModel.apiToken, viewModel.apiHost, lanIpv4Addresses) {
-        buildList {
-            add(
-                AccessEntry(
-                    label = "本机",
-                    url = "http://127.0.0.1:${viewModel.apiPort}/${viewModel.apiToken}",
-                ),
-            )
-            lanIpv4Addresses.forEach { address ->
-                add(
-                    AccessEntry(
-                        label = "局域网",
-                        url = "http://$address:${viewModel.apiPort}/${viewModel.apiToken}",
-                    ),
-                )
-            }
-        }.distinctBy { it.url }
-    }
+    val canToggleAutostart = !viewModel.busy && rootReady
+    val updateAvailable = activeUpdate?.updateAvailable == true || moduleUpdate?.hasUpdate == true
 
-    val reminders = buildList {
-        if (!rootReady) {
-            add(
-                HomeReminder(
-                    title = "Root 未就绪",
-                    detail = "Root 不可用时，服务控制、核心管理和配置写入都会受限。",
-                    tone = StatusTone.Warning,
-                    actionLabel = "重新刷新",
-                    onAction = viewModel::refreshAll,
-                ),
-            )
-        }
-        if (status?.isRunning != true) {
-            add(
-                HomeReminder(
-                    title = "服务已停止",
-                    detail = "当前无法接收请求，建议先启动服务再看日志和请求记录。",
-                    tone = StatusTone.Negative,
-                    actionLabel = "启动服务",
-                    onAction = if (rootReady) viewModel::startService else null,
-                ),
-            )
-        }
-        if (status != null && !isAutostartEnabled(status.autostart)) {
-            add(
-                HomeReminder(
-                    title = "未开启自启动",
-                    detail = "设备重启后服务不会自动拉起。",
-                    tone = StatusTone.Neutral,
-                    actionLabel = if (rootReady) "立即开启" else null,
-                    onAction = if (rootReady) ({ viewModel.setAutostart(true) }) else null,
-                ),
-            )
-        }
-        if (activeUpdate?.updateAvailable == true) {
-            add(
-                HomeReminder(
-                    title = "核心可更新",
-                    detail = "当前核心检测到新版本，可先检查变更后再执行更新。",
-                    tone = StatusTone.Warning,
-                    actionLabel = "检查当前核心",
-                    onAction = viewModel::checkActiveCoreUpdate,
-                ),
-            )
-        }
-        if (moduleUpdate?.hasUpdate == true) {
-            add(
-                HomeReminder(
-                    title = "模块可更新",
-                    detail = "模块存在新版本，建议在空闲时段执行升级。",
-                    tone = StatusTone.Warning,
-                    actionLabel = "检查模块更新",
-                    onAction = viewModel::checkModuleUpdate,
-                ),
-            )
-        }
-        if (activeCore == null) {
-            add(
-                HomeReminder(
-                    title = "没有活动核心",
-                    detail = "先安装或切换核心，再启动服务。",
-                    tone = StatusTone.Warning,
-                ),
-            )
-        }
-    }.take(3)
-
-    var showAccessPanel by remember { mutableStateOf(false) }
-
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(contentPadding)
-            .padding(horizontal = 16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        colors.backdropTop,
+                        colors.backdropMid,
+                        colors.backdropBottom,
+                    ),
+                ),
+            ),
     ) {
-        PageHeader(
-            title = "主页",
-            subtitle = "先看服务状态，再决定是启动、排查还是维护。",
-            modifier = Modifier.padding(top = 12.dp),
+        Box(
+            modifier = Modifier
+                .offset(x = 220.dp, y = (-54).dp)
+                .size(230.dp)
+                .clip(CircleShape)
+                .background(colors.haloPrimary),
+        )
+        Box(
+            modifier = Modifier
+                .offset(x = (-72).dp, y = 104.dp)
+                .size(188.dp)
+                .clip(CircleShape)
+                .background(colors.haloSecondary),
         )
 
-        SectionCard(
-            title = "状态总览",
-            subtitle = "把最重要的状态压缩在一个区块里，避免首屏堆满说明和链接。",
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = contentPadding.calculateBottomPadding() + 28.dp),
         ) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                MetricPill(
-                    label = "服务",
-                    value = if (status?.isRunning == true) "运行中" else "已停止",
+                HomeHeader(
+                    subtitle = buildHeaderSubtitle(
+                        coreName = displayCoreName,
+                        running = running,
+                        pid = status?.service?.pid,
+                        autostartEnabled = autostartEnabled,
+                    ),
+                    running = running,
+                    colors = colors,
+                    onOpenSettings = onOpenSettings,
                 )
-                MetricPill(
-                    label = "Root",
-                    value = when (viewModel.rootAvailable) {
-                        true -> "已就绪"
-                        false -> "不可用"
-                        null -> "检测中"
+
+                viewModel.busyMessage?.takeIf { it.isNotBlank() }?.let { message ->
+                    HomeBusyStrip(
+                        message = message,
+                        colors = colors,
+                    )
+                }
+
+                HomeHeroCard(
+                    running = running,
+                    rootReady = rootReady,
+                    activeCore = activeCore,
+                    status = status,
+                    autostartEnabled = autostartEnabled,
+                    todayReqNum = viewModel.todayReqNum,
+                    busy = viewModel.busy,
+                    colors = colors,
+                    onToggle = {
+                        if (running) {
+                            viewModel.stopService()
+                        } else {
+                            viewModel.startService()
+                        }
                     },
                 )
-                MetricPill(
-                    label = "当前核心",
-                    value = activeCore?.repoDisplayName ?: "未激活",
-                )
-                MetricPill(
-                    label = "今日请求",
-                    value = viewModel.todayReqNum.toString(),
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    StatusTag(
-                        text = if (status?.isRunning == true) "服务运行中" else "服务已停止",
-                        tone = if (status?.isRunning == true) StatusTone.Positive else StatusTone.Negative,
-                    )
-                    StatusTag(
-                        text = if (isAutostartEnabled(status?.autostart)) "已开启自启动" else "未开启自启动",
-                        tone = if (isAutostartEnabled(status?.autostart)) StatusTone.Info else StatusTone.Neutral,
-                    )
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        HomeMetricCard(
+                            modifier = Modifier.weight(1f),
+                            label = "请求量",
+                            value = viewModel.todayReqNum.toString(),
+                            colors = colors,
+                        )
+                        HomeMetricCard(
+                            modifier = Modifier.weight(1f),
+                            label = "端口",
+                            value = viewModel.apiPort.toString(),
+                            colors = colors,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        HomeMetricCard(
+                            modifier = Modifier.weight(1f),
+                            label = "Token",
+                            value = maskedToken,
+                            colors = colors,
+                            monospace = true,
+                        )
+                        HomeMetricCard(
+                            modifier = Modifier.weight(1f),
+                            label = "版本",
+                            value = moduleVersion,
+                            colors = colors,
+                        )
+                    }
                 }
-                Switch(
-                    checked = isAutostartEnabled(status?.autostart),
-                    onCheckedChange = viewModel::setAutostart,
-                    enabled = rootReady,
+
+                HomeQuickActionsCard(
+                    running = running,
+                    activeCore = activeCore,
+                    updateAvailable = updateAvailable,
+                    colors = colors,
+                    onRefreshOrRestart = {
+                        if (running) {
+                            viewModel.restartService()
+                        } else {
+                            viewModel.refreshAll()
+                        }
+                    },
+                    onOpenCoreHub = onOpenCoreHub,
+                    onCheckUpdates = viewModel::checkUpdates,
+                    busy = viewModel.busy,
+                )
+
+                HomeAccessCard(
+                    localAccessUrl = localAccessUrl,
+                    lanAccessUrl = primaryLanAccessUrl,
+                    autostartEnabled = autostartEnabled,
+                    autostartClickable = canToggleAutostart,
+                    colors = colors,
+                    onCopyLocal = { clipboardManager.setText(AnnotatedString(localAccessUrl)) },
+                    onCopyLan = {
+                        primaryLanAccessUrl?.let {
+                            clipboardManager.setText(AnnotatedString(it))
+                        }
+                    },
+                    onToggleAutostart = { viewModel.setAutostart(!autostartEnabled) },
                 )
             }
         }
+    }
+}
 
-        SectionCard(
-            title = "主控制",
-            subtitle = "只保留高频操作，其他维护动作放到下面的快捷任务。",
+@Composable
+private fun HomeHeader(
+    subtitle: String,
+    running: Boolean,
+    colors: OverviewColors,
+    onOpenSettings: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                if (status?.isRunning == true) {
-                    FilledTonalButton(onClick = { viewModel.stopService() }) {
-                        Icon(Icons.Filled.StopCircle, contentDescription = null)
-                        Text("停止")
-                    }
-                    ElevatedButton(onClick = { viewModel.restartService() }) {
-                        Icon(Icons.Filled.RestartAlt, contentDescription = null)
-                        Text("重启")
-                    }
-                } else {
-                    ElevatedButton(onClick = { viewModel.startService() }, enabled = rootReady) {
-                        Text("启动服务")
-                    }
-                }
-                OutlinedButton(onClick = viewModel::refreshAll) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null)
-                    Text("刷新状态")
-                }
-            }
-        }
-
-        SectionCard(
-            title = "当前实例",
-            subtitle = "这里保留当前模块、核心与接口的摘要，不混入低频设置项。",
-        ) {
-            ActiveInstanceSummary(
-                activeCore = activeCore,
-                apiHost = viewModel.apiHost,
-                apiPort = viewModel.apiPort,
-                moduleVersion = status?.module?.version ?: "--",
-                activeUpdateText = when {
-                    activeUpdate?.updateAvailable == true -> "检测到更新"
-                    activeUpdate != null -> "已是最新"
-                    else -> "未检查"
-                },
+            Text(
+                text = "弹幕 API",
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontSize = 36.sp,
+                    lineHeight = 40.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = (-0.8).sp,
+                ),
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                ),
+                color = colors.subtleText,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-
-        SectionCard(
-            title = "最近提醒",
-            subtitle = "只展示当前最需要处理的 3 件事。",
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (reminders.isEmpty()) {
-                EmptyHint(
-                    title = "当前没有阻塞项",
-                    detail = "服务、核心和模块状态都比较稳定，可以继续监控或维护。",
-                )
-            } else {
-                reminders.forEach { reminder ->
-                    ActionHintRow(
-                        title = reminder.title,
-                        detail = reminder.detail,
-                        tone = reminder.tone,
-                        actionLabel = reminder.actionLabel,
-                        onAction = reminder.onAction,
-                    )
-                }
-            }
-        }
-
-        SectionCard(
-            title = "快捷任务",
-            subtitle = "把更新检查和配置导出保留在首页，但不和主控制混排。",
-        ) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+            HomeStatusPill(
+                text = if (running) "在线" else "离线",
+                dotColor = if (running) colors.positive else colors.danger,
+                containerColor = if (running) colors.positiveContainer else colors.dangerContainer,
+            )
+            Surface(
+                onClick = onOpenSettings,
+                shape = CircleShape,
+                color = colors.card,
+                border = BorderStroke(1.dp, colors.cardBorder),
+                shadowElevation = 1.dp,
             ) {
-                FilledTonalButton(onClick = viewModel::checkActiveCoreUpdate, enabled = activeCore != null) {
-                    Text("检查当前核心")
-                }
-                FilledTonalButton(onClick = viewModel::checkModuleUpdate) {
-                    Text("检查模块更新")
-                }
-                OutlinedButton(onClick = { exportLauncher.launch("danmu_api.env") }) {
-                    Text("导出配置")
+                Box(
+                    modifier = Modifier.size(42.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = null,
+                    )
                 }
             }
         }
+    }
+}
 
-        SectionCard(
-            title = "访问入口",
-            subtitle = if (showAccessPanel) "默认收起，避免首屏被 URL 和 TOKEN 干扰。" else "需要时再展开查看 TOKEN 和访问地址。",
-            action = {
-                TextButton(onClick = { showAccessPanel = !showAccessPanel }) {
-                    Text(if (showAccessPanel) "收起" else "展开")
-                }
-            },
+@Composable
+private fun HomeStatusPill(
+    text: String,
+    dotColor: Color,
+    containerColor: Color,
+) {
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(containerColor)
+            .border(1.dp, dotColor.copy(alpha = 0.08f), CircleShape)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(dotColor),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = dotColor,
+        )
+    }
+}
+
+@Composable
+private fun HomeBusyStrip(
+    message: String,
+    colors: OverviewColors,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = colors.cardStrong,
+        border = BorderStroke(1.dp, colors.cardBorder),
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (!showAccessPanel) {
-                Text(
-                    text = "当前监听 ${viewModel.apiHost}:${viewModel.apiPort}，展开后可复制 TOKEN 和访问链接。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                InfoRow(label = "TOKEN", value = viewModel.apiToken)
-                accessEntries.forEach { entry ->
-                    Text(
-                        text = entry.label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    CodeBlock(text = entry.url)
-                }
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.subtleText,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeHeroCard(
+    running: Boolean,
+    rootReady: Boolean,
+    activeCore: CoreRecord?,
+    status: ManagerStatus?,
+    autostartEnabled: Boolean,
+    todayReqNum: Int,
+    busy: Boolean,
+    colors: OverviewColors,
+    onToggle: () -> Unit,
+) {
+    val canToggle = if (running) !busy else !busy && rootReady && activeCore != null
+    val heroTitle = if (running) "服务运行中" else "服务已停止"
+    val heroDescription = when {
+        !rootReady -> "Root 未就绪，当前只能查看状态，暂时无法执行控制。"
+        activeCore == null -> "还没有活动核心，先去切换核心，再启动服务。"
+        running -> "接口已准备好，今天已处理 $todayReqNum 次请求。"
+        else -> "实例已准备好，轻触右侧主按钮即可启动。"
+    }
+    val controlLabel = when {
+        busy -> "处理中"
+        running -> "停止"
+        canToggle -> "启动"
+        else -> "锁定"
+    }
+    val controlColor = when {
+        running -> colors.danger
+        canToggle -> colors.accent
+        else -> colors.subtleText
+    }
+    val controlContainer = when {
+        running -> colors.dangerContainer
+        canToggle -> colors.accentContainer
+        else -> colors.disabledContainer
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(34.dp),
+        color = colors.cardStrong,
+        border = BorderStroke(1.dp, colors.cardBorder),
+        shadowElevation = 4.dp,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            colors.accentContainer.copy(alpha = 0.72f),
+                            colors.cardStrong,
+                            colors.cardMuted,
+                        ),
+                    ),
+                ),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    FilledTonalButton(
-                        onClick = { clipboardManager.setText(AnnotatedString(viewModel.apiToken)) },
-                    ) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = null)
-                        Text("复制 TOKEN")
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = heroTitle,
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                fontSize = 28.sp,
+                                lineHeight = 33.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = (-0.5).sp,
+                            ),
+                        )
+                        Text(
+                            text = heroDescription,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp,
+                            ),
+                            color = colors.subtleText,
+                        )
                     }
-                    OutlinedButton(
-                        onClick = {
-                            accessEntries.firstOrNull()?.url?.let { url ->
-                                clipboardManager.setText(AnnotatedString(url))
-                            }
-                        },
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = null)
-                        Text("复制链接")
+                        HeroMetaPill(
+                            modifier = Modifier.weight(1f),
+                            label = "Root",
+                            value = when {
+                                status == null -> "加载中"
+                                rootReady -> "已就绪"
+                                else -> "受限"
+                            },
+                            colors = colors,
+                            tone = if (rootReady) colors.positive else colors.danger,
+                        )
+                        HeroMetaPill(
+                            modifier = Modifier.weight(1f),
+                            label = "自启",
+                            value = if (autostartEnabled) "已开启" else "未开启",
+                            colors = colors,
+                            tone = if (autostartEnabled) colors.accent else colors.subtleText,
+                        )
                     }
-                    OutlinedButton(
-                        onClick = {
-                            accessEntries.firstOrNull()?.url?.let { url ->
-                                val intent = Intent(Intent.ACTION_VIEW, url.toUri()).apply {
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                Surface(
+                    onClick = onToggle,
+                    enabled = canToggle,
+                    modifier = Modifier.size(92.dp),
+                    shape = CircleShape,
+                    color = controlContainer,
+                    border = BorderStroke(1.dp, colors.mutedBorder),
+                    shadowElevation = 1.dp,
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(74.dp)
+                                .clip(CircleShape)
+                                .background(controlColor.copy(alpha = 0.08f))
+                                .border(1.dp, controlColor.copy(alpha = 0.12f), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                if (busy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        strokeWidth = 2.4.dp,
+                                        color = controlColor,
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Filled.PowerSettingsNew,
+                                        contentDescription = null,
+                                        tint = controlColor,
+                                        modifier = Modifier.size(18.dp),
+                                    )
                                 }
-                                runCatching { context.startActivity(intent) }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = controlLabel,
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = controlColor,
+                                )
                             }
-                        },
-                    ) {
-                        Icon(Icons.Filled.OpenInBrowser, contentDescription = null)
-                        Text("浏览器打开")
+                        }
                     }
                 }
             }
@@ -401,33 +562,469 @@ fun OverviewScreen(
 }
 
 @Composable
-private fun ActiveInstanceSummary(
-    activeCore: CoreRecord?,
-    apiHost: String,
-    apiPort: Int,
-    moduleVersion: String,
-    activeUpdateText: String,
+private fun HeroMetaPill(
+    label: String,
+    value: String,
+    colors: OverviewColors,
+    tone: Color? = null,
+    modifier: Modifier = Modifier,
 ) {
-    if (activeCore == null) {
-        EmptyHint(
-            title = "还没有活动核心",
-            detail = "前往核心页安装或切换核心后，这里会显示版本、提交和更新时间。",
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(colors.chip)
+            .border(1.dp, colors.chipBorder, RoundedCornerShape(16.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        tone?.let {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(it),
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.subtleText,
         )
-        return
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
+}
 
-    InfoRow(label = "模块版本", value = moduleVersion)
-    InfoRow(label = "核心仓库", value = activeCore.repoDisplayName)
-    InfoRow(label = "Ref", value = activeCore.ref)
-    InfoRow(label = "版本", value = activeCore.version ?: "--")
-    InfoRow(label = "Commit", value = activeCore.commitLabel ?: "--")
-    InfoRow(label = "安装时间", value = activeCore.installedAt ?: "--")
-    InfoRow(label = "体积", value = activeCore.sizeBytes?.let { "${it} B" } ?: "--")
-    InfoRow(label = "接口监听", value = "$apiHost:$apiPort")
-    InfoRow(label = "更新状态", value = activeUpdateText)
+@Composable
+private fun HomeQuickActionsCard(
+    running: Boolean,
+    activeCore: CoreRecord?,
+    updateAvailable: Boolean,
+    colors: OverviewColors,
+    onRefreshOrRestart: () -> Unit,
+    onOpenCoreHub: () -> Unit,
+    onCheckUpdates: () -> Unit,
+    busy: Boolean,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        HomeQuickActionButton(
+            modifier = Modifier.weight(1f),
+            icon = if (running) Icons.Filled.RestartAlt else Icons.Filled.Refresh,
+            label = if (running) "重启" else "刷新",
+            enabled = !busy,
+            colors = colors,
+            onClick = onRefreshOrRestart,
+        )
+        HomeQuickActionButton(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Filled.CloudDownload,
+            label = "核心",
+            enabled = !busy,
+            colors = colors,
+            onClick = onOpenCoreHub,
+            selected = activeCore != null,
+        )
+        HomeQuickActionButton(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Filled.SystemUpdateAlt,
+            label = "更新",
+            enabled = !busy,
+            colors = colors,
+            emphasized = updateAvailable,
+            onClick = onCheckUpdates,
+        )
+    }
+}
+
+@Composable
+private fun HomeMetricCard(
+    label: String,
+    value: String,
+    colors: OverviewColors,
+    modifier: Modifier = Modifier,
+    monospace: Boolean = false,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(22.dp),
+        color = colors.cardMuted,
+        border = BorderStroke(1.dp, colors.cardBorder),
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.subtleText,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = 20.sp,
+                    lineHeight = 24.sp,
+                    fontWeight = FontWeight.Black,
+                    fontFamily = if (monospace) DanmuMonoFamily else null,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeQuickActionButton(
+    modifier: Modifier = Modifier,
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    colors: OverviewColors,
+    onClick: () -> Unit,
+    emphasized: Boolean = false,
+    selected: Boolean = false,
+) {
+    Surface(
+        modifier = modifier,
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(22.dp),
+        color = when {
+            !enabled -> colors.disabledContainer
+            emphasized -> colors.dangerContainer
+            selected -> colors.accentContainer
+            else -> colors.cardStrong
+        },
+        border = BorderStroke(
+            1.dp,
+            when {
+                emphasized -> colors.danger.copy(alpha = 0.14f)
+                selected -> colors.accent.copy(alpha = 0.14f)
+                else -> colors.cardBorder
+            },
+        ),
+        shadowElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (!enabled) {
+                            colors.cardStrong
+                        } else if (emphasized) {
+                            colors.danger.copy(alpha = 0.10f)
+                        } else {
+                            colors.cardStrong
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = if (!enabled) {
+                        colors.subtleText
+                    } else if (emphasized) {
+                        colors.danger
+                    } else {
+                        colors.accent
+                    },
+                )
+            }
+            Text(
+                modifier = Modifier.weight(1f),
+                text = label,
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else colors.subtleText,
+            )
+            if (selected || emphasized) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(if (emphasized) colors.danger else colors.accent),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeAccessCard(
+    localAccessUrl: String,
+    lanAccessUrl: String?,
+    autostartEnabled: Boolean,
+    autostartClickable: Boolean,
+    colors: OverviewColors,
+    onCopyLocal: () -> Unit,
+    onCopyLan: () -> Unit,
+    onToggleAutostart: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(30.dp),
+        color = colors.cardStrong,
+        border = BorderStroke(1.dp, colors.cardBorder),
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = "访问地址",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.subtleText,
+                    )
+                }
+                HomeAutostartPill(
+                    checked = autostartEnabled,
+                    onClick = onToggleAutostart,
+                    enabled = autostartClickable,
+                    colors = colors,
+                )
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                AccessAddressRow(
+                    title = "本机",
+                    value = localAccessUrl,
+                    colors = colors,
+                    onCopy = onCopyLocal,
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(colors.cardBorder),
+                )
+                AccessAddressRow(
+                    title = "局域网",
+                    value = lanAccessUrl ?: "未发现局域网地址",
+                    colors = colors,
+                    enabled = lanAccessUrl != null,
+                    emphasize = lanAccessUrl != null,
+                    onCopy = onCopyLan,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeAutostartPill(
+    checked: Boolean,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    colors: OverviewColors,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = if (checked) colors.accentContainer else colors.chip,
+        border = BorderStroke(1.dp, if (checked) colors.accent.copy(alpha = 0.14f) else colors.chipBorder),
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(if (checked) colors.accent else colors.subtleText),
+            )
+            Text(
+                text = if (checked) "自启动 开" else "自启动 关",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = if (checked) colors.accent else colors.subtleText,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccessAddressRow(
+    title: String,
+    value: String,
+    colors: OverviewColors,
+    onCopy: () -> Unit,
+    enabled: Boolean = true,
+    emphasize: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = colors.subtleText,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = DanmuMonoFamily,
+                ),
+                color = when {
+                    !enabled -> colors.subtleText
+                    emphasize -> colors.accent
+                    else -> MaterialTheme.colorScheme.onSurface
+                },
+            )
+        }
+        Surface(
+            onClick = onCopy,
+            enabled = enabled,
+            shape = CircleShape,
+            color = if (enabled) colors.cardStrong else colors.disabledContainer,
+            border = BorderStroke(1.dp, colors.cardBorder),
+            shadowElevation = 0.dp,
+        ) {
+            Box(
+                modifier = Modifier.size(30.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ContentCopy,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = if (enabled) colors.accent else colors.subtleText,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberOverviewColors(): OverviewColors {
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return remember(isDark) {
+        if (isDark) {
+            OverviewColors(
+                backdropTop = Color(0xFF0F1721),
+                backdropMid = Color(0xFF131B26),
+                backdropBottom = Color(0xFF11151A),
+                haloPrimary = Color(0xFF2C4E75).copy(alpha = 0.34f),
+                haloSecondary = Color(0xFF18304A).copy(alpha = 0.44f),
+                card = Color(0xFF171F29).copy(alpha = 0.96f),
+                cardStrong = Color(0xFF1B2430).copy(alpha = 0.98f),
+                cardBorder = Color(0xFF293341),
+                mutedBorder = Color(0xFF222B36),
+                subtleText = Color(0xFFAFBBC9),
+                accent = Color(0xFF8EB8E8),
+                accentContainer = Color(0xFF203244),
+                positive = Color(0xFF7DCDA5),
+                positiveContainer = Color(0xFF173126),
+                danger = Color(0xFFF1A08F),
+                dangerContainer = Color(0xFF382725),
+                disabledContainer = Color(0xFF28313D),
+                cardMuted = Color(0xFF17202A).copy(alpha = 0.88f),
+                chip = Color(0xFF202A35),
+                chipBorder = Color(0xFF2A3542),
+            )
+        } else {
+            OverviewColors(
+                backdropTop = Color(0xFFE9F0F8),
+                backdropMid = Color(0xFFF6F9FC),
+                backdropBottom = Color(0xFFF2F5F8),
+                haloPrimary = Color(0xFFBDD2EA).copy(alpha = 0.52f),
+                haloSecondary = Color(0xFFD8E5F3).copy(alpha = 0.78f),
+                card = Color(0xFFFBFDFF).copy(alpha = 0.92f),
+                cardStrong = Color(0xFFFFFFFF).copy(alpha = 0.97f),
+                cardBorder = Color(0xFFD8E2EC),
+                mutedBorder = Color(0xFFE5EBF2),
+                subtleText = Color(0xFF667386),
+                accent = Color(0xFF5F83A8),
+                accentContainer = Color(0xFFE7EFF8),
+                positive = Color(0xFF2E8661),
+                positiveContainer = Color(0xFFE5F2EB),
+                danger = Color(0xFFD86F5A),
+                dangerContainer = Color(0xFFF8E8E3),
+                disabledContainer = Color(0xFFDCE4EC),
+                cardMuted = Color(0xFFF8FBFE),
+                chip = Color(0xFFF3F7FB),
+                chipBorder = Color(0xFFE5ECF3),
+            )
+        }
+    }
+}
+
+private fun buildHeaderSubtitle(
+    coreName: String,
+    running: Boolean,
+    pid: String?,
+    autostartEnabled: Boolean,
+): String {
+    val stateLabel = when {
+        running && !pid.isNullOrBlank() -> "PID $pid"
+        running -> "服务已就绪"
+        autostartEnabled -> "等待拉起"
+        else -> "待手动启动"
+    }
+    return "$coreName · $stateLabel"
+}
+
+private fun maskToken(token: String): String {
+    return when {
+        token.length <= 4 -> token
+        token.length <= 8 -> token.take(2) + "••" + token.takeLast(2)
+        else -> token.take(4) + "••••" + token.takeLast(2)
+    }
 }
 
 private fun isAutostartEnabled(raw: String?): Boolean {
-    val value = raw.orEmpty().trim().lowercase()
-    return value in setOf("on", "enabled", "enable", "true", "1", "yes")
+    return raw == "1" || raw.equals("true", ignoreCase = true) || raw.equals("enabled", ignoreCase = true)
+}
+
+private fun CoreRecord?.shortDisplayName(): String {
+    val source = this?.repoDisplayName?.takeIf { it.isNotBlank() } ?: return "还没有活动核心"
+    return source.substringAfterLast('/')
 }

@@ -202,6 +202,52 @@ core_dir_for() {
   echo "${CORES_DIR}/$1/danmu_api"
 }
 
+read_meta_string() {
+  # args: meta_path key
+  mp="$1"
+  key="$2"
+  [ -f "${mp}" ] || {
+    echo ""
+    return 0
+  }
+
+  line="$(grep -m1 "\"${key}\"" "${mp}" 2>/dev/null || true)"
+  if [ -z "${line}" ]; then
+    echo ""
+    return 0
+  fi
+
+  printf '%s' "${line}" | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/" | sed 's/\\"/"/g'
+}
+
+cleanup_repo_ref_duplicates() {
+  # args: repo ref keep_id
+  repo="$1"
+  ref="$2"
+  keep_id="$3"
+  removed="0"
+
+  for d in "${CORES_DIR}"/*; do
+    [ -d "${d}" ] || continue
+    id="$(basename "${d}")"
+    [ "${id}" = "${keep_id}" ] && continue
+
+    mp="${d}/meta.json"
+    [ -f "${mp}" ] || continue
+
+    meta_repo="$(read_meta_string "${mp}" "repo")"
+    meta_ref="$(read_meta_string "${mp}" "ref")"
+    [ "${meta_repo}" = "${repo}" ] || continue
+    [ "${meta_ref}" = "${ref}" ] || continue
+
+    rm -rf "${d}" 2>/dev/null || true
+    removed=$((removed + 1))
+    log "prune old core: keep=${keep_id} removed=${id} repo=${repo} ref=${ref}"
+  done
+
+  printf '%s' "${removed}"
+}
+
 read_version_from_globals() {
   # $1 = core dir (danmu_api)
   g="$1/configs/globals.js"
@@ -473,14 +519,15 @@ install_core() {
   # If already installed, just activate
   if [ -d "${dest_core}" ] && [ -f "${dest_core}/worker.js" ]; then
     activate_core "${id}" >/dev/null 2>&1 || true
+    removed_old="$(cleanup_repo_ref_duplicates "${repo}" "${ref}" "${id}")"
     mp="$(meta_path_for "${id}")"
     if [ -f "$mp" ]; then
-      printf '{"result":"ok","action":"already_installed","activated":true,"core":'
+      printf '{"result":"ok","action":"already_installed","activated":true,"removedOldCount":%s,"core":' "${removed_old}"
       cat "$mp" 2>/dev/null || echo '{}'
       echo '}'
       return 0
     fi
-    echo '{"result":"ok","action":"already_installed","activated":true}'
+    printf '{"result":"ok","action":"already_installed","activated":true,"removedOldCount":%s}\n' "${removed_old}"
     return 0
   fi
 
@@ -538,9 +585,10 @@ install_core() {
   rm -rf "${exdir}" 2>/dev/null || true
 
   activate_core "${id}" >/dev/null 2>&1 || true
+  removed_old="$(cleanup_repo_ref_duplicates "${repo}" "${ref}" "${id}")"
 
   mp="$(meta_path_for "${id}")"
-  printf '{"result":"ok","action":"installed","activated":true,"core":'
+  printf '{"result":"ok","action":"installed","activated":true,"removedOldCount":%s,"core":' "${removed_old}"
   cat "$mp" 2>/dev/null || echo '{}'
   echo '}'
   return 0

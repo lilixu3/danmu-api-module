@@ -4,6 +4,8 @@ import com.danmuapi.manager.core.data.network.GitHubApi
 import com.danmuapi.manager.core.data.network.GitHubReleaseApi
 import com.danmuapi.manager.core.model.CoreRecord
 import com.danmuapi.manager.core.model.CoreUpdateInfo
+import com.danmuapi.manager.core.model.CoreUpdateState
+import com.danmuapi.manager.core.model.LatestCommitInfo
 import com.danmuapi.manager.core.model.ManagerStatus
 import com.danmuapi.manager.core.model.ModuleRelease
 import com.danmuapi.manager.core.model.ModuleUpdateInfo
@@ -35,6 +37,34 @@ internal fun compareVersions(left: String, right: String): Int {
         }
     }
     return 0
+}
+
+internal fun resolveCoreUpdateState(
+    core: CoreRecord,
+    latestCommit: LatestCommitInfo?,
+    latestVersion: String?,
+): CoreUpdateState {
+    val localSha = core.sha?.trim().orEmpty()
+    val remoteSha = latestCommit?.sha?.trim().orEmpty()
+    if (localSha.isNotEmpty() && remoteSha.isNotEmpty()) {
+        return if (localSha.equals(remoteSha, ignoreCase = true)) {
+            CoreUpdateState.UpToDate
+        } else {
+            CoreUpdateState.UpdateAvailable
+        }
+    }
+
+    val localVersion = core.version?.trim().orEmpty()
+    val remoteVersion = latestVersion?.trim().orEmpty()
+    if (localVersion.isNotEmpty() && remoteVersion.isNotEmpty()) {
+        return if (compareVersions(remoteVersion, localVersion) > 0) {
+            CoreUpdateState.UpdateAvailable
+        } else {
+            CoreUpdateState.Unknown
+        }
+    }
+
+    return CoreUpdateState.Unknown
 }
 
 class DanmuRepository(
@@ -76,18 +106,21 @@ class DanmuRepository(
         }
 
         val latestCommit = gitHubApi.getLatestCommit(core.repo, core.ref, token)
-        val latestVersion = latestCommit?.sha?.let { sha ->
-            gitHubApi.getRemoteCoreVersion(core.repo, sha)
-        }
-        val updateAvailable = latestCommit?.sha?.let { remoteSha ->
-            val localSha = core.sha?.trim().orEmpty()
-            localSha.isNotEmpty() && !localSha.equals(remoteSha, ignoreCase = true)
-        } ?: false
+        val latestVersion = gitHubApi.getRemoteCoreVersion(
+            repo = core.repo,
+            refOrSha = latestCommit?.sha ?: core.ref,
+        )
+        val state = resolveCoreUpdateState(
+            core = core,
+            latestCommit = latestCommit,
+            latestVersion = latestVersion,
+        )
 
         return CoreUpdateInfo(
             latestCommit = latestCommit,
             latestVersion = latestVersion,
-            updateAvailable = updateAvailable,
+            updateAvailable = state == CoreUpdateState.UpdateAvailable,
+            state = state,
         )
     }
 

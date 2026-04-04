@@ -27,8 +27,9 @@ private val DarkColors = darkColorScheme(
     tertiary = Ember,
     background = Graphite,
     surface = WarmSurfaceDark,
-    surfaceVariant = androidx.compose.ui.graphics.Color(0xFF2A313A),
-    onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFB7C0CC),
+    surfaceVariant = androidx.compose.ui.graphics.Color(0xFF252C35),
+    onSurface = androidx.compose.ui.graphics.Color(0xFFE7ECF3),
+    onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFB8C0CC),
 )
 
 @Composable

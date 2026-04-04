@@ -8,10 +8,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -27,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -43,12 +48,48 @@ fun DanmuManagerApp(
 ) {
     val navController = rememberNavController()
     val destinations = AppDestination.entries
+    val primaryDestinations = remember { AppDestination.entries.filter { it.primaryNav } }
     val backStack by navController.currentBackStackEntryAsState()
     val currentDestination = backStack?.destination
-    val currentTitle = destinations.firstOrNull { destination ->
+    val currentAppDestination = destinations.firstOrNull { destination ->
         currentDestination?.hierarchy?.any { it.route == destination.route } == true
-    }?.let { stringResourceSafe(it.labelRes) } ?: stringResourceSafe(AppDestination.Overview.labelRes)
+    } ?: AppDestination.Overview
+    val currentTitle = stringResourceSafe(currentAppDestination.labelRes)
     val snackbarHostState = remember { SnackbarHostState() }
+    val immersiveDestinations = remember {
+        setOf(
+            AppDestination.Overview,
+            AppDestination.CoreHub,
+            AppDestination.Console,
+            AppDestination.Settings,
+            AppDestination.SettingsAccess,
+            AppDestination.SettingsBackup,
+            AppDestination.SettingsAppearance,
+            AppDestination.SettingsMaintenance,
+            AppDestination.SettingsAdvanced,
+            AppDestination.ApiDebug,
+            AppDestination.ServerEnv,
+            AppDestination.EnvEditor,
+        )
+    }
+    val showTopBar = currentAppDestination !in immersiveDestinations
+    val chromeBackgroundColor = remember(currentAppDestination) {
+        when (currentAppDestination) {
+            in immersiveDestinations -> Color(0xFFE9F0F8)
+            else -> Color.Unspecified
+        }
+    }
+    val chromeContentColor = MaterialTheme.colorScheme.onBackground
+
+    fun navigateTo(route: String) {
+        navController.navigate(route) {
+            launchSingleTop = true
+            restoreState = true
+            popUpTo(navController.graph.startDestinationId) {
+                saveState = true
+            }
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.snackbars.collectLatest { message ->
@@ -61,51 +102,73 @@ fun DanmuManagerApp(
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
+            containerColor = if (chromeBackgroundColor == Color.Unspecified) {
+                MaterialTheme.colorScheme.background
+            } else {
+                chromeBackgroundColor
+            },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             topBar = {
-                Column {
-                    TopAppBar(
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
-                        ),
-                        title = {
-                            Column {
-                                Text(text = currentTitle)
-                                Text(
-                                    text = "Danmu API Manager",
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        },
-                    )
-                    if (viewModel.busy) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    }
-                    viewModel.busyMessage?.takeIf { it.isNotBlank() }?.let { message ->
-                        Text(
-                            text = message,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                if (showTopBar) {
+                    Column {
+                        TopAppBar(
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = if (chromeBackgroundColor == Color.Unspecified) {
+                                    MaterialTheme.colorScheme.background
+                                } else {
+                                    chromeBackgroundColor
+                                },
+                                scrolledContainerColor = if (chromeBackgroundColor == Color.Unspecified) {
+                                    MaterialTheme.colorScheme.background
+                                } else {
+                                    chromeBackgroundColor
+                                },
+                                navigationIconContentColor = chromeContentColor,
+                                titleContentColor = chromeContentColor,
+                                actionIconContentColor = chromeContentColor,
+                            ),
+                            navigationIcon = {
+                                if (!currentAppDestination.primaryNav) {
+                                    IconButton(onClick = { navController.navigateUp() }) {
+                                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                                    }
+                                }
+                            },
+                            title = { Text(text = currentTitle) },
+                            actions = {
+                                if (currentAppDestination.primaryNav) {
+                                    IconButton(onClick = { navigateTo(AppDestination.Settings.route) }) {
+                                        Icon(Icons.Filled.Settings, contentDescription = null)
+                                    }
+                                }
+                            },
                         )
+                        if (viewModel.busy) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                        viewModel.busyMessage?.takeIf { it.isNotBlank() }?.let { message ->
+                            Text(
+                                text = message,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (chromeBackgroundColor == Color.Unspecified) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    chromeContentColor.copy(alpha = 0.72f)
+                                },
+                            )
+                        }
                     }
                 }
             },
             bottomBar = {
                 if (!useRail) {
                     NavigationBar {
-                        destinations.forEach { destination ->
+                        primaryDestinations.forEach { destination ->
                             val selected = currentDestination?.hierarchy?.any { it.route == destination.route } == true
                             NavigationBarItem(
                                 selected = selected,
-                                onClick = {
-                                    navController.navigate(destination.route) {
-                                        launchSingleTop = true
-                                        restoreState = true
-                                        popUpTo(navController.graph.startDestinationId) {
-                                            saveState = true
-                                        }
-                                    }
-                                },
+                                onClick = { navigateTo(destination.route) },
                                 icon = { Icon(destination.icon, contentDescription = null) },
                                 label = { Text(text = stringResourceSafe(destination.labelRes)) },
                             )
@@ -125,19 +188,11 @@ fun DanmuManagerApp(
                         modifier = Modifier.fillMaxHeight(),
                         containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
                     ) {
-                        destinations.forEach { destination ->
+                        primaryDestinations.forEach { destination ->
                             val selected = currentDestination?.hierarchy?.any { it.route == destination.route } == true
                             NavigationRailItem(
                                 selected = selected,
-                                onClick = {
-                                    navController.navigate(destination.route) {
-                                        launchSingleTop = true
-                                        restoreState = true
-                                        popUpTo(navController.graph.startDestinationId) {
-                                            saveState = true
-                                        }
-                                    }
-                                },
+                                onClick = { navigateTo(destination.route) },
                                 icon = { Icon(destination.icon, contentDescription = null) },
                                 label = { Text(text = stringResourceSafe(destination.labelRes)) },
                             )

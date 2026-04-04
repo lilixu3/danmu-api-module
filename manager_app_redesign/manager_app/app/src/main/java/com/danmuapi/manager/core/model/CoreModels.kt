@@ -26,7 +26,14 @@ data class CoreUpdateInfo(
     val latestCommit: LatestCommitInfo? = null,
     val latestVersion: String? = null,
     val updateAvailable: Boolean = false,
+    val state: CoreUpdateState = CoreUpdateState.Unknown,
 )
+
+enum class CoreUpdateState {
+    Unknown,
+    UpToDate,
+    UpdateAvailable,
+}
 
 data class LatestCommitInfo(
     val sha: String,
