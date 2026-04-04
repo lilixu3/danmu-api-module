@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.danmuapi.manager.app-mergeDebugResources-75:/values-h720dp-v13/values-h720dp-v13.xml",
+            "map": [
+                {
+                    "source": "/data/data/com.termux/files/home/.gradle/caches/9.3.1/transforms/8542a972185bee16b74cdc4d3abe5fb0/transformed/appcompat-1.6.1/res/values-h720dp-v13/values-h720dp-v13.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "66",
+                        "endOffsets": "117"
+                    }
+                }
+            ]
+        }
+    ]
+}

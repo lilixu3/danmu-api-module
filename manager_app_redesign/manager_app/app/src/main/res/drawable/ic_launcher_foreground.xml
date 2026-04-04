@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!--
+      Foreground: three "danmaku" bullets following smooth streaks.
+      - Clean composition, fewer lines, more balanced spacing
+      - Stays well inside the adaptive icon safe area (translate 18dp)
+    -->
+
+    <group
+        android:translateX="18"
+        android:translateY="18">
+
+        <!-- Subtle ring (adds structure, still lightweight) -->
+        <path
+            android:pathData="M36,12 a24,24 0 1,0 0,48 a24,24 0 1,0 0,-48"
+            android:strokeWidth="4"
+            android:strokeColor="#33FFFFFF"
+            android:fillColor="#00000000" />
+
+        <!-- Streak 1 (purple) -->
+        <path
+            android:pathData="M6,34 C18,22 36,16 56,14"
+            android:strokeWidth="8"
+            android:strokeColor="#FF7C5CFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M60,12 L60,12"
+            android:strokeWidth="16"
+            android:strokeColor="#FF7C5CFF"
+            android:strokeLineCap="round" />
+
+        <!-- Streak 2 (cyan) -->
+        <path
+            android:pathData="M6,42 C20,32 38,28 54,26"
+            android:strokeWidth="8"
+            android:strokeColor="#FF00B8D9"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M58,24 L58,24"
+            android:strokeWidth="16"
+            android:strokeColor="#FF00B8D9"
+            android:strokeLineCap="round" />
+
+        <!-- Streak 3 (orange) -->
+        <path
+            android:pathData="M6,50 C22,48 40,44 52,40"
+            android:strokeWidth="8"
+            android:strokeColor="#FFFFA24B"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M56,38 L56,38"
+            android:strokeWidth="16"
+            android:strokeColor="#FFFFA24B"
+            android:strokeLineCap="round" />
+
+    </group>
+</vector>
