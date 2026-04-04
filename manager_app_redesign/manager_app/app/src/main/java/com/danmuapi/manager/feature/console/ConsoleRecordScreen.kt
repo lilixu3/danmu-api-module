@@ -752,15 +752,26 @@ private fun ConsoleToolbar(
                             onExport()
                         },
                     )
+                    if (selectedLogSource == ConsoleLogSource.Service) {
+                        DropdownMenuItem(
+                            text = { Text("清理服务日志") },
+                            onClick = {
+                                menuExpanded = false
+                                onClear()
+                            },
+                        )
+                    }
                 }
             }
 
-            ToolbarIconButton(
-                icon = Icons.Filled.DeleteOutline,
-                contentDescription = "清空日志",
-                palette = palette,
-                onClick = onClear,
-            )
+            if (selectedLogSource == ConsoleLogSource.Module) {
+                ToolbarIconButton(
+                    icon = Icons.Filled.DeleteOutline,
+                    contentDescription = "清空日志",
+                    palette = palette,
+                    onClick = onClear,
+                )
+            }
         }
     }
 }

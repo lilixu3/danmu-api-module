@@ -2,9 +2,9 @@
 # danmu_api_server control script: start/stop/restart/status
 # Works for both bundled Node runtime and external Node installs.
 #
-# Battery/storage notes:
-# - Server stdout/stderr is written to logs/server.log (rotated)
-# - This script itself logs to logs/control.log
+# Runtime notes:
+# - Core service logs stay in memory and are exposed via /api/logs
+# - Do not mirror service stdout/stderr into local files
 set -u
 
 # Module id
@@ -24,8 +24,6 @@ fi
 
 PERSIST="/data/adb/danmu_api_server"
 LOGDIR="$PERSIST/logs"
-CTRL_LOG="$LOGDIR/control.log"
-SERVER_LOG="$LOGDIR/server.log"
 PIDFILE="$PERSIST/danmu_api.pid"
 
 NODE_HOME="$MODDIR/node"
@@ -35,29 +33,16 @@ APP_ENTRY="$MODDIR/app/android-server.mjs"
 mkdir -p "$PERSIST" "$LOGDIR" 2>/dev/null
 
 log() {
-  # Avoid failing if log dir not writable for any reason
-  echo "[danmu_api][control] $(date '+%F %T') $*" >> "$CTRL_LOG" 2>/dev/null
+  :
 }
 
-rotate_log_if_needed() {
-  # args: file max_bytes keep
-  f="$1"; maxb="$2"; keep="$3"
-  [ -f "$f" ] || return 0
-
-  sz="$(wc -c < "$f" 2>/dev/null || echo 0)"
-  case "$sz" in
-    ''|*[!0-9]*) sz=0 ;;
-  esac
-  [ "$sz" -gt "$maxb" ] || return 0
-
-  # rotate: f.(keep-1) -> f.keep, ... , f -> f.1
-  i="$keep"
-  while [ "$i" -ge 2 ]; do
-    prev=$((i-1))
-    [ -f "$f.$prev" ] && mv -f "$f.$prev" "$f.$i" 2>/dev/null || true
-    i=$((i-1))
-  done
-  mv -f "$f" "$f.1" 2>/dev/null || true
+cleanup_legacy_service_logs() {
+  rm -f \
+    "$LOGDIR/server.log" \
+    "$LOGDIR"/server.log.* \
+    "$PERSIST/nohup.out" \
+    "$MODDIR/app/nohup.out" \
+    2>/dev/null || true
 }
 
 ensure_bundled_libcxx() {
@@ -199,15 +184,14 @@ do_start() {
   chmod 600 "$CFG_DIR/.env" 2>/dev/null
 
   export DANMU_API_CONFIG_DIR="$CFG_DIR"
-  export DANMU_API_LOG_DIR="$LOGDIR"
+  unset DANMU_API_LOG_DIR
 
   export NODE_ENV=production
 
-  # Keep logs from growing forever (storage + battery impact)
-  rotate_log_if_needed "$SERVER_LOG" 2097152 3
+  cleanup_legacy_service_logs
 
   log "starting (node=$NODE_BIN, entry=$APP_ENTRY)"
-  nohup "$NODE_BIN" "$APP_ENTRY" >> "$SERVER_LOG" 2>&1 &
+  nohup "$NODE_BIN" "$APP_ENTRY" </dev/null >/dev/null 2>&1 &
   echo $! > "$PIDFILE"
   return 0
 }

@@ -17,6 +17,3 @@ rm -f /data/adb/service.d/danmu_api_server-inotifyd.sh 2>/dev/null
 # Cleanup pid files (logs/config kept)
 rm -f "$PERSIST/watchdog.pid" 2>/dev/null
 rm -f "$PERSIST/inotifyd.pid" 2>/dev/null
-
-LOGFILE="$PERSIST/logs/service.log"
-echo "[danmu_api] Module removed. Persistent data kept in $PERSIST (delete manually if you want)." >> "$LOGFILE" 2>/dev/null

@@ -3,8 +3,6 @@ MODDIR=${0%/*}
 
 # Persistent directories
 PERSIST=/data/adb/danmu_api_server
-LOGDIR="$PERSIST/logs"
-LOGFILE="$LOGDIR/service.log"
 
 # Optional manual service toggle (Magisk Action button)
 # If this flag exists, do not auto-start on boot.
@@ -25,8 +23,7 @@ fi
 
 
 log() {
-  mkdir -p "$LOGDIR" 2>/dev/null || true
-  echo "[danmu_api][service] $(date '+%F %T') $*" >> "$LOGFILE" 2>/dev/null || true
+  :
 }
 
 wait_for_pm() {

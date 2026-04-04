@@ -10,10 +10,9 @@ import { handleRequest } from './danmu_api/worker.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Persistent home (config/logs are stored outside the module folder)
+// Persistent home
 const HOME = process.env.DANMU_API_HOME || __dirname;
 const CONFIG_DIR = process.env.DANMU_API_CONFIG_DIR || path.join(HOME, 'config');
-const LOG_DIR = process.env.DANMU_API_LOG_DIR || path.join(HOME, 'logs');
 
 const HOST = process.env.DANMU_API_HOST || '0.0.0.0';
 const PORT = Number(process.env.DANMU_API_PORT || 9321);
@@ -26,7 +25,6 @@ function log(...args) {
 
 function ensureDirs() {
   try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); } catch {}
-  try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch {}
 }
 
 function parseDotEnv(envText) {

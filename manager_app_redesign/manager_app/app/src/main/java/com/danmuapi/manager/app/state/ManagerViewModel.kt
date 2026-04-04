@@ -1285,15 +1285,11 @@ class ManagerViewModel(
 
     fun clearServerLogs() {
         viewModelScope.launch {
-            if (!hasSessionAdminToken()) {
-                snackbars.tryEmit("请先输入管理员 Token")
-                return@launch
-            }
             val result = requestDanmuApi(
                 method = "POST",
                 path = "/api/logs/clear",
                 bodyJson = "{}",
-                useAdminToken = true,
+                useAdminToken = false,
             )
             if (result.isSuccessful) {
                 snackbars.tryEmit("服务日志已清空")

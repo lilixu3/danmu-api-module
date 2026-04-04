@@ -23,7 +23,6 @@ ACTIVE_FILE="${PERSIST}/active_core_id"  # text: active core id
 
 TMP_DIR="${PERSIST}/tmp"
 LOGDIR="${PERSIST}/logs"
-LOGFILE="${LOGDIR}/core_manager.log"
 
 DOWNLOAD_CONF="${PERSIST}/core_download.conf"
 DEFAULT_CORE_REPO="huangxd-/danmu_api"
@@ -74,8 +73,7 @@ if [ -d "${MODDIR}/node/lib" ]; then
 fi
 
 log() {
-  # best-effort
-  echo "[danmu_api][core] $(date '+%F %T') $*" >> "${LOGFILE}" 2>/dev/null || true
+  :
 }
 
 rand_num() {

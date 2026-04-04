@@ -7,15 +7,13 @@ set -u
 MODID="danmu_api_server"
 MODULE_DIR="/data/adb/modules/$MODID"
 PERSIST="/data/adb/danmu_api_server"
-LOGDIR="$PERSIST/logs"
-LOGFILE="$LOGDIR/inotifyd.log"
 PIDFILE="$PERSIST/inotifyd.pid"
 HANDLER="$MODULE_DIR/scripts/danmu_inotify_handler.sh"
 
-mkdir -p "$PERSIST" "$LOGDIR" 2>/dev/null
+mkdir -p "$PERSIST" 2>/dev/null
 
 log() {
-  echo "[danmu_api][inotifyd] $(date '+%F %T') $*" >> "$LOGFILE" 2>/dev/null
+  :
 }
 
 # Single-instance guard
