@@ -61,7 +61,7 @@ class DanmuRepositoryTest {
     }
 
     @Test
-    fun `resolveCoreUpdateState stays unknown when only same version is known`() {
+    fun `resolveCoreUpdateState treats same version as up to date when commit is unavailable`() {
         val state = resolveCoreUpdateState(
             core = CoreRecord(
                 repo = "lilixu3/danmu_api",
@@ -73,6 +73,22 @@ class DanmuRepositoryTest {
             latestVersion = "1.18.4",
         )
 
-        assertEquals(CoreUpdateState.Unknown, state)
+        assertEquals(CoreUpdateState.UpToDate, state)
+    }
+
+    @Test
+    fun `resolveCoreUpdateState treats older remote version as up to date when commit is unavailable`() {
+        val state = resolveCoreUpdateState(
+            core = CoreRecord(
+                repo = "lilixu3/danmu_api",
+                ref = "main",
+                sha = null,
+                version = "1.18.4",
+            ),
+            latestCommit = null,
+            latestVersion = "1.18.3",
+        )
+
+        assertEquals(CoreUpdateState.UpToDate, state)
     }
 }

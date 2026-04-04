@@ -60,7 +60,7 @@ internal fun resolveCoreUpdateState(
         return if (compareVersions(remoteVersion, localVersion) > 0) {
             CoreUpdateState.UpdateAvailable
         } else {
-            CoreUpdateState.Unknown
+            CoreUpdateState.UpToDate
         }
     }
 
@@ -105,11 +105,15 @@ class DanmuRepository(
             return CoreUpdateInfo()
         }
 
-        val latestCommit = gitHubApi.getLatestCommit(core.repo, core.ref, token)
         val latestVersion = gitHubApi.getRemoteCoreVersion(
             repo = core.repo,
-            refOrSha = latestCommit?.sha ?: core.ref,
+            refOrSha = core.ref,
         )
+        val latestCommit = token?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { safeToken ->
+                gitHubApi.getLatestCommit(core.repo, core.ref, safeToken)
+            }
         val state = resolveCoreUpdateState(
             core = core,
             latestCommit = latestCommit,

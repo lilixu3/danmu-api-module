@@ -98,7 +98,6 @@ fun AppNavigation(
                 contentPadding = contentPadding,
                 viewModel = viewModel,
                 onBack = { navController.navigateUp() },
-                onOpenEnvEditor = { navController.navigate(AppDestination.EnvEditor.route) },
             )
         }
         composable(AppDestination.SettingsAppearance.route) {

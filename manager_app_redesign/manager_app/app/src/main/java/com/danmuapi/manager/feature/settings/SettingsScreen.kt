@@ -60,7 +60,7 @@ fun SettingsScreen(
         }
     }
     val backupSummary = if (webDavUrl.isBlank()) {
-        ".env / 本地 / WebDAV"
+        "本地备份 / WebDAV"
     } else {
         "WebDAV 已配置"
     }
@@ -140,7 +140,7 @@ fun SettingsScreen(
             )
             SettingsNavCard(
                 title = "备份与恢复",
-                subtitle = "集中处理 WebDAV、导入导出和 .env 文件编辑。",
+                subtitle = "集中处理 WebDAV 和本地导入导出，保持入口克制。",
                 icon = Icons.Filled.CloudDownload,
                 summary = backupSummary,
                 palette = palette,

@@ -124,7 +124,7 @@ fun CoreHubScreen(
     }
     var query by rememberSaveable { mutableStateOf("") }
     var selectedFilter by rememberSaveable { mutableStateOf(CoreFilter.All) }
-    var repoInput by rememberSaveable { mutableStateOf("lilixu3/danmu_api") }
+    var repoInput by rememberSaveable { mutableStateOf("huangxd-/danmu_api") }
     var refInput by rememberSaveable { mutableStateOf("main") }
     var showInstallSheet by rememberSaveable { mutableStateOf(false) }
 
@@ -1052,9 +1052,8 @@ private fun InstallCoreSheet(
 ) {
     val presets = remember {
         listOf(
-            InstallPreset("主线", "lilixu3/danmu_api", "main"),
-            InstallPreset("开发", "lilixu3/danmu_api", "dev"),
-            InstallPreset("备用", "huangxd-/danmu_api", "main"),
+            InstallPreset("主线", "huangxd-/danmu_api", "main"),
+            InstallPreset("开发", "lilixu3/danmu_api", "main"),
         )
     }
 
@@ -1069,7 +1068,7 @@ private fun InstallCoreSheet(
             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
         )
         Text(
-            text = "只保留必要输入。预设仓库放在上面，仓库和分支填好后直接安装。",
+            text = "主线默认走稳定镜像仓库，开发预设切到主仓库 main。仓库和分支填好后直接安装。",
             style = MaterialTheme.typography.bodyMedium,
             color = colors.subtleText,
         )

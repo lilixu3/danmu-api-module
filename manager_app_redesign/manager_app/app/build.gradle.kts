@@ -39,6 +39,9 @@ android {
         debug {
             isMinifyEnabled = false
             isShrinkResources = false
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            resValue("string", "app_name", "弹幕 API Debug")
         }
     }
 

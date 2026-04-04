@@ -152,7 +152,6 @@ fun SettingsBackupScreen(
     contentPadding: PaddingValues,
     viewModel: ManagerViewModel,
     onBack: () -> Unit,
-    onOpenEnvEditor: () -> Unit,
 ) {
     val palette = rememberSettingsPalette()
     val webDavUrl by viewModel.webDavUrl.collectAsStateWithLifecycle()
@@ -364,25 +363,13 @@ fun SettingsBackupScreen(
         SettingsPanel(palette = palette) {
             SettingsPanelHeader(
                 title = "本地配置",
-                subtitle = "全屏编辑 .env，导入导出都放在同一区域完成。",
+                subtitle = "本地导入导出集中处理当前配置文件，不再额外暴露编辑入口。",
                 palette = palette,
             )
             SettingsValueRow(
-                label = "路径",
+                label = "配置文件",
                 value = DanmuPaths.ENV_FILE,
                 palette = palette,
-            )
-            SettingsDivider(palette)
-            SettingsPlainRow(
-                title = "打开 .env 编辑器",
-                subtitle = "进入全屏编辑页，直接修改当前环境文件。",
-                palette = palette,
-                onClick = onOpenEnvEditor,
-                trailing = {
-                    TextButton(onClick = onOpenEnvEditor) {
-                        Text("打开")
-                    }
-                },
             )
             SettingsDivider(palette)
             SettingsPlainRow(

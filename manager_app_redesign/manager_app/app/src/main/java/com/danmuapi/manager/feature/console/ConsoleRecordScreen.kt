@@ -1,8 +1,9 @@
 package com.danmuapi.manager.feature.console
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -31,14 +33,17 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
@@ -60,6 +65,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -144,7 +150,26 @@ internal fun ConsoleRecordScreen(
     var selectedLogFilter by rememberSaveable { mutableStateOf(ConsoleLogFilter.All) }
     var showClearDialog by rememberSaveable { mutableStateOf(false) }
     var showModuleFileSheet by rememberSaveable { mutableStateOf(false) }
+    var showLogSearch by rememberSaveable { mutableStateOf(false) }
+    var logSearchQuery by rememberSaveable { mutableStateOf("") }
     var expandedRequestKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingLogExportText by remember { mutableStateOf<String?>(null) }
+    var pendingLogExportName by rememberSaveable { mutableStateOf("danmu_logs.txt") }
+
+    val logExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        val exportText = pendingLogExportText
+        if (uri != null && exportText != null) {
+            viewModel.exportTextToUri(
+                uri = uri,
+                text = exportText,
+                successMessage = "已导出日志",
+                failureMessage = "日志导出失败",
+            )
+        }
+        pendingLogExportText = null
+    }
 
     val moduleFiles = viewModel.logs?.files.orEmpty()
     val selectedModuleFile = remember(moduleFiles, viewModel.moduleLogPath) {
@@ -226,6 +251,9 @@ internal fun ConsoleRecordScreen(
             )
         }
     }
+    val visibleLogLines = remember(renderedLogLines, logSearchQuery) {
+        filterLogLines(renderedLogLines, logSearchQuery)
+    }
 
     val statusText = remember(
         selectedLogSource,
@@ -252,6 +280,14 @@ internal fun ConsoleRecordScreen(
                 }
                 "$refreshState · $fileLabel · 最近 $consoleLogLimit 行"
             }
+        }
+    }
+    val displayStatusText = remember(statusText, logSearchQuery, visibleLogLines.size, renderedLogLines.size) {
+        val keyword = logSearchQuery.trim()
+        if (keyword.isBlank()) {
+            statusText
+        } else {
+            "$statusText · 搜索 \"$keyword\" ${visibleLogLines.size}/${renderedLogLines.size} 条"
         }
     }
 
@@ -373,19 +409,28 @@ internal fun ConsoleRecordScreen(
                             selectedLogSource = selectedLogSource,
                             selectedLogFilter = selectedLogFilter,
                             selectedModuleFile = selectedModuleFile,
-                            renderedLogLines = renderedLogLines,
-                            statusText = statusText,
+                            renderedLogLines = visibleLogLines,
+                            statusText = displayStatusText,
+                            showLogSearch = showLogSearch,
+                            logSearchQuery = logSearchQuery,
                             palette = palette,
                             onLogSourceChange = { selectedLogSource = it },
                             onLogFilterChange = { selectedLogFilter = it },
-                            onRefresh = {
-                                when (selectedLogSource) {
-                                    ConsoleLogSource.Service -> viewModel.refreshServerLogs()
-                                    ConsoleLogSource.Module -> {
-                                        viewModel.refreshLogs()
-                                        selectedModuleFile?.path?.let(viewModel::loadModuleLog)
-                                    }
+                            onSearchQueryChange = { logSearchQuery = it },
+                            onToggleSearch = {
+                                showLogSearch = !showLogSearch
+                                if (!showLogSearch) {
+                                    logSearchQuery = ""
                                 }
+                            },
+                            onExport = {
+                                pendingLogExportText = visibleLogLines.joinToString(separator = "\n") { it.text }
+                                pendingLogExportName = buildLogExportFileName(
+                                    source = selectedLogSource,
+                                    filter = selectedLogFilter,
+                                    query = logSearchQuery,
+                                )
+                                logExportLauncher.launch(pendingLogExportName)
                             },
                             onClear = { showClearDialog = true },
                             onOpenModuleFiles = { showModuleFileSheet = true },
@@ -550,13 +595,32 @@ private fun LogsWorkbench(
     selectedModuleFile: LogFileEntry?,
     renderedLogLines: List<RenderedLogLine>,
     statusText: String,
+    showLogSearch: Boolean,
+    logSearchQuery: String,
     palette: ConsolePalette,
     onLogSourceChange: (ConsoleLogSource) -> Unit,
     onLogFilterChange: (ConsoleLogFilter) -> Unit,
-    onRefresh: () -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onToggleSearch: () -> Unit,
+    onExport: () -> Unit,
     onClear: () -> Unit,
     onOpenModuleFiles: () -> Unit,
 ) {
+    val emptyTitle = if (logSearchQuery.isBlank()) {
+        if (selectedLogSource == ConsoleLogSource.Service) "暂无服务日志" else "暂无模块日志"
+    } else {
+        "没有命中日志"
+    }
+    val emptyDetail = if (logSearchQuery.isBlank()) {
+        if (selectedLogSource == ConsoleLogSource.Service) {
+            "服务启动后，这里会滚动显示最近日志。"
+        } else {
+            "先选择日志文件，或先执行安装、切换、启动等动作。"
+        }
+    } else {
+        "当前日志源和分类下，没有命中 \"$logSearchQuery\" 的内容。"
+    }
+
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -564,12 +628,25 @@ private fun LogsWorkbench(
         ConsoleToolbar(
             selectedLogSource = selectedLogSource,
             selectedLogFilter = selectedLogFilter,
+            showLogSearch = showLogSearch,
             palette = palette,
             onLogSourceChange = onLogSourceChange,
             onLogFilterChange = onLogFilterChange,
-            onRefresh = onRefresh,
+            exportEnabled = renderedLogLines.isNotEmpty(),
+            onToggleSearch = onToggleSearch,
+            onExport = onExport,
             onClear = onClear,
         )
+
+        if (showLogSearch) {
+            LogSearchStrip(
+                query = logSearchQuery,
+                resultCount = renderedLogLines.size,
+                palette = palette,
+                onQueryChange = onSearchQueryChange,
+                onClose = onToggleSearch,
+            )
+        }
 
         if (selectedLogSource == ConsoleLogSource.Module) {
             ModuleFileSelector(
@@ -593,12 +670,8 @@ private fun LogsWorkbench(
             } else {
                 viewModel.moduleLogError
             },
-            emptyTitle = if (selectedLogSource == ConsoleLogSource.Service) "暂无服务日志" else "暂无模块日志",
-            emptyDetail = if (selectedLogSource == ConsoleLogSource.Service) {
-                "服务启动后，这里会滚动显示最近日志。"
-            } else {
-                "先选择日志文件，或先执行安装、切换、启动等动作。"
-            },
+            emptyTitle = emptyTitle,
+            emptyDetail = emptyDetail,
             palette = palette,
             limit = consoleLogLimit,
         )
@@ -609,12 +682,17 @@ private fun LogsWorkbench(
 private fun ConsoleToolbar(
     selectedLogSource: ConsoleLogSource,
     selectedLogFilter: ConsoleLogFilter,
+    showLogSearch: Boolean,
     palette: ConsolePalette,
     onLogSourceChange: (ConsoleLogSource) -> Unit,
     onLogFilterChange: (ConsoleLogFilter) -> Unit,
-    onRefresh: () -> Unit,
+    exportEnabled: Boolean,
+    onToggleSearch: () -> Unit,
+    onExport: () -> Unit,
     onClear: () -> Unit,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = palette.panel.copy(alpha = 0.9f),
@@ -648,12 +726,34 @@ private fun ConsoleToolbar(
 
             Spacer(modifier = Modifier.width(4.dp))
 
-            ToolbarIconButton(
-                icon = Icons.Filled.Refresh,
-                contentDescription = "刷新日志",
-                palette = palette,
-                onClick = onRefresh,
-            )
+            Box {
+                ToolbarIconButton(
+                    icon = Icons.Filled.MoreHoriz,
+                    contentDescription = "更多操作",
+                    palette = palette,
+                    onClick = { menuExpanded = true },
+                )
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (showLogSearch) "关闭搜索" else "搜索日志") },
+                        onClick = {
+                            menuExpanded = false
+                            onToggleSearch()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导出当前日志") },
+                        enabled = exportEnabled,
+                        onClick = {
+                            menuExpanded = false
+                            onExport()
+                        },
+                    )
+                }
+            }
 
             ToolbarIconButton(
                 icon = Icons.Filled.DeleteOutline,
@@ -661,6 +761,69 @@ private fun ConsoleToolbar(
                 palette = palette,
                 onClick = onClear,
             )
+        }
+    }
+}
+
+@Composable
+private fun LogSearchStrip(
+    query: String,
+    resultCount: Int,
+    palette: ConsolePalette,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = palette.panelStrong,
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, palette.panelBorder),
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                tint = palette.subtleText,
+            )
+            Box(modifier = Modifier.weight(1f)) {
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(palette.accent),
+                    decorationBox = { innerTextField ->
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            if (query.isBlank()) {
+                                Text(
+                                    text = "输入关键词，只显示命中行",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = palette.subtleText,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+            }
+            if (query.isNotBlank()) {
+                Text(
+                    text = "$resultCount 条",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = palette.subtleText,
+                )
+            }
+            TextButton(onClick = onClose) {
+                Text("收起")
+            }
         }
     }
 }
@@ -1312,6 +1475,33 @@ private fun buildModuleLogLines(
         }
         .filter { line -> matchesFilter(line.tone, filter) }
         .toList()
+}
+
+private fun filterLogLines(
+    lines: List<RenderedLogLine>,
+    query: String,
+): List<RenderedLogLine> {
+    val keyword = query.trim()
+    if (keyword.isBlank()) return lines
+    return lines.filter { line -> line.text.contains(keyword, ignoreCase = true) }
+}
+
+private fun buildLogExportFileName(
+    source: ConsoleLogSource,
+    filter: ConsoleLogFilter,
+    query: String,
+): String {
+    val sourceToken = source.name.lowercase()
+    val filterToken = filter.name.lowercase()
+    val querySuffix = query.trim()
+        .takeIf { it.isNotBlank() }
+        ?.replace(Regex("[^a-zA-Z0-9._-]+"), "_")
+        ?.trim('_')
+        ?.take(24)
+        ?.takeIf { it.isNotBlank() }
+        ?.let { "_$it" }
+        .orEmpty()
+    return "danmu_${sourceToken}_${filterToken}${querySuffix}.log"
 }
 
 private fun buildAnnotatedLogText(

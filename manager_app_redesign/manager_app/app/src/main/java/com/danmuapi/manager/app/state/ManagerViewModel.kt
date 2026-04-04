@@ -15,13 +15,23 @@ import com.danmuapi.manager.core.data.network.DanmuApiClient
 import com.danmuapi.manager.core.data.network.HttpResult
 import com.danmuapi.manager.core.data.network.WebDavClient
 import com.danmuapi.manager.core.data.network.WebDavResult
+import com.danmuapi.manager.core.model.ApiDebugFieldLocation
+import com.danmuapi.manager.core.model.ApiDebugPreset
+import com.danmuapi.manager.core.model.ApiDebugPresetCatalog
+import com.danmuapi.manager.core.model.ApiTestAnimeItem
+import com.danmuapi.manager.core.model.ApiTestEpisodeItem
 import com.danmuapi.manager.core.model.CoreCatalog
 import com.danmuapi.manager.core.model.CoreUpdateInfo
 import com.danmuapi.manager.core.model.CoreUpdateState
+import com.danmuapi.manager.core.model.DanmuPreviewItem
+import com.danmuapi.manager.core.model.DanmuStatsSummary
+import com.danmuapi.manager.core.model.DanmuTestMatchSummary
+import com.danmuapi.manager.core.model.DanmuTestResult
 import com.danmuapi.manager.core.model.EnvVarItem
 import com.danmuapi.manager.core.model.EnvVarMeta
 import com.danmuapi.manager.core.model.LogDirectory
 import com.danmuapi.manager.core.model.ManagerStatus
+import com.danmuapi.manager.core.model.ManualDanmuStep
 import com.danmuapi.manager.core.model.ModuleUpdateInfo
 import com.danmuapi.manager.core.model.RequestRecord
 import com.danmuapi.manager.core.model.RequestRecordsSnapshot
@@ -39,6 +49,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
 
 class ManagerViewModel(
     application: Application,
@@ -118,6 +131,28 @@ class ManagerViewModel(
     var apiDebugError: String? by mutableStateOf(null)
         private set
     var apiDebugRequestSummary: String by mutableStateOf("")
+        private set
+
+    var autoDanmuTestResult: DanmuTestResult? by mutableStateOf(null)
+        private set
+    var autoDanmuTestLoading: Boolean by mutableStateOf(false)
+        private set
+    var autoDanmuTestError: String? by mutableStateOf(null)
+        private set
+
+    var manualDanmuStep: ManualDanmuStep by mutableStateOf(ManualDanmuStep.Search)
+        private set
+    var manualDanmuSearchResults: List<ApiTestAnimeItem> by mutableStateOf(emptyList())
+        private set
+    var manualDanmuSelectedAnimeTitle: String by mutableStateOf("")
+        private set
+    var manualDanmuEpisodes: List<ApiTestEpisodeItem> by mutableStateOf(emptyList())
+        private set
+    var manualDanmuResult: DanmuTestResult? by mutableStateOf(null)
+        private set
+    var manualDanmuLoading: Boolean by mutableStateOf(false)
+        private set
+    var manualDanmuError: String? by mutableStateOf(null)
         private set
 
     val logCleanIntervalDays: StateFlow<Int> = settings.logCleanIntervalDays
@@ -516,6 +551,27 @@ class ManagerViewModel(
         }
     }
 
+    fun exportTextToUri(
+        uri: Uri,
+        text: String,
+        successMessage: String = "已导出文件",
+        failureMessage: String = "导出失败",
+    ) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    getApplication<Application>().contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(text.toByteArray(Charsets.UTF_8))
+                        output.flush()
+                    } != null
+                } catch (_: Throwable) {
+                    false
+                }
+            }
+            snackbars.tryEmit(if (ok) successMessage else failureMessage)
+        }
+    }
+
     fun importEnvFromUri(uri: Uri) {
         viewModelScope.launch {
             if (!ensureRootAccess(forceSnackbar = true)) return@launch
@@ -635,39 +691,36 @@ class ManagerViewModel(
         )
     }
 
-    fun runApiDebugRequest(
-        method: String,
-        path: String,
-        queryPairs: List<Pair<String, String>>,
-        bodyJson: String?,
-        useAdminToken: Boolean,
+    fun runPresetApiDebugRequest(
+        preset: ApiDebugPreset,
+        fieldValues: Map<String, String>,
     ) {
         viewModelScope.launch {
             apiDebugLoading = true
-            apiDebugError = null
             apiDebugResult = null
-
-            val query = linkedMapOf<String, String?>()
-            queryPairs.forEach { (key, value) ->
-                if (key.isNotBlank()) {
-                    query[key.trim()] = value.trim().ifBlank { null }
-                }
+            apiDebugError = null
+            apiDebugRequestSummary = ""
+            val prepared = prepareApiDebugRequest(preset, fieldValues)
+            if (prepared.error != null) {
+                apiDebugError = prepared.error
+                apiDebugLoading = false
+                return@launch
             }
 
             apiDebugRequestSummary = danmuApiClient.buildUrl(
                 host = apiHost,
                 port = apiPort,
-                tokenSegment = pickTokenSegment(useAdminToken),
-                path = path,
-                query = query,
+                tokenSegment = pickTokenSegment(useAdminToken = false),
+                path = prepared.path,
+                query = prepared.query,
             ).toString()
 
             val response = requestDanmuApi(
-                method = method,
-                path = path,
-                query = query,
-                bodyJson = bodyJson,
-                useAdminToken = useAdminToken,
+                method = preset.method,
+                path = prepared.path,
+                query = prepared.query,
+                bodyJson = prepared.bodyJson,
+                useAdminToken = false,
             )
 
             apiDebugResult = response
@@ -678,6 +731,502 @@ class ManagerViewModel(
             }
             apiDebugLoading = false
         }
+    }
+
+    fun runAutoDanmuTest(fileName: String) {
+        val input = fileName.trim()
+        autoDanmuTestResult = null
+        if (input.isBlank()) {
+            autoDanmuTestError = "请先输入文件名"
+            return
+        }
+
+        viewModelScope.launch {
+            autoDanmuTestLoading = true
+            autoDanmuTestError = null
+
+            val matchResponse = requestDanmuApi(
+                method = "POST",
+                path = "/api/v2/match",
+                bodyJson = JSONObject().put("fileName", input).toString(),
+            )
+            if (!matchResponse.isSuccessful) {
+                autoDanmuTestError = matchResponse.error ?: "自动匹配失败（HTTP ${matchResponse.code}）"
+                autoDanmuTestLoading = false
+                return@launch
+            }
+
+            val matchSummary = parseAutoMatchSummary(matchResponse.body)
+            if (matchSummary == null) {
+                autoDanmuTestError = "未匹配到任何结果"
+                autoDanmuTestLoading = false
+                return@launch
+            }
+
+            val danmuResponse = requestDanmuApi(
+                method = "GET",
+                path = "/api/v2/comment/${matchSummary.episodeId}",
+                query = linkedMapOf(
+                    "format" to "json",
+                    "duration" to "true",
+                ),
+            )
+            if (!danmuResponse.isSuccessful) {
+                autoDanmuTestError = danmuResponse.error ?: "获取弹幕失败（HTTP ${danmuResponse.code}）"
+                autoDanmuTestLoading = false
+                return@launch
+            }
+
+            val parsedResult = parseDanmuTestResult(
+                body = danmuResponse.body,
+                title = buildDanmuResultTitle(matchSummary.animeTitle, matchSummary.episodeTitle),
+                matchSummary = matchSummary,
+            )
+            if (parsedResult == null) {
+                autoDanmuTestError = "弹幕结果解析失败"
+                autoDanmuTestLoading = false
+                return@launch
+            }
+
+            autoDanmuTestResult = parsedResult
+            autoDanmuTestLoading = false
+        }
+    }
+
+    fun searchManualDanmuAnime(keyword: String) {
+        val input = keyword.trim()
+        manualDanmuResult = null
+        if (input.isBlank()) {
+            manualDanmuError = "请先输入搜索关键字"
+            return
+        }
+
+        viewModelScope.launch {
+            manualDanmuLoading = true
+            manualDanmuError = null
+            manualDanmuSearchResults = emptyList()
+            manualDanmuEpisodes = emptyList()
+            val response = requestDanmuApi(
+                method = "GET",
+                path = "/api/v2/search/anime",
+                query = linkedMapOf("keyword" to input),
+            )
+            if (!response.isSuccessful) {
+                manualDanmuError = response.error ?: "搜索失败（HTTP ${response.code}）"
+                manualDanmuLoading = false
+                return@launch
+            }
+
+            val results = parseManualAnimeSearchResults(response.body)
+            if (results.isEmpty()) {
+                manualDanmuError = "没有找到相关动漫"
+                manualDanmuLoading = false
+                return@launch
+            }
+
+            manualDanmuSearchResults = results
+            manualDanmuSelectedAnimeTitle = ""
+            manualDanmuEpisodes = emptyList()
+            manualDanmuResult = null
+            manualDanmuStep = ManualDanmuStep.Anime
+            manualDanmuLoading = false
+        }
+    }
+
+    fun loadManualDanmuEpisodes(animeId: String) {
+        val targetId = animeId.trim()
+        if (targetId.isBlank()) return
+
+        viewModelScope.launch {
+            manualDanmuLoading = true
+            manualDanmuError = null
+            manualDanmuResult = null
+            manualDanmuEpisodes = emptyList()
+            val response = requestDanmuApi(
+                method = "GET",
+                path = "/api/v2/bangumi/$targetId",
+            )
+            if (!response.isSuccessful) {
+                manualDanmuError = response.error ?: "获取番剧详情失败（HTTP ${response.code}）"
+                manualDanmuLoading = false
+                return@launch
+            }
+
+            val parsed = parseBangumiEpisodes(response.body)
+            if (parsed == null || parsed.episodes.isEmpty()) {
+                manualDanmuError = "该番剧暂无可用剧集"
+                manualDanmuLoading = false
+                return@launch
+            }
+
+            manualDanmuSelectedAnimeTitle = parsed.title
+            manualDanmuEpisodes = parsed.episodes
+            manualDanmuResult = null
+            manualDanmuStep = ManualDanmuStep.Episodes
+            manualDanmuLoading = false
+        }
+    }
+
+    fun loadManualDanmuResult(episodeId: String, title: String) {
+        val targetId = episodeId.trim()
+        if (targetId.isBlank()) return
+
+        viewModelScope.launch {
+            manualDanmuLoading = true
+            manualDanmuError = null
+            manualDanmuResult = null
+            val response = requestDanmuApi(
+                method = "GET",
+                path = "/api/v2/comment/$targetId",
+                query = linkedMapOf(
+                    "format" to "json",
+                    "duration" to "true",
+                ),
+            )
+            if (!response.isSuccessful) {
+                manualDanmuError = response.error ?: "获取弹幕失败（HTTP ${response.code}）"
+                manualDanmuLoading = false
+                return@launch
+            }
+
+            val parsed = parseDanmuTestResult(
+                body = response.body,
+                title = title,
+                matchSummary = DanmuTestMatchSummary(
+                    animeTitle = manualDanmuSelectedAnimeTitle,
+                    episodeTitle = title.removePrefix(manualDanmuSelectedAnimeTitle).trim(),
+                    episodeId = targetId,
+                ),
+            )
+            if (parsed == null) {
+                manualDanmuError = "弹幕结果解析失败"
+                manualDanmuLoading = false
+                return@launch
+            }
+
+            manualDanmuResult = parsed
+            manualDanmuStep = ManualDanmuStep.Result
+            manualDanmuLoading = false
+        }
+    }
+
+    fun backManualDanmuToSearch() {
+        manualDanmuError = null
+        manualDanmuStep = ManualDanmuStep.Search
+    }
+
+    fun backManualDanmuToAnimeResults() {
+        manualDanmuError = null
+        manualDanmuStep = if (manualDanmuSearchResults.isEmpty()) {
+            ManualDanmuStep.Search
+        } else {
+            ManualDanmuStep.Anime
+        }
+    }
+
+    fun backManualDanmuToEpisodes() {
+        manualDanmuError = null
+        manualDanmuStep = if (manualDanmuEpisodes.isEmpty()) {
+            ManualDanmuStep.Anime
+        } else {
+            ManualDanmuStep.Episodes
+        }
+    }
+
+    private data class PreparedApiDebugRequest(
+        val path: String,
+        val query: Map<String, String?>,
+        val bodyJson: String?,
+        val error: String? = null,
+    )
+
+    private data class ParsedBangumiEpisodes(
+        val title: String,
+        val episodes: List<ApiTestEpisodeItem>,
+    )
+
+    private data class ParsedDanmuComment(
+        val timeSeconds: Double,
+        val mode: Int,
+        val color: Int,
+        val text: String,
+    )
+
+    private fun prepareApiDebugRequest(
+        preset: ApiDebugPreset,
+        fieldValues: Map<String, String>,
+    ): PreparedApiDebugRequest {
+        var resolvedPath = preset.path
+        val query = linkedMapOf<String, String?>()
+        val body = JSONObject()
+        var rawBody: String? = null
+
+        preset.fields.forEach { field ->
+            val rawValue = fieldValues[field.key]?.trim().orEmpty()
+            if (field.required && rawValue.isBlank()) {
+                return PreparedApiDebugRequest("", emptyMap(), null, "${field.label} 不能为空")
+            }
+            if (rawValue.isBlank()) return@forEach
+
+            when (field.location) {
+                ApiDebugFieldLocation.Path -> {
+                    resolvedPath = resolvedPath.replace(":${field.key}", rawValue)
+                }
+
+                ApiDebugFieldLocation.Query -> {
+                    query[field.key] = rawValue
+                }
+
+                ApiDebugFieldLocation.Body -> {
+                    body.put(field.key, rawValue)
+                }
+
+                ApiDebugFieldLocation.RawBody -> {
+                    val normalized = normalizeRawJsonBody(rawValue)
+                        ?: return PreparedApiDebugRequest("", emptyMap(), null, "${field.label} 不是合法 JSON")
+                    rawBody = normalized
+                }
+            }
+        }
+
+        if (Regex(":\\w+").containsMatchIn(resolvedPath)) {
+            return PreparedApiDebugRequest("", emptyMap(), null, "仍有路径参数未填写")
+        }
+
+        val bodyJson = when {
+            rawBody != null -> rawBody
+            body.length() > 0 -> body.toString()
+            preset.method.uppercase() in setOf("POST", "PUT", "PATCH") -> "{}"
+            else -> null
+        }
+
+        return PreparedApiDebugRequest(
+            path = resolvedPath,
+            query = query,
+            bodyJson = bodyJson,
+        )
+    }
+
+    private fun normalizeRawJsonBody(raw: String): String? {
+        val input = raw.trim()
+        if (input.isBlank()) return null
+        return try {
+            when {
+                input.startsWith("{") -> JSONObject(input).toString()
+                input.startsWith("[") -> JSONArray(input).toString()
+                else -> null
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun parseAutoMatchSummary(body: String): DanmuTestMatchSummary? {
+        return try {
+            val json = JSONObject(body)
+            val matches = json.optJSONArray("matches") ?: JSONArray()
+            if ((!json.optBoolean("isMatched") && matches.length() == 0) || matches.length() == 0) {
+                return null
+            }
+            val best = matches.optJSONObject(0) ?: return null
+            val animeTitle = best.optString("animeTitle").ifBlank { "未命名番剧" }
+            val episodeTitle = best.optString("episodeTitle").ifBlank { "未命名剧集" }
+            val episodeId = best.opt("episodeId")?.toString().orEmpty()
+            if (episodeId.isBlank()) return null
+            DanmuTestMatchSummary(
+                animeTitle = animeTitle,
+                episodeTitle = episodeTitle,
+                episodeId = episodeId,
+                matchCount = matches.length(),
+            )
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun parseManualAnimeSearchResults(body: String): List<ApiTestAnimeItem> {
+        return try {
+            val json = JSONObject(body)
+            if (!json.optBoolean("success")) return emptyList()
+            val array = json.optJSONArray("animes") ?: JSONArray()
+            buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val animeId = item.opt("animeId")?.toString().orEmpty()
+                    if (animeId.isBlank()) continue
+                    add(
+                        ApiTestAnimeItem(
+                            animeId = animeId,
+                            animeTitle = item.optString("animeTitle").ifBlank { "未命名番剧" },
+                            episodeCount = item.optInt("episodeCount").takeIf { it > 0 },
+                        ),
+                    )
+                }
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun parseBangumiEpisodes(body: String): ParsedBangumiEpisodes? {
+        return try {
+            val json = JSONObject(body)
+            if (!json.optBoolean("success")) return null
+            val bangumi = json.optJSONObject("bangumi") ?: return null
+            val episodesArray = bangumi.optJSONArray("episodes") ?: JSONArray()
+            val episodes = buildList {
+                for (index in 0 until episodesArray.length()) {
+                    val item = episodesArray.optJSONObject(index) ?: continue
+                    val episodeId = item.opt("episodeId")?.toString().orEmpty()
+                    if (episodeId.isBlank()) continue
+                    add(
+                        ApiTestEpisodeItem(
+                            episodeId = episodeId,
+                            episodeNumber = item.opt("episodeNumber")?.toString().orEmpty().ifBlank { (index + 1).toString() },
+                            episodeTitle = item.optString("episodeTitle").ifBlank { "第${index + 1}集" },
+                        ),
+                    )
+                }
+            }
+            ParsedBangumiEpisodes(
+                title = bangumi.optString("animeTitle").ifBlank { "未命名番剧" },
+                episodes = episodes,
+            )
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun parseDanmuTestResult(
+        body: String,
+        title: String,
+        matchSummary: DanmuTestMatchSummary? = null,
+    ): DanmuTestResult? {
+        return try {
+            val json = JSONObject(body)
+            val array = json.optJSONArray("comments") ?: JSONArray()
+            val comments = buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    add(
+                        ParsedDanmuComment(
+                            timeSeconds = readDanmuTimeSeconds(item),
+                            mode = readDanmuMode(item),
+                            color = readDanmuColor(item),
+                            text = item.optString("m").ifBlank { item.optString("text") },
+                        ),
+                    )
+                }
+            }.sortedBy { it.timeSeconds }
+
+            if (comments.isEmpty()) return null
+
+            val explicitDuration = json.optDouble("videoDuration").takeUnless { it.isNaN() || it <= 0.0 }
+            val durationSeconds = explicitDuration ?: comments.maxOfOrNull { it.timeSeconds } ?: 0.0
+            val durationMinutes = (durationSeconds / 60.0).takeIf { it > 0.0 } ?: 0.0
+            val avgDensity = if (durationMinutes > 0.0) comments.size / durationMinutes else 0.0
+
+            val bucketSizeSeconds = 30.0
+            val bucketCount = max(1, ceil(durationSeconds / bucketSizeSeconds).toInt())
+            val buckets = IntArray(bucketCount)
+            comments.forEach { comment ->
+                val index = min((comment.timeSeconds / bucketSizeSeconds).toInt(), bucketCount - 1)
+                buckets[index] = buckets[index] + 1
+            }
+            var hotIndex = 0
+            for (index in buckets.indices) {
+                if (buckets[index] > buckets[hotIndex]) {
+                    hotIndex = index
+                }
+            }
+            val hotStart = hotIndex * bucketSizeSeconds
+            val hotEnd = min(durationSeconds, hotStart + bucketSizeSeconds)
+
+            var scrollCount = 0
+            var topCount = 0
+            var bottomCount = 0
+            comments.forEach { comment ->
+                when (comment.mode) {
+                    5 -> topCount++
+                    4 -> bottomCount++
+                    else -> scrollCount++
+                }
+            }
+
+            DanmuTestResult(
+                title = title,
+                matchSummary = matchSummary,
+                stats = DanmuStatsSummary(
+                    commentCount = comments.size,
+                    durationLabel = formatSecondsLabel(durationSeconds),
+                    averageDensityLabel = String.format("%.1f 条/分", avgDensity),
+                    hotMomentLabel = "${formatSecondsLabel(hotStart)} - ${formatSecondsLabel(hotEnd)}",
+                    modeBreakdownLabel = "$scrollCount / $topCount / $bottomCount",
+                ),
+                preview = comments.take(40).map { comment ->
+                    DanmuPreviewItem(
+                        timeLabel = formatSecondsLabel(comment.timeSeconds),
+                        modeLabel = labelForDanmuMode(comment.mode),
+                        colorHex = colorToHex(comment.color),
+                        text = comment.text.ifBlank { "(empty)" },
+                    )
+                },
+                rawBody = body,
+            )
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun readDanmuTimeSeconds(item: JSONObject): Double {
+        val direct = item.optDouble("t")
+        if (!direct.isNaN() && direct >= 0.0) return direct
+        val payload = item.optString("p")
+        return payload.split(',').firstOrNull()?.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+    }
+
+    private fun readDanmuMode(item: JSONObject): Int {
+        val payload = item.optString("p")
+        return payload.split(',').getOrNull(1)?.toIntOrNull() ?: 1
+    }
+
+    private fun readDanmuColor(item: JSONObject): Int {
+        val payload = item.optString("p")
+        return payload.split(',').getOrNull(2)?.toIntOrNull() ?: 0xFFFFFF
+    }
+
+    private fun buildDanmuResultTitle(animeTitle: String, episodeTitle: String): String {
+        return buildString {
+            append(animeTitle.ifBlank { "未命名番剧" })
+            if (episodeTitle.isNotBlank()) {
+                append(" · ")
+                append(episodeTitle)
+            }
+        }
+    }
+
+    private fun formatSecondsLabel(seconds: Double): String {
+        val total = seconds.toInt().coerceAtLeast(0)
+        val hours = total / 3600
+        val minutes = (total % 3600) / 60
+        val secs = total % 60
+        return if (hours > 0) {
+            "%d:%02d:%02d".format(hours, minutes, secs)
+        } else {
+            "%d:%02d".format(minutes, secs)
+        }
+    }
+
+    private fun labelForDanmuMode(mode: Int): String {
+        return when (mode) {
+            5 -> "顶部"
+            4 -> "底部"
+            else -> "滚动"
+        }
+    }
+
+    private fun colorToHex(color: Int): String {
+        return "#%06X".format(color and 0xFFFFFF)
     }
 
     suspend fun validateAdminToken(candidate: String): Pair<Boolean, String?> {
@@ -915,51 +1464,6 @@ class ManagerViewModel(
         return try {
             val json = JSONObject(body)
 
-            val categorizedEnvVars = buildMap<String, List<EnvVarItem>> {
-                val categories = json.optJSONObject("categorizedEnvVars")
-                if (categories != null) {
-                    val keys = categories.keys()
-                    while (keys.hasNext()) {
-                        val category = keys.next()
-                        val array = categories.optJSONArray(category) ?: JSONArray()
-                        val items = buildList {
-                            for (index in 0 until array.length()) {
-                                val item = array.optJSONObject(index) ?: continue
-                                val options = buildList {
-                                    val rawOptions = item.optJSONArray("options")
-                                    if (rawOptions != null) {
-                                        for (optionIndex in 0 until rawOptions.length()) {
-                                            add(rawOptions.optString(optionIndex))
-                                        }
-                                    }
-                                }
-                                val rawValue = item.opt("value")
-                                val value = when (rawValue) {
-                                    is JSONArray -> buildList {
-                                        for (valueIndex in 0 until rawValue.length()) {
-                                            add(rawValue.optString(valueIndex))
-                                        }
-                                    }.joinToString(",")
-                                    null,
-                                    JSONObject.NULL -> ""
-                                    else -> rawValue.toString()
-                                }
-                                add(
-                                    EnvVarItem(
-                                        key = item.optString("key"),
-                                        value = value,
-                                        type = item.optString("type").ifBlank { "text" },
-                                        description = item.optString("description"),
-                                        options = options,
-                                    ),
-                                )
-                            }
-                        }
-                        put(category, items)
-                    }
-                }
-            }
-
             val envMeta = buildMap<String, EnvVarMeta> {
                 val config = json.optJSONObject("envVarConfig")
                 if (config != null) {
@@ -967,14 +1471,6 @@ class ManagerViewModel(
                     while (keys.hasNext()) {
                         val key = keys.next()
                         val value = config.optJSONObject(key) ?: continue
-                        val options = buildList {
-                            val rawOptions = value.optJSONArray("options")
-                            if (rawOptions != null) {
-                                for (optionIndex in 0 until rawOptions.length()) {
-                                    add(rawOptions.optString(optionIndex))
-                                }
-                            }
-                        }
                         val minValue = if (value.has("min")) value.optDouble("min") else Double.NaN
                         val maxValue = if (value.has("max")) value.optDouble("max") else Double.NaN
                         put(
@@ -983,7 +1479,7 @@ class ManagerViewModel(
                                 category = value.optString("category").ifBlank { "system" },
                                 type = value.optString("type").ifBlank { "text" },
                                 description = value.optString("description"),
-                                options = options,
+                                options = parseJsonStringList(value.optJSONArray("options")),
                                 min = minValue.takeUnless { it.isNaN() },
                                 max = maxValue.takeUnless { it.isNaN() },
                             ),
@@ -998,15 +1494,47 @@ class ManagerViewModel(
                     val keys = originals.keys()
                     while (keys.hasNext()) {
                         val key = keys.next()
-                        put(key, originals.opt(key)?.toString().orEmpty())
+                        put(key, normalizeJsonValue(originals.opt(key)))
                     }
                 }
             }
 
+            val categorizedEnvVars = buildMap<String, List<EnvVarItem>> {
+                val categories = json.optJSONObject("categorizedEnvVars")
+                if (categories != null) {
+                    val keys = categories.keys()
+                    while (keys.hasNext()) {
+                        val category = keys.next()
+                        val array = categories.optJSONArray(category) ?: JSONArray()
+                        val items = buildList {
+                            for (index in 0 until array.length()) {
+                                val item = array.optJSONObject(index) ?: continue
+                                add(
+                                    EnvVarItem(
+                                        key = item.optString("key"),
+                                        value = normalizeJsonValue(item.opt("value")),
+                                        type = item.optString("type").ifBlank { "text" },
+                                        description = item.optString("description"),
+                                        options = parseJsonStringList(item.optJSONArray("options")),
+                                    ),
+                                )
+                            }
+                        }
+                        put(category, items)
+                    }
+                }
+            }
+
+            val displayEnvVars = mergeOriginalEnvValues(
+                categorizedEnvVars = categorizedEnvVars,
+                originalEnvVars = originalEnvVars,
+                envMeta = envMeta,
+            )
+
             ServerConfig(
                 message = json.optString("message"),
                 version = json.optString("version").ifBlank { null },
-                categorizedEnvVars = categorizedEnvVars,
+                categorizedEnvVars = displayEnvVars,
                 envVarConfig = envMeta,
                 originalEnvVars = originalEnvVars,
                 hasAdminToken = json.optBoolean("hasAdminToken", false),
@@ -1017,6 +1545,65 @@ class ManagerViewModel(
         } catch (_: Throwable) {
             null
         }
+    }
+
+    private fun parseJsonStringList(array: JSONArray?): List<String> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                add(normalizeJsonValue(array.opt(index)))
+            }
+        }
+    }
+
+    private fun normalizeJsonValue(value: Any?): String {
+        return when (value) {
+            null,
+            JSONObject.NULL -> ""
+
+            is JSONArray -> buildList {
+                for (index in 0 until value.length()) {
+                    add(normalizeJsonValue(value.opt(index)))
+                }
+            }.joinToString(",")
+
+            is JSONObject -> value.toString()
+            else -> value.toString()
+        }
+    }
+
+    private fun mergeOriginalEnvValues(
+        categorizedEnvVars: Map<String, List<EnvVarItem>>,
+        originalEnvVars: Map<String, String>,
+        envMeta: Map<String, EnvVarMeta>,
+    ): Map<String, List<EnvVarItem>> {
+        if (originalEnvVars.isEmpty()) return categorizedEnvVars
+
+        val merged = linkedMapOf<String, MutableList<EnvVarItem>>()
+        val seenKeys = linkedSetOf<String>()
+
+        categorizedEnvVars.forEach { (category, items) ->
+            merged[category] = items.map { item ->
+                seenKeys += item.key
+                item.copy(value = originalEnvVars[item.key] ?: item.value)
+            }.toMutableList()
+        }
+
+        originalEnvVars.forEach { (key, value) ->
+            if (key in seenKeys) return@forEach
+            val meta = envMeta[key]
+            val category = meta?.category?.ifBlank { "system" } ?: "system"
+            val bucket = merged.getOrPut(category) { mutableListOf() }
+            bucket += EnvVarItem(
+                key = key,
+                value = value,
+                type = meta?.type?.ifBlank { "text" } ?: "text",
+                description = meta?.description.orEmpty(),
+                options = meta?.options.orEmpty(),
+            )
+        }
+
+        return merged.mapValues { (_, items) -> items.toList() }
     }
 
     private fun parseRequestRecords(body: String): RequestRecordsSnapshot? {
