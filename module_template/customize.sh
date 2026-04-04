@@ -102,6 +102,75 @@ choose_github_mode() {
   ui_msg ""
 }
 
+apply_proxy_url() {
+  url="$1"
+  if [ "$mode" = "proxy" ] && [ -n "$proxy_base" ]; then
+    case "$url" in
+      https://github.com/*|https://api.github.com/*|https://codeload.github.com/*|https://raw.githubusercontent.com/*)
+        echo "${proxy_base}${url}"
+        return 0
+        ;;
+    esac
+  fi
+  echo "$url"
+}
+
+extract_version_from_text() {
+  printf '%s' "$1" \
+    | grep -m1 -E "VERSION[[:space:]]*:" \
+    | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" \
+    | head -n 1
+}
+
+fetch_remote_file_text() {
+  file_path="$1"
+
+  raw_url="https://raw.githubusercontent.com/${DEFAULT_CORE_REPO}/${DEFAULT_CORE_REF}/${file_path}"
+  raw_url="$(apply_proxy_url "$raw_url")"
+
+  github_raw_url="https://github.com/${DEFAULT_CORE_REPO}/raw/${DEFAULT_CORE_REF}/${file_path}"
+  github_raw_url="$(apply_proxy_url "$github_raw_url")"
+
+  api_url="https://api.github.com/repos/${DEFAULT_CORE_REPO}/contents/${file_path}?ref=${DEFAULT_CORE_REF}"
+  api_url="$(apply_proxy_url "$api_url")"
+
+  if command -v curl >/dev/null 2>&1; then
+    text="$(curl -fsSL "$raw_url" 2>/dev/null || true)"
+    if [ -n "$text" ]; then
+      printf '%s' "$text"
+      return 0
+    fi
+
+    text="$(curl -fsSL "$github_raw_url" 2>/dev/null || true)"
+    if [ -n "$text" ]; then
+      printf '%s' "$text"
+      return 0
+    fi
+
+    text="$(curl -fsSL -H 'Accept: application/vnd.github.v3.raw' "$api_url" 2>/dev/null || true)"
+    if [ -n "$text" ]; then
+      printf '%s' "$text"
+      return 0
+    fi
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    text="$(wget -qO- "$raw_url" 2>/dev/null || true)"
+    if [ -n "$text" ]; then
+      printf '%s' "$text"
+      return 0
+    fi
+
+    text="$(wget -qO- "$github_raw_url" 2>/dev/null || true)"
+    if [ -n "$text" ]; then
+      printf '%s' "$text"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 # Older versions stored config inside the module folder (and sometimes bind-mounted).
 # We'll migrate once and then use ONLY $CFG_DIR as the single source of truth.
 OLD_MOD_CFG="/data/adb/modules/$MODID/app/config"
@@ -226,27 +295,17 @@ check_and_download_core() {
       core_dir="$CORES_DIR/$active_id/danmu_api"
       if [ -d "$core_dir" ] && [ -f "$core_dir/configs/globals.js" ]; then
         # 读取本地版本
-        local_version="$(grep -m1 -E "VERSION[[:space:]]*:" "$core_dir/configs/globals.js" 2>/dev/null | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" | head -n 1)"
+        local_version="$(extract_version_from_text "$(cat "$core_dir/configs/globals.js" 2>/dev/null || true)")"
 
         if [ -n "$local_version" ]; then
           ui_msg "- 检测到本地核心版本：$local_version"
 
-          # 获取远程版本（通过 GitHub API）
+          # 获取远程版本（优先直接读取目标文件）
           ui_msg "- 正在检查远程版本..."
           remote_version=""
-
-          # 构建 API URL
-          api_url="https://api.github.com/repos/${DEFAULT_CORE_REPO}/contents/danmu_api/configs/globals.js?ref=${DEFAULT_CORE_REF}"
-          if [ "$mode" = "proxy" ] && [ -n "$proxy_base" ]; then
-            api_url="${proxy_base}${api_url}"
-          fi
-
-          # 尝试获取远程版本
-          if command -v curl >/dev/null 2>&1; then
-            remote_content="$(curl -fsSL -H 'Accept: application/vnd.github.v3.raw' "$api_url" 2>/dev/null || true)"
-            if [ -n "$remote_content" ]; then
-              remote_version="$(echo "$remote_content" | grep -m1 -E "VERSION[[:space:]]*:" | sed -E "s/.*VERSION[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" | head -n 1)"
-            fi
+          remote_content="$(fetch_remote_file_text "danmu_api/configs/globals.js" || true)"
+          if [ -n "$remote_content" ]; then
+            remote_version="$(extract_version_from_text "$remote_content")"
           fi
 
           if [ -n "$remote_version" ]; then

@@ -95,7 +95,7 @@ fun OverviewScreen(
     val status = viewModel.status
     val running = status?.isRunning == true
     val rootReady = viewModel.rootAvailable == true
-    val autostartEnabled = isAutostartEnabled(status?.autostart)
+    val autostartEnabled = status?.isAutostartEnabled == true
     val activeCore = status?.activeCore ?: remember(status, viewModel.cores) {
         val activeId = status?.activeCoreId ?: viewModel.cores?.activeCoreId
         viewModel.cores?.cores.orEmpty().firstOrNull { it.id == activeId }
@@ -1018,10 +1018,6 @@ private fun maskToken(token: String): String {
         token.length <= 8 -> token.take(2) + "••" + token.takeLast(2)
         else -> token.take(4) + "••••" + token.takeLast(2)
     }
-}
-
-private fun isAutostartEnabled(raw: String?): Boolean {
-    return raw == "1" || raw.equals("true", ignoreCase = true) || raw.equals("enabled", ignoreCase = true)
 }
 
 private fun CoreRecord?.shortDisplayName(): String {
