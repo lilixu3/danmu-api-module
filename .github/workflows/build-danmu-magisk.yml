@@ -27,9 +27,9 @@ jobs:
 
     env:
       MODULE_TEMPLATE_DIR: module_template
-      # Gradle project root lives in manager_app/manager_app in this repo layout
-      MANAGER_APP_DIR: manager_app/manager_app
-      MANAGER_APP_APK_PATH: manager_app/manager_app/app/build/outputs/apk/release/app-release.apk
+      # Redesign manager app project root
+      MANAGER_APP_DIR: manager_app_redesign/manager_app
+      MANAGER_APP_APK_PATH: manager_app_redesign/manager_app/app/build/outputs/apk/release/app-release.apk
 
     steps:
       - name: Checkout current repo

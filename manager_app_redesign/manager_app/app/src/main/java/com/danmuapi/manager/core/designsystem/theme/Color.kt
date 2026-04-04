@@ -18,11 +18,15 @@ data class DanmuStatusPalette(
     }
 }
 
-val SlateWhite = Color(0xFFF5F7FB)
-val Graphite = Color(0xFF0F172A)
-val CyanBlue = Color(0xFF0F7CFF)
-val CyanBlueDark = Color(0xFF6CB6FF)
-val Mint = Color(0xFF10B981)
-val Ember = Color(0xFFF59E0B)
-val Danger = Color(0xFFEF4444)
-val Mist = Color(0xFFE2E8F0)
+val SlateWhite = Color(0xFFF5F1EA)
+val Graphite = Color(0xFF181B20)
+val CyanBlue = Color(0xFF2C6BED)
+val CyanBlueDark = Color(0xFF8CB6FF)
+val Mint = Color(0xFF2D8A67)
+val Ember = Color(0xFFCA8A04)
+val Danger = Color(0xFFD64545)
+val Mist = Color(0xFFE7DED4)
+val WarmSurface = Color(0xFFFCF8F3)
+val WarmSurfaceDark = Color(0xFF20242B)
+val Ink = Color(0xFF1F2933)
+val Slate = Color(0xFF667085)

@@ -21,6 +21,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +45,9 @@ fun DanmuManagerApp(
     val destinations = AppDestination.entries
     val backStack by navController.currentBackStackEntryAsState()
     val currentDestination = backStack?.destination
+    val currentTitle = destinations.firstOrNull { destination ->
+        currentDestination?.hierarchy?.any { it.route == destination.route } == true
+    }?.let { stringResourceSafe(it.labelRes) } ?: stringResourceSafe(AppDestination.Overview.labelRes)
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(viewModel) {
@@ -53,8 +57,7 @@ fun DanmuManagerApp(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val useRail = maxWidth >= 840.dp
-        val railContentWidth = maxWidth - 88.dp
+        val useRail = maxWidth >= 900.dp
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -62,7 +65,19 @@ fun DanmuManagerApp(
             topBar = {
                 Column {
                     TopAppBar(
-                        title = { Text(text = "Danmu API Manager") },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
+                        ),
+                        title = {
+                            Column {
+                                Text(text = currentTitle)
+                                Text(
+                                    text = "Danmu API Manager",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
                     )
                     if (viewModel.busy) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -106,7 +121,10 @@ fun DanmuManagerApp(
                         .fillMaxSize()
                         .padding(innerPadding),
                 ) {
-                    NavigationRail {
+                    NavigationRail(
+                        modifier = Modifier.fillMaxHeight(),
+                        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
+                    ) {
                         destinations.forEach { destination ->
                             val selected = currentDestination?.hierarchy?.any { it.route == destination.route } == true
                             NavigationRailItem(
@@ -131,7 +149,7 @@ fun DanmuManagerApp(
                         viewModel = viewModel,
                         modifier = Modifier
                             .fillMaxHeight()
-                            .width(railContentWidth),
+                            .weight(1f),
                     )
                 }
             } else {

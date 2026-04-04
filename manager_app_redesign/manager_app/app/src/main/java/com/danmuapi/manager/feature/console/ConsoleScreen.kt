@@ -1,8 +1,9 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.danmuapi.manager.feature.console
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,12 +15,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Api
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -45,15 +44,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.danmuapi.manager.app.state.ManagerViewModel
 import com.danmuapi.manager.core.data.network.HttpResult
+import com.danmuapi.manager.core.designsystem.component.ActionHintRow
 import com.danmuapi.manager.core.designsystem.component.CodeBlock
 import com.danmuapi.manager.core.designsystem.component.EmptyHint
 import com.danmuapi.manager.core.designsystem.component.InfoRow
+import com.danmuapi.manager.core.designsystem.component.MetricPill
+import com.danmuapi.manager.core.designsystem.component.PageHeader
 import com.danmuapi.manager.core.designsystem.component.SectionCard
 import com.danmuapi.manager.core.designsystem.component.StatusTag
 import com.danmuapi.manager.core.designsystem.component.StatusTone
@@ -63,15 +66,17 @@ import com.danmuapi.manager.core.model.EnvVarItem
 import com.danmuapi.manager.core.model.LogFileEntry
 import kotlinx.coroutines.launch
 
-private enum class ConsoleTab(
-    val title: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-) {
-    ServiceLogs("服务日志", Icons.Filled.Description),
-    ModuleLogs("模块日志", Icons.AutoMirrored.Filled.Send),
-    Requests("请求记录", Icons.Filled.Analytics),
-    ApiDebug("API 调试", Icons.Filled.Api),
-    System("系统环境", Icons.Filled.Settings),
+private enum class MonitorTab(val title: String) {
+    Overview("概览"),
+    Logs("日志"),
+    Requests("请求"),
+    Debug("调试"),
+    Environment("环境"),
+}
+
+private enum class LogSource(val title: String) {
+    Service("服务日志"),
+    Module("模块日志"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,44 +86,48 @@ fun ConsoleScreen(
     viewModel: ManagerViewModel,
 ) {
     val consoleLogLimit by viewModel.consoleLogLimit.collectAsStateWithLifecycle()
-    var selectedTab by rememberSaveable { mutableStateOf(ConsoleTab.ServiceLogs) }
+    var selectedTab by rememberSaveable { mutableStateOf(MonitorTab.Overview) }
+    var selectedLogSource by rememberSaveable { mutableStateOf(LogSource.Service) }
 
-    LaunchedEffect(selectedTab, viewModel.status?.isRunning, viewModel.logs, viewModel.moduleLogPath) {
+    LaunchedEffect(selectedTab, selectedLogSource, viewModel.status?.isRunning, viewModel.logs, viewModel.moduleLogPath) {
         when (selectedTab) {
-            ConsoleTab.ServiceLogs -> {
-                if (viewModel.status?.isRunning == true &&
-                    viewModel.serverLogs.isEmpty() &&
-                    !viewModel.serverLogsLoading
-                ) {
+            MonitorTab.Overview -> {
+                if (viewModel.status?.isRunning == true && viewModel.serverLogs.isEmpty() && !viewModel.serverLogsLoading) {
                     viewModel.refreshServerLogs()
                 }
-            }
-
-            ConsoleTab.ModuleLogs -> {
+                if (viewModel.status?.isRunning == true && viewModel.requestRecords.isEmpty() && !viewModel.requestRecordsLoading) {
+                    viewModel.refreshRequestRecords()
+                }
                 if (viewModel.logs == null) {
                     viewModel.refreshLogs()
                 }
-                val firstFile = viewModel.logs?.files?.firstOrNull()
-                if (firstFile != null && viewModel.moduleLogPath == null) {
-                    viewModel.loadModuleLog(firstFile.path)
+            }
+
+            MonitorTab.Logs -> {
+                if (selectedLogSource == LogSource.Service) {
+                    if (viewModel.status?.isRunning == true && viewModel.serverLogs.isEmpty() && !viewModel.serverLogsLoading) {
+                        viewModel.refreshServerLogs()
+                    }
+                } else {
+                    if (viewModel.logs == null) {
+                        viewModel.refreshLogs()
+                    }
+                    val firstFile = viewModel.logs?.files?.firstOrNull()
+                    if (firstFile != null && viewModel.moduleLogPath == null) {
+                        viewModel.loadModuleLog(firstFile.path)
+                    }
                 }
             }
 
-            ConsoleTab.Requests -> {
-                if (viewModel.status?.isRunning == true &&
-                    viewModel.requestRecords.isEmpty() &&
-                    !viewModel.requestRecordsLoading
-                ) {
+            MonitorTab.Requests -> {
+                if (viewModel.status?.isRunning == true && viewModel.requestRecords.isEmpty() && !viewModel.requestRecordsLoading) {
                     viewModel.refreshRequestRecords()
                 }
             }
 
-            ConsoleTab.ApiDebug -> Unit
-            ConsoleTab.System -> {
-                if (viewModel.status?.isRunning == true &&
-                    viewModel.serverConfig == null &&
-                    !viewModel.serverConfigLoading
-                ) {
+            MonitorTab.Debug -> Unit
+            MonitorTab.Environment -> {
+                if (viewModel.status?.isRunning == true && viewModel.serverConfig == null && !viewModel.serverConfigLoading) {
                     viewModel.refreshServerConfig(useAdminToken = viewModel.sessionAdminToken.isNotBlank())
                 }
             }
@@ -130,49 +139,53 @@ fun ConsoleScreen(
             .fillMaxSize()
             .padding(contentPadding),
     ) {
-        PrimaryTabRow(selectedTabIndex = ConsoleTab.entries.indexOf(selectedTab)) {
-            ConsoleTab.entries.forEach { tab ->
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(top = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            PageHeader(
+                title = "监控",
+                subtitle = "先看概览，再钻到日志、请求、调试和环境。高级能力不再和主信息抢层级。",
+            )
+        }
+
+        PrimaryTabRow(selectedTabIndex = MonitorTab.entries.indexOf(selectedTab)) {
+            MonitorTab.entries.forEach { tab ->
                 Tab(
                     selected = selectedTab == tab,
                     onClick = { selectedTab = tab },
-                    icon = {
-                        Icon(
-                            imageVector = tab.icon,
-                            contentDescription = null,
-                        )
-                    },
                     text = { Text(tab.title) },
                 )
             }
         }
 
         when (selectedTab) {
-            ConsoleTab.ServiceLogs -> ServiceLogsTab(
+            MonitorTab.Overview -> MonitorOverviewTab(viewModel = viewModel)
+            MonitorTab.Logs -> LogsTab(
                 viewModel = viewModel,
                 consoleLogLimit = consoleLogLimit,
+                selectedLogSource = selectedLogSource,
+                onLogSourceChange = { selectedLogSource = it },
             )
 
-            ConsoleTab.ModuleLogs -> ModuleLogsTab(
-                viewModel = viewModel,
-                consoleLogLimit = consoleLogLimit,
-            )
-
-            ConsoleTab.Requests -> RequestsTab(viewModel = viewModel)
-            ConsoleTab.ApiDebug -> ApiDebugTab(viewModel = viewModel)
-            ConsoleTab.System -> SystemEnvTab(viewModel = viewModel)
+            MonitorTab.Requests -> RequestsTab(viewModel = viewModel)
+            MonitorTab.Debug -> ApiDebugTab(viewModel = viewModel)
+            MonitorTab.Environment -> SystemEnvTab(viewModel = viewModel)
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ServiceLogsTab(
+private fun MonitorOverviewTab(
     viewModel: ManagerViewModel,
-    consoleLogLimit: Int,
 ) {
-    val displayLogs = remember(viewModel.serverLogs, consoleLogLimit) {
-        viewModel.serverLogs.takeLast(consoleLogLimit)
-    }
+    val latestLog = viewModel.serverLogs.lastOrNull()
+    val activeCore = viewModel.status?.activeCore
+    val activeUpdate = activeCore?.id?.let(viewModel.updateInfo::get)
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -180,86 +193,136 @@ private fun ServiceLogsTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionCard(title = "服务日志") {
-            Text(
-                text = "读取 danmu-api 运行时日志，可用于快速定位接口错误、管理员操作与部署状态。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        SectionCard(
+            title = "运行概览",
+            subtitle = "把监控首屏改成观察页，而不是直接扔给你一整屏日志。",
+        ) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                MetricPill(label = "服务", value = if (viewModel.status?.isRunning == true) "运行中" else "已停止")
+                MetricPill(label = "请求", value = viewModel.todayReqNum.toString())
+                MetricPill(label = "日志文件", value = viewModel.logs?.files?.size?.toString() ?: "0")
+                MetricPill(label = "当前核心", value = activeCore?.repoDisplayName ?: "未激活")
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusTag(
+                    text = if (viewModel.rootAvailable == true) "Root 已就绪" else "Root 未就绪",
+                    tone = if (viewModel.rootAvailable == true) StatusTone.Positive else StatusTone.Warning,
+                )
+                StatusTag(
+                    text = if (viewModel.sessionAdminToken.isBlank()) "普通模式" else "管理员模式",
+                    tone = if (viewModel.sessionAdminToken.isBlank()) StatusTone.Neutral else StatusTone.Info,
+                )
+                if (activeUpdate?.updateAvailable == true) {
+                    StatusTag(text = "当前核心可更新", tone = StatusTone.Warning)
+                }
+                if (viewModel.moduleUpdateInfo?.hasUpdate == true) {
+                    StatusTag(text = "模块可更新", tone = StatusTone.Warning)
+                }
+            }
+        }
+
+        SectionCard(
+            title = "近期事件",
+            subtitle = "这里只放最值得关注的几条变化和异常，不铺满原始日志。",
+        ) {
+            val events = buildList {
+                add(
+                    if (viewModel.status?.isRunning == true) {
+                        Triple("服务运行中", "当前可以继续检查请求、日志和环境配置。", StatusTone.Positive)
+                    } else {
+                        Triple("服务已停止", "请求与调试会受影响，必要时先回主页启动服务。", StatusTone.Negative)
+                    },
+                )
+                latestLog?.let { log ->
+                    add(
+                        Triple(
+                            "最近日志 ${log.level.ifBlank { "INFO" }}",
+                            "${log.timestamp} ${log.message}",
+                            when (log.level) {
+                                "ERROR" -> StatusTone.Negative
+                                "WARN" -> StatusTone.Warning
+                                else -> StatusTone.Neutral
+                            },
+                        ),
+                    )
+                }
+                if (viewModel.requestRecords.isNotEmpty()) {
+                    val latestRequest = viewModel.requestRecords.firstOrNull()
+                    if (latestRequest != null) {
+                        add(
+                            Triple(
+                                "最近请求 ${latestRequest.method}",
+                                "${latestRequest.timestamp} ${latestRequest.path}",
+                                StatusTone.Info,
+                            ),
+                        )
+                    }
+                }
+                if (viewModel.logs?.files.isNullOrEmpty()) {
+                    add(
+                        Triple(
+                            "模块日志为空",
+                            "尚未发现模块日志文件，安装、切换或启动后这里才会出现内容。",
+                            StatusTone.Neutral,
+                        ),
+                    )
+                }
+            }
+
+            if (events.isEmpty()) {
+                EmptyHint(title = "还没有事件", detail = "先让服务运行一段时间，监控页才会沉淀出更有价值的摘要。")
+            } else {
+                events.take(4).forEach { (title, detail, tone) ->
+                    ActionHintRow(
+                        title = title,
+                        detail = detail,
+                        tone = tone,
+                    )
+                }
+            }
+        }
+
+        SectionCard(
+            title = "快捷维护",
+            subtitle = "把常用维护动作保留在监控页，但不与日志正文混排。",
+        ) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 ElevatedButton(onClick = viewModel::refreshServerLogs) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
-                    Text("刷新")
+                    Text("刷新服务日志")
                 }
-                FilledTonalButton(onClick = viewModel::clearServerLogs) {
-                    Icon(Icons.Filled.Delete, contentDescription = null)
-                    Text("清空服务日志")
+                FilledTonalButton(onClick = viewModel::refreshRequestRecords) {
+                    Text("刷新请求记录")
                 }
-            }
-            InfoRow(label = "服务状态", value = if (viewModel.status?.isRunning == true) "Running" else "Stopped")
-            InfoRow(label = "显示行数上限", value = consoleLogLimit.toString())
-            if (viewModel.sessionAdminToken.isBlank()) {
-                StatusTag(
-                    text = "未启用管理员 Token，清空服务日志可能会失败",
-                    tone = StatusTone.Warning,
-                )
-            }
-        }
-
-        when {
-            viewModel.serverLogsLoading -> {
-                EmptyHint(
-                    title = "日志加载中",
-                    detail = "正在读取服务日志，请稍候。",
-                )
-            }
-
-            viewModel.serverLogsError != null -> {
-                EmptyHint(
-                    title = "读取失败",
-                    detail = viewModel.serverLogsError.orEmpty(),
-                )
-            }
-
-            displayLogs.isEmpty() -> {
-                EmptyHint(
-                    title = "暂无服务日志",
-                    detail = "如果服务尚未启动，先回到总览页启动服务再回来查看。",
-                )
-            }
-
-            else -> {
-                displayLogs.forEach { entry ->
-                    SectionCard(title = entry.timestamp.ifBlank { "无时间戳" }) {
-                        if (entry.level.isNotBlank()) {
-                            StatusTag(
-                                text = entry.level,
-                                tone = when (entry.level) {
-                                    "ERROR" -> StatusTone.Negative
-                                    "WARN" -> StatusTone.Warning
-                                    "INFO" -> StatusTone.Info
-                                    else -> StatusTone.Neutral
-                                },
-                            )
-                        }
-                        CodeBlock(text = entry.message)
-                    }
+                OutlinedButton(onClick = {
+                    viewModel.refreshServerConfig(useAdminToken = viewModel.sessionAdminToken.isNotBlank())
+                }) {
+                    Text("刷新环境配置")
                 }
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ModuleLogsTab(
+private fun LogsTab(
     viewModel: ManagerViewModel,
     consoleLogLimit: Int,
+    selectedLogSource: LogSource,
+    onLogSourceChange: (LogSource) -> Unit,
 ) {
-    val files = viewModel.logs?.files.orEmpty()
+    val moduleFiles = viewModel.logs?.files.orEmpty()
+    val selectedFile = moduleFiles.firstOrNull { it.path == viewModel.moduleLogPath } ?: moduleFiles.firstOrNull()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -267,73 +330,109 @@ private fun ModuleLogsTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionCard(title = "模块日志") {
-            Text(
-                text = "读取模块本地日志文件并执行 tail，适合排查核心安装、切换与 CLI 调用问题。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                ElevatedButton(onClick = viewModel::refreshLogs) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null)
-                    Text("刷新文件列表")
-                }
-                FilledTonalButton(onClick = viewModel::clearLogs) {
-                    Icon(Icons.Filled.Delete, contentDescription = null)
-                    Text("清空模块日志")
-                }
-            }
+        SectionCard(
+            title = "日志浏览",
+            subtitle = "先选来源，再读内容，避免把服务日志和模块日志混成一个大列表。",
+        ) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                listOf(100, 300, 500, 1000).forEach { limit ->
+                LogSource.entries.forEach { source ->
                     AssistChip(
-                        onClick = { viewModel.setConsoleLogLimit(limit) },
-                        label = { Text("$limit 行") },
+                        onClick = { onLogSourceChange(source) },
+                        label = { Text(source.title) },
+                        leadingIcon = if (selectedLogSource == source) {
+                            { Icon(Icons.Filled.Description, contentDescription = null) }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                ElevatedButton(
+                    onClick = {
+                        if (selectedLogSource == LogSource.Service) {
+                            viewModel.refreshServerLogs()
+                        } else {
+                            viewModel.refreshLogs()
+                        }
+                    },
+                ) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null)
+                    Text("刷新")
+                }
+                FilledTonalButton(
+                    onClick = {
+                        if (selectedLogSource == LogSource.Service) {
+                            viewModel.clearServerLogs()
+                        } else {
+                            viewModel.clearLogs()
+                        }
+                    },
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = null)
+                    Text(if (selectedLogSource == LogSource.Service) "清空服务日志" else "清空模块日志")
+                }
+            }
+            InfoRow(label = "显示上限", value = "$consoleLogLimit 行")
         }
 
-        if (files.isEmpty()) {
-            EmptyHint(
-                title = "未发现日志文件",
-                detail = "先执行一次核心安装、启动或切换动作，日志目录才会产生内容。",
-            )
-        } else {
-            SectionCard(title = "日志文件") {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    files.forEach { file ->
-                        AssistChip(
-                            onClick = { viewModel.loadModuleLog(file.path) },
-                            label = { Text(file.name) },
-                            leadingIcon = if (viewModel.moduleLogPath == file.path) {
-                                {
-                                    Icon(Icons.Filled.Description, contentDescription = null)
-                                }
-                            } else {
-                                null
-                            },
-                        )
+        if (selectedLogSource == LogSource.Service) {
+            when {
+                viewModel.serverLogsLoading -> EmptyHint(title = "日志加载中", detail = "正在读取服务日志。")
+                viewModel.serverLogsError != null -> EmptyHint(title = "读取失败", detail = viewModel.serverLogsError.orEmpty())
+                viewModel.serverLogs.isEmpty() -> EmptyHint(title = "暂无服务日志", detail = "服务启动后，这里会出现最近运行日志。")
+                else -> {
+                    viewModel.serverLogs.takeLast(consoleLogLimit).reversed().forEach { entry ->
+                        SectionCard(
+                            title = entry.level.ifBlank { "日志" },
+                            subtitle = entry.timestamp,
+                        ) {
+                            CodeBlock(text = entry.message)
+                        }
                     }
                 }
             }
+        } else {
+            if (moduleFiles.isEmpty()) {
+                EmptyHint(title = "未发现模块日志", detail = "先执行安装、切换或启动动作，日志目录才会产生内容。")
+            } else {
+                SectionCard(
+                    title = "日志文件",
+                    subtitle = "先选择文件，再在下方查看正文。",
+                ) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        moduleFiles.forEach { file ->
+                            AssistChip(
+                                onClick = { viewModel.loadModuleLog(file.path) },
+                                label = { Text(file.name) },
+                                leadingIcon = if (viewModel.moduleLogPath == file.path) {
+                                    { Icon(Icons.Filled.Description, contentDescription = null) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    }
+                }
 
-            files.firstOrNull { it.path == viewModel.moduleLogPath }?.let { selected ->
-                ModuleLogDetail(
-                    file = selected,
-                    content = viewModel.moduleLogText,
-                    loading = viewModel.moduleLogLoading,
-                    error = viewModel.moduleLogError,
-                    consoleLogLimit = consoleLogLimit,
-                )
+                if (selectedFile != null) {
+                    ModuleLogDetail(
+                        file = selectedFile,
+                        content = viewModel.moduleLogText,
+                        loading = viewModel.moduleLogLoading,
+                        error = viewModel.moduleLogError,
+                        consoleLogLimit = consoleLogLimit,
+                    )
+                }
             }
         }
     }
@@ -347,11 +446,13 @@ private fun ModuleLogDetail(
     error: String?,
     consoleLogLimit: Int,
 ) {
-    SectionCard(title = file.name) {
+    SectionCard(
+        title = file.name,
+        subtitle = "读取方式：tail 最近 $consoleLogLimit 行",
+    ) {
         InfoRow(label = "路径", value = file.path)
         InfoRow(label = "体积", value = file.sizeBytes.formatSizeLabel())
         InfoRow(label = "修改时间", value = file.modifiedAt ?: "--")
-        InfoRow(label = "读取方式", value = "tail 最近 $consoleLogLimit 行")
         when {
             loading -> Text("正在读取日志内容…", style = MaterialTheme.typography.bodyMedium)
             error != null -> EmptyHint(title = "读取失败", detail = error)
@@ -372,20 +473,15 @@ private fun RequestsTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionCard(title = "请求记录") {
-            Text(
-                text = "实时查看 API 请求轨迹、调用来源和参数快照，便于确认服务是否被外部客户端正确访问。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
+        SectionCard(
+            title = "请求记录",
+            subtitle = "请求页只负责看调用轨迹，不再混入别的调试功能。",
+        ) {
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                ElevatedButton(
-                    onClick = viewModel::refreshRequestRecords,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
+                ElevatedButton(onClick = viewModel::refreshRequestRecords) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
                     Text("刷新记录")
                 }
@@ -395,25 +491,15 @@ private fun RequestsTab(
         }
 
         when {
-            viewModel.requestRecordsLoading -> {
-                EmptyHint(title = "请求记录加载中", detail = "正在请求服务端记录，请稍候。")
-            }
-
-            viewModel.requestRecordsError != null -> {
-                EmptyHint(title = "读取失败", detail = viewModel.requestRecordsError.orEmpty())
-            }
-
-            viewModel.requestRecords.isEmpty() -> {
-                EmptyHint(
-                    title = "暂无请求记录",
-                    detail = "服务可能还未收到任何请求，或者服务尚未运行。",
-                )
-            }
-
+            viewModel.requestRecordsLoading -> EmptyHint(title = "请求记录加载中", detail = "正在请求服务端记录。")
+            viewModel.requestRecordsError != null -> EmptyHint(title = "读取失败", detail = viewModel.requestRecordsError.orEmpty())
+            viewModel.requestRecords.isEmpty() -> EmptyHint(title = "暂无请求记录", detail = "服务可能尚未收到请求，或者服务还没有运行。")
             else -> {
                 viewModel.requestRecords.forEach { record ->
-                    SectionCard(title = "${record.method} ${record.path}") {
-                        InfoRow(label = "时间", value = record.timestamp)
+                    SectionCard(
+                        title = "${record.method} ${record.path}",
+                        subtitle = record.timestamp,
+                    ) {
                         InfoRow(label = "客户端", value = record.clientIp.ifBlank { "--" })
                         record.params?.takeIf { it.isNotBlank() }?.let { params ->
                             CodeBlock(text = params)
@@ -425,7 +511,6 @@ private fun RequestsTab(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ApiDebugTab(
     viewModel: ManagerViewModel,
@@ -444,12 +529,10 @@ private fun ApiDebugTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionCard(title = "API 调试器") {
-            Text(
-                text = "直接构造 danmu-api 请求，验证路径、参数、管理员模式和响应体。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        SectionCard(
+            title = "API 调试",
+            subtitle = "这是高级能力，保留但不再占据监控首页的主位置。",
+        ) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -459,9 +542,7 @@ private fun ApiDebugTab(
                         onClick = { method = candidate },
                         label = { Text(candidate) },
                         leadingIcon = if (candidate == method) {
-                            {
-                                Icon(Icons.Filled.Api, contentDescription = null)
-                            }
+                            { Icon(Icons.Filled.Api, contentDescription = null) }
                         } else {
                             null
                         },
@@ -527,17 +608,9 @@ private fun ApiDebugTab(
         }
 
         when {
-            viewModel.apiDebugLoading -> {
-                EmptyHint(title = "请求发送中", detail = "等待接口返回结果。")
-            }
-
-            viewModel.apiDebugError != null -> {
-                EmptyHint(title = "请求失败", detail = viewModel.apiDebugError.orEmpty())
-            }
-
-            viewModel.apiDebugResult != null -> {
-                HttpResultCard(result = viewModel.apiDebugResult!!)
-            }
+            viewModel.apiDebugLoading -> EmptyHint(title = "请求发送中", detail = "等待接口返回结果。")
+            viewModel.apiDebugError != null -> EmptyHint(title = "请求失败", detail = viewModel.apiDebugError.orEmpty())
+            viewModel.apiDebugResult != null -> HttpResultCard(result = viewModel.apiDebugResult!!)
         }
     }
 }
@@ -556,7 +629,6 @@ private fun HttpResultCard(result: HttpResult) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SystemEnvTab(
     viewModel: ManagerViewModel,
@@ -651,12 +723,10 @@ private fun SystemEnvTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionCard(title = "管理员模式") {
-            Text(
-                text = "管理员 Token 只保存在当前会话里，不写入本地持久存储，用于访问高权限接口。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        SectionCard(
+            title = "管理员模式",
+            subtitle = "管理员 Token 只保存在当前会话，不写入本地持久存储。",
+        ) {
             OutlinedTextField(
                 value = tokenCandidate,
                 onValueChange = { tokenCandidate = it },
@@ -711,7 +781,10 @@ private fun SystemEnvTab(
             }
         }
 
-        SectionCard(title = "系统动作") {
+        SectionCard(
+            title = "系统动作",
+            subtitle = "这里只放服务端环境相关动作，不与日志或请求混排。",
+        ) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -739,18 +812,9 @@ private fun SystemEnvTab(
         }
 
         when {
-            viewModel.serverConfigLoading -> {
-                EmptyHint(title = "配置加载中", detail = "正在请求服务端配置。")
-            }
-
-            viewModel.serverConfigError != null -> {
-                EmptyHint(title = "读取配置失败", detail = viewModel.serverConfigError.orEmpty())
-            }
-
-            viewModel.serverConfig == null -> {
-                EmptyHint(title = "暂无系统配置", detail = "先刷新配置，或确认服务已经运行。")
-            }
-
+            viewModel.serverConfigLoading -> EmptyHint(title = "配置加载中", detail = "正在请求服务端配置。")
+            viewModel.serverConfigError != null -> EmptyHint(title = "读取配置失败", detail = viewModel.serverConfigError.orEmpty())
+            viewModel.serverConfig == null -> EmptyHint(title = "暂无系统配置", detail = "先刷新配置，或确认服务已经运行。")
             else -> {
                 val serverConfig = viewModel.serverConfig!!
                 serverConfig.notice?.takeIf { it.isNotBlank() }?.let { notice ->
@@ -781,7 +845,6 @@ private fun SystemEnvTab(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EnvVarCard(
     item: EnvVarItem,
@@ -800,7 +863,7 @@ private fun EnvVarCard(
             Text(
                 text = item.key,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                fontWeight = FontWeight.SemiBold,
             )
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

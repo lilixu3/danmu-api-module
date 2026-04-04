@@ -66,16 +66,18 @@ fun InfoRow(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Text(
             text = label,
+            modifier = Modifier.weight(0.42f),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             text = value,
+            modifier = Modifier.weight(0.58f),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -96,8 +98,8 @@ fun CodeBlock(
 
     Surface(
         modifier = clickableModifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
     ) {
         Text(
             text = text,
@@ -117,8 +119,8 @@ fun EmptyHint(
         modifier = modifier
             .fillMaxWidth()
             .background(
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                RoundedCornerShape(20.dp),
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f),
+                RoundedCornerShape(18.dp),
             )
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),

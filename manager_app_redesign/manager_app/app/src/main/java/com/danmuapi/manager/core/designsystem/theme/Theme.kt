@@ -15,7 +15,10 @@ private val LightColors = lightColorScheme(
     secondary = Mint,
     tertiary = Ember,
     background = SlateWhite,
-    surface = androidx.compose.ui.graphics.Color.White,
+    surface = WarmSurface,
+    surfaceVariant = Mist,
+    onSurface = Ink,
+    onSurfaceVariant = Slate,
 )
 
 private val DarkColors = darkColorScheme(
@@ -23,7 +26,9 @@ private val DarkColors = darkColorScheme(
     secondary = Mint,
     tertiary = Ember,
     background = Graphite,
-    surface = androidx.compose.ui.graphics.Color(0xFF111827),
+    surface = WarmSurfaceDark,
+    surfaceVariant = androidx.compose.ui.graphics.Color(0xFF2A313A),
+    onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFB7C0CC),
 )
 
 @Composable

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Danmu API Manager</string>
-    <string name="nav_overview">总览</string>
+    <string name="nav_overview">主页</string>
     <string name="nav_core_hub">核心</string>
-    <string name="nav_console">控制台</string>
+    <string name="nav_console">监控</string>
     <string name="nav_settings">设置</string>
 </resources>
