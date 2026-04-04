@@ -1,6 +1,16 @@
 name: Build Danmu API Magisk Modules
 
 on:
+  push:
+    paths:
+      - ".github/workflows/build-danmu-magisk.yml"
+      - "manager_app_redesign/**"
+      - "module_template/**"
+  pull_request:
+    paths:
+      - ".github/workflows/build-danmu-magisk.yml"
+      - "manager_app_redesign/**"
+      - "module_template/**"
   workflow_dispatch:
     inputs:
       build_variant:
@@ -30,6 +40,8 @@ jobs:
       # Redesign manager app project root
       MANAGER_APP_DIR: manager_app_redesign/manager_app
       MANAGER_APP_APK_PATH: manager_app_redesign/manager_app/app/build/outputs/apk/release/app-release.apk
+      BUILD_VARIANT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_variant || 'both' }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release || false }}
 
     steps:
       - name: Checkout current repo
@@ -603,7 +615,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "no_node" ]]; then
+          if [[ "${BUILD_VARIANT}" == "both" || "${BUILD_VARIANT}" == "no_node" ]]; then
             echo ">>> [TASK] 构建 No-Node 版本..."
             copy_template "build/tmp/no_node"
             MODULE_ROOT="build/tmp/no_node"
@@ -632,7 +644,7 @@ jobs:
             finalize_zip "$MODULE_ROOT" "danmu_api_server_${VERSION}.zip"
           fi
 
-          if [[ "${{ inputs.build_variant }}" == "both" || "${{ inputs.build_variant }}" == "node" ]]; then
+          if [[ "${BUILD_VARIANT}" == "both" || "${BUILD_VARIANT}" == "node" ]]; then
             echo ">>> [TASK] 构建 Node 完整版..."
             copy_template "build/tmp/node"
             MODULE_ROOT="build/tmp/node"
@@ -666,13 +678,13 @@ jobs:
 
       - name: Upload Flashable Modules
         uses: actions/upload-artifact@v4
-        if: ${{ !inputs.publish_release }}
+        if: ${{ env.PUBLISH_RELEASE != 'true' }}
         with:
           name: Danmu_API_v${{ env.MODULE_VERSION }}
           path: build/out/*.zip
 
       - name: Verify build outputs
-        if: ${{ inputs.publish_release }}
+        if: ${{ env.PUBLISH_RELEASE == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -685,7 +697,7 @@ jobs:
           fi
 
       - name: Create Release
-        if: ${{ inputs.publish_release }}
+        if: ${{ env.PUBLISH_RELEASE == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.MODULE_VERSION }}

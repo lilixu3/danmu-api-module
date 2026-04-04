@@ -4,62 +4,42 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-
-    <!--
-      Foreground: three "danmaku" bullets following smooth streaks.
-      - Clean composition, fewer lines, more balanced spacing
-      - Stays well inside the adaptive icon safe area (translate 18dp)
-    -->
-
     <group
         android:translateX="18"
         android:translateY="18">
-
-        <!-- Subtle ring (adds structure, still lightweight) -->
         <path
-            android:pathData="M36,12 a24,24 0 1,0 0,48 a24,24 0 1,0 0,-48"
+            android:pathData="M12,52 C18,35 34,20 52,16"
+            android:strokeWidth="12"
+            android:strokeColor="#2613A89E"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M28,22 H44 C51.18,22 57,27.82 57,35 C57,42.18 51.18,48 44,48 H28 C20.82,48 15,42.18 15,35 C15,27.82 20.82,22 28,22 Z"
+            android:fillColor="#2218324A" />
+        <path
+            android:pathData="M26,20 H42 C50.284,20 57,26.716 57,35 C57,43.284 50.284,50 42,50 H26 C17.716,50 11,43.284 11,35 C11,26.716 17.716,20 26,20 Z"
+            android:fillColor="#FF18324A" />
+        <path
+            android:pathData="M23,31 H43"
             android:strokeWidth="4"
-            android:strokeColor="#33FFFFFF"
-            android:fillColor="#00000000" />
-
-        <!-- Streak 1 (purple) -->
-        <path
-            android:pathData="M6,34 C18,22 36,16 56,14"
-            android:strokeWidth="8"
-            android:strokeColor="#FF7C5CFF"
+            android:strokeColor="#FFF8FBFF"
             android:strokeLineCap="round"
             android:strokeLineJoin="round" />
         <path
-            android:pathData="M60,12 L60,12"
-            android:strokeWidth="16"
-            android:strokeColor="#FF7C5CFF"
+            android:pathData="M23,39 H37"
+            android:strokeWidth="4"
+            android:strokeColor="#FFC4DCF4"
             android:strokeLineCap="round" />
-
-        <!-- Streak 2 (cyan) -->
         <path
-            android:pathData="M6,42 C20,32 38,28 54,26"
-            android:strokeWidth="8"
-            android:strokeColor="#FF00B8D9"
+            android:pathData="M12,52 C18,35 34,20 52,16"
+            android:strokeWidth="5.5"
+            android:strokeColor="#FF13A89E"
             android:strokeLineCap="round"
             android:strokeLineJoin="round" />
         <path
-            android:pathData="M58,24 L58,24"
-            android:strokeWidth="16"
-            android:strokeColor="#FF00B8D9"
+            android:pathData="M56,14 L56,14"
+            android:strokeWidth="12"
+            android:strokeColor="#FFFF9C63"
             android:strokeLineCap="round" />
-
-        <!-- Streak 3 (orange) -->
-        <path
-            android:pathData="M6,50 C22,48 40,44 52,40"
-            android:strokeWidth="8"
-            android:strokeColor="#FFFFA24B"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="M56,38 L56,38"
-            android:strokeWidth="16"
-            android:strokeColor="#FFFFA24B"
-            android:strokeLineCap="round" />
-
     </group>
 </vector>

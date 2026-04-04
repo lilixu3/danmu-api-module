@@ -140,6 +140,7 @@ class ManagerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 300)
 
     val snackbars = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private var hasShownRootUnavailableNotice = false
 
     init {
         viewModelScope.launch {
@@ -170,11 +171,19 @@ class ManagerViewModel(
     }
 
     private suspend fun refreshAllInternal() {
-        rootAvailable = try {
+        val available = try {
             RootShell.isRootAvailable()
         } catch (_: Throwable) {
             false
         }
+        rootAvailable = available
+        if (!available) {
+            clearRootBackedState()
+            emitRootUnavailableMessage()
+            return
+        }
+
+        hasShownRootUnavailableNotice = false
         status = repository.getStatus()
         cores = repository.listCores()
         logs = repository.listLogs()
@@ -189,6 +198,7 @@ class ManagerViewModel(
 
     fun refreshLogs() {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             withBusy("刷新日志中…") {
                 logs = repository.listLogs()
             }
@@ -205,6 +215,7 @@ class ManagerViewModel(
 
     fun startService() {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("正在启动服务…") {
                 val started = repository.startService()
                 refreshAllInternal()
@@ -216,6 +227,7 @@ class ManagerViewModel(
 
     fun stopService() {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("正在停止服务…") {
                 val stopped = repository.stopService()
                 refreshAllInternal()
@@ -227,6 +239,7 @@ class ManagerViewModel(
 
     fun restartService() {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("正在重启服务…") {
                 val restarted = repository.restartService()
                 refreshAllInternal()
@@ -238,6 +251,7 @@ class ManagerViewModel(
 
     fun setAutostart(enabled: Boolean) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("更新自启动中…") {
                 val updated = repository.setAutostart(enabled)
                 refreshAllInternal()
@@ -249,6 +263,7 @@ class ManagerViewModel(
 
     fun installCore(repo: String, ref: String) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val repoText = repo.trim()
             val refText = ref.trim().ifBlank { "main" }
             if (repoText.isBlank()) {
@@ -267,6 +282,7 @@ class ManagerViewModel(
 
     fun activateCore(id: String) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("切换核心中…") {
                 val activated = repository.activateCore(id)
                 refreshAllInternal()
@@ -278,6 +294,7 @@ class ManagerViewModel(
 
     fun deleteCore(id: String) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("删除核心中…") {
                 val deleted = repository.deleteCore(id)
                 refreshAllInternal()
@@ -289,6 +306,7 @@ class ManagerViewModel(
 
     fun clearLogs() {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("清空模块日志中…") {
                 val cleared = repository.clearLogs()
                 refreshAllInternal()
@@ -304,6 +322,13 @@ class ManagerViewModel(
 
     fun loadModuleLog(path: String) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) {
+                moduleLogError = "未获取 Root 权限"
+                moduleLogText = ""
+                moduleLogPath = null
+                moduleLogLoading = false
+                return@launch
+            }
             moduleLogLoading = true
             moduleLogError = null
             moduleLogPath = path
@@ -441,6 +466,10 @@ class ManagerViewModel(
 
     fun loadEnvFile(onResult: (String) -> Unit) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) {
+                onResult("")
+                return@launch
+            }
             val text = withBusy("读取配置中…") {
                 repository.readEnvFile()
             }
@@ -455,6 +484,7 @@ class ManagerViewModel(
 
     fun saveEnvFile(content: String) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("保存配置中…") {
                 val saved = repository.writeEnvFile(content)
                 if (saved) {
@@ -468,6 +498,7 @@ class ManagerViewModel(
 
     fun exportEnvToUri(uri: Uri) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("导出配置中…") {
                 val text = repository.readEnvFile() ?: return@withBusy false
                 withContext(Dispatchers.IO) {
@@ -487,6 +518,7 @@ class ManagerViewModel(
 
     fun importEnvFromUri(uri: Uri) {
         viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
             val ok = withBusy("导入配置中…") {
                 val text = withContext(Dispatchers.IO) {
                     try {
@@ -517,6 +549,7 @@ class ManagerViewModel(
                 snackbars.tryEmit("请先填写 WebDAV 地址与远程路径")
                 return@launch
             }
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
 
             val result = withBusy("上传到 WebDAV 中…") {
                 val text = repository.readEnvFile() ?: return@withBusy WebDavResult.Error("读取配置失败")
@@ -544,6 +577,7 @@ class ManagerViewModel(
                 snackbars.tryEmit("请先填写 WebDAV 地址与远程路径")
                 return@launch
             }
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
 
             val result = withBusy("从 WebDAV 导入中…") {
                 val download = webDavClient.downloadText(
@@ -833,7 +867,42 @@ class ManagerViewModel(
         return values
     }
 
+    private fun clearRootBackedState() {
+        status = null
+        cores = null
+        logs = null
+        requestRecords = emptyList()
+        requestRecordsError = null
+        requestRecordsLoading = false
+        todayReqNum = 0
+    }
+
+    private fun emitRootUnavailableMessage(force: Boolean = false) {
+        if (force || !hasShownRootUnavailableNotice) {
+            snackbars.tryEmit("未获取 Root 权限，当前为只读模式。请在 Root 管理器中授权后重试。")
+            hasShownRootUnavailableNotice = true
+        }
+    }
+
+    private suspend fun ensureRootAccess(forceSnackbar: Boolean = false): Boolean {
+        val available = try {
+            RootShell.isRootAvailable()
+        } catch (_: Throwable) {
+            false
+        }
+        rootAvailable = available
+        if (available) {
+            hasShownRootUnavailableNotice = false
+            return true
+        }
+
+        clearRootBackedState()
+        emitRootUnavailableMessage(force = forceSnackbar)
+        return false
+    }
+
     private suspend fun refreshAccessInfoInternal() {
+        if (rootAvailable != true) return
         val env = repository.readEnvFile() ?: return
         val values = parseDotEnv(env)
         apiToken = values["TOKEN"].orEmpty().trim().ifBlank { "87654321" }

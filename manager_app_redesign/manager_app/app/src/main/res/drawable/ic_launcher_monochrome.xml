@@ -4,59 +4,36 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-
-    <!--
-      Monochrome icon for Material You themed icons.
-      Must be single-color; launcher will tint it.
-    -->
-
     <group
         android:translateX="18"
         android:translateY="18">
-
-        <!-- Ring -->
         <path
-            android:pathData="M36,12 a24,24 0 1,0 0,48 a24,24 0 1,0 0,-48"
+            android:pathData="M26,20 H42 C50.284,20 57,26.716 57,35 C57,43.284 50.284,50 42,50 H26 C17.716,50 11,43.284 11,35 C11,26.716 17.716,20 26,20 Z"
+            android:fillColor="#00000000"
+            android:strokeWidth="5"
+            android:strokeColor="#FF000000"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M23,31 H43"
             android:strokeWidth="4"
             android:strokeColor="#FF000000"
-            android:fillColor="#00000000" />
-
-        <!-- Streaks + bullets -->
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
         <path
-            android:pathData="M6,34 C18,22 36,16 56,14"
-            android:strokeWidth="8"
+            android:pathData="M23,39 H37"
+            android:strokeWidth="4"
+            android:strokeColor="#FF000000"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M12,52 C18,35 34,20 52,16"
+            android:strokeWidth="6"
             android:strokeColor="#FF000000"
             android:strokeLineCap="round"
             android:strokeLineJoin="round" />
         <path
-            android:pathData="M60,12 L60,12"
-            android:strokeWidth="16"
+            android:pathData="M56,14 L56,14"
+            android:strokeWidth="12"
             android:strokeColor="#FF000000"
             android:strokeLineCap="round" />
-
-        <path
-            android:pathData="M6,42 C20,32 38,28 54,26"
-            android:strokeWidth="8"
-            android:strokeColor="#FF000000"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="M58,24 L58,24"
-            android:strokeWidth="16"
-            android:strokeColor="#FF000000"
-            android:strokeLineCap="round" />
-
-        <path
-            android:pathData="M6,50 C22,48 40,44 52,40"
-            android:strokeWidth="8"
-            android:strokeColor="#FF000000"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="M56,38 L56,38"
-            android:strokeWidth="16"
-            android:strokeColor="#FF000000"
-            android:strokeLineCap="round" />
-
     </group>
 </vector>

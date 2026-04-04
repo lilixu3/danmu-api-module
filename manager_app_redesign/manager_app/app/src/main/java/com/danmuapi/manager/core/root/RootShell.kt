@@ -1,8 +1,10 @@
 package com.danmuapi.manager.core.root
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
@@ -24,53 +26,67 @@ object RootShell {
         command: String,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     ): ShellResult = withContext(Dispatchers.IO) {
-        val process = ProcessBuilder("su", "-c", command)
-            .redirectErrorStream(false)
-            .start()
+        try {
+            val process = ProcessBuilder("su", "-c", command)
+                .redirectErrorStream(false)
+                .start()
 
-        val stdout = StringBuilder()
-        val stderr = StringBuilder()
+            val stdout = StringBuilder()
+            val stderr = StringBuilder()
 
-        val stdoutThread = Thread {
-            BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    stdout.append(line).append('\n')
+            val stdoutThread = Thread {
+                BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        stdout.append(line).append('\n')
+                    }
                 }
             }
-        }
-        val stderrThread = Thread {
-            BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    stderr.append(line).append('\n')
+            val stderrThread = Thread {
+                BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        stderr.append(line).append('\n')
+                    }
                 }
             }
-        }
 
-        stdoutThread.start()
-        stderrThread.start()
+            stdoutThread.start()
+            stderrThread.start()
 
-        val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
-        if (!finished) {
-            process.destroy()
-            process.destroyForcibly()
-            stdoutThread.join(250L)
-            stderrThread.join(250L)
-            return@withContext ShellResult(
-                exitCode = -1,
+            val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+            if (!finished) {
+                process.destroy()
+                process.destroyForcibly()
+                stdoutThread.join(250L)
+                stderrThread.join(250L)
+                return@withContext ShellResult(
+                    exitCode = -1,
+                    stdout = stdout.toString(),
+                    stderr = (stderr.toString() + "\n[timeout after ${timeoutMs}ms]").trim(),
+                )
+            }
+
+            stdoutThread.join(2_000L)
+            stderrThread.join(2_000L)
+
+            ShellResult(
+                exitCode = process.exitValue(),
                 stdout = stdout.toString(),
-                stderr = (stderr.toString() + "\n[timeout after ${timeoutMs}ms]").trim(),
+                stderr = stderr.toString(),
+            )
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            val exitCode = when (error) {
+                is IOException,
+                is SecurityException -> -126
+                else -> -1
+            }
+            ShellResult(
+                exitCode = exitCode,
+                stdout = "",
+                stderr = error.message ?: error.javaClass.simpleName,
             )
         }
-
-        stdoutThread.join(2_000L)
-        stderrThread.join(2_000L)
-
-        ShellResult(
-            exitCode = process.exitValue(),
-            stdout = stdout.toString(),
-            stderr = stderr.toString(),
-        )
     }
 }
