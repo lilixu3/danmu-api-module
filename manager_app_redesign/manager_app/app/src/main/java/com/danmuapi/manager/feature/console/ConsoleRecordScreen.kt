@@ -22,6 +22,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,8 +70,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -109,6 +110,11 @@ private enum class RenderedLogTone {
 private data class RenderedLogLine(
     val text: String,
     val tone: RenderedLogTone,
+)
+
+private data class StableRenderedLogLine(
+    val id: Long,
+    val line: RenderedLogLine,
 )
 
 private data class ConsolePalette(
@@ -657,7 +663,17 @@ private fun LogsWorkbench(
         }
 
         TerminalPanel(
-            viewerKey = "${selectedLogSource.name}|${selectedLogFilter.name}|${selectedModuleFile?.path.orEmpty()}",
+            viewerKey = buildString {
+                append(selectedLogSource.name)
+                append('|')
+                append(selectedLogFilter.name)
+                append('|')
+                append(selectedModuleFile?.path.orEmpty())
+                append('|')
+                append(consoleLogLimit)
+                append('|')
+                append(logSearchQuery.trim())
+            },
             lines = renderedLogLines,
             statusText = statusText,
             loading = if (selectedLogSource == ConsoleLogSource.Service) {
@@ -965,13 +981,11 @@ private fun TerminalPanel(
     limit: Int,
 ) {
     val scope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
+    val listState = rememberLazyListState()
     var followTail by remember(viewerKey) { mutableStateOf(true) }
     var pendingLines by remember(viewerKey) { mutableIntStateOf(0) }
-    var previousLineCount by remember(viewerKey) { mutableIntStateOf(0) }
-    var previousLastLine by remember(viewerKey) { mutableStateOf<String?>(null) }
-
-    val annotatedText = remember(lines, palette) { buildAnnotatedLogText(lines, palette) }
+    var stableLines by remember(viewerKey) { mutableStateOf(emptyList<StableRenderedLogLine>()) }
+    var nextStableLineId by remember(viewerKey) { mutableStateOf(0L) }
     val panelStateText by remember(statusText, followTail, pendingLines) {
         derivedStateOf {
             if (followTail || pendingLines == 0) {
@@ -982,38 +996,42 @@ private fun TerminalPanel(
         }
     }
 
-    LaunchedEffect(viewerKey, lines) {
+    LaunchedEffect(viewerKey, lines, loading, error) {
         if (loading || error != null) return@LaunchedEffect
 
-        val currentLastLine = lines.lastOrNull()?.text
-        val contentChanged = currentLastLine != previousLastLine || lines.size != previousLineCount
-        if (!contentChanged) return@LaunchedEffect
-
-        val incomingCount = when {
-            previousLastLine == null -> lines.size
-            lines.isEmpty() -> 0
-            lines.size > previousLineCount -> lines.size - previousLineCount
-            currentLastLine != previousLastLine -> 1
-            else -> 0
-        }
+        val reconciliation = reconcileStableLogLines(
+            previous = stableLines,
+            incoming = lines,
+            nextId = nextStableLineId,
+        )
+        stableLines = reconciliation.lines
+        nextStableLineId = reconciliation.nextId
 
         if (followTail) {
-            scrollState.scrollTo(scrollState.maxValue)
+            if (reconciliation.lines.isNotEmpty()) {
+                listState.scrollToItem(reconciliation.lines.lastIndex)
+            }
             pendingLines = 0
-        } else if (incomingCount > 0) {
-            pendingLines += incomingCount
+        } else if (reconciliation.appendedCount > 0) {
+            pendingLines += reconciliation.appendedCount
         }
-
-        previousLineCount = lines.size
-        previousLastLine = currentLastLine
     }
 
-    LaunchedEffect(viewerKey, scrollState) {
+    LaunchedEffect(viewerKey, listState) {
         snapshotFlow {
-            Triple(scrollState.isScrollInProgress, scrollState.value, scrollState.maxValue)
-        }.collect { (inProgress, value, maxValue) ->
+            val layoutInfo = listState.layoutInfo
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+            val totalItems = layoutInfo.totalItemsCount
+            val viewportBottom = layoutInfo.viewportEndOffset
+            val nearBottom = when {
+                totalItems == 0 -> true
+                lastVisible == null -> true
+                lastVisible.index < totalItems - 1 -> false
+                else -> viewportBottom - (lastVisible.offset + lastVisible.size) <= 28
+            }
+            listState.isScrollInProgress to nearBottom
+        }.collect { (inProgress, nearBottom) ->
             if (!inProgress) return@collect
-            val nearBottom = maxValue - value <= 28
             if (nearBottom) {
                 followTail = true
                 pendingLines = 0
@@ -1098,24 +1116,25 @@ private fun TerminalPanel(
 
                     else -> {
                         SelectionContainer {
-                            Text(
-                                text = annotatedText,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .verticalScroll(scrollState),
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontFamily = DanmuMonoFamily,
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp,
-                                    letterSpacing = 0.1.sp,
-                                ),
-                                color = palette.terminalText,
-                            )
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                items(
+                                    items = stableLines,
+                                    key = { it.id },
+                                ) { item ->
+                                    TerminalLogLine(
+                                        line = item.line,
+                                        palette = palette,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
 
-                if (pendingLines > 0 && !followTail && lines.isNotEmpty()) {
+                if (pendingLines > 0 && !followTail && stableLines.isNotEmpty()) {
                     Surface(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -1125,7 +1144,7 @@ private fun TerminalPanel(
                             scope.launch {
                                 followTail = true
                                 pendingLines = 0
-                                scrollState.animateScrollTo(scrollState.maxValue)
+                                listState.animateScrollToItem(stableLines.lastIndex)
                             }
                         },
                         shape = RoundedCornerShape(18.dp),
@@ -1143,6 +1162,31 @@ private fun TerminalPanel(
             }
         }
     }
+}
+
+@Composable
+private fun TerminalLogLine(
+    line: RenderedLogLine,
+    palette: ConsolePalette,
+) {
+    val lineColor = when (line.tone) {
+        RenderedLogTone.Default -> palette.terminalText
+        RenderedLogTone.Error -> palette.terminalError
+        RenderedLogTone.Warning -> palette.terminalWarning
+        RenderedLogTone.Accent -> palette.accent.copy(alpha = 0.92f)
+    }
+
+    Text(
+        text = line.text,
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.bodyMedium.copy(
+            fontFamily = DanmuMonoFamily,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            letterSpacing = 0.1.sp,
+        ),
+        color = lineColor,
+    )
 }
 
 @Composable
@@ -1515,22 +1559,76 @@ private fun buildLogExportFileName(
     return "danmu_${sourceToken}_${filterToken}${querySuffix}.log"
 }
 
-private fun buildAnnotatedLogText(
-    lines: List<RenderedLogLine>,
-    palette: ConsolePalette,
-) = buildAnnotatedString {
-    lines.forEachIndexed { index, line ->
-        val color = when (line.tone) {
-            RenderedLogTone.Default -> palette.terminalText
-            RenderedLogTone.Error -> palette.terminalError
-            RenderedLogTone.Warning -> palette.terminalWarning
-            RenderedLogTone.Accent -> palette.accent.copy(alpha = 0.92f)
-        }
-        pushStyle(SpanStyle(color = color))
-        append(line.text)
-        pop()
-        if (index != lines.lastIndex) append('\n')
+private data class StableLogReconciliation(
+    val lines: List<StableRenderedLogLine>,
+    val nextId: Long,
+    val appendedCount: Int,
+)
+
+private fun reconcileStableLogLines(
+    previous: List<StableRenderedLogLine>,
+    incoming: List<RenderedLogLine>,
+    nextId: Long,
+): StableLogReconciliation {
+    if (incoming.isEmpty()) {
+        return StableLogReconciliation(
+            lines = emptyList(),
+            nextId = nextId,
+            appendedCount = 0,
+        )
     }
+
+    if (previous.isEmpty()) {
+        val newLines = incoming.mapIndexed { index, line ->
+            StableRenderedLogLine(
+                id = nextId + index,
+                line = line,
+            )
+        }
+        return StableLogReconciliation(
+            lines = newLines,
+            nextId = nextId + incoming.size,
+            appendedCount = incoming.size,
+        )
+    }
+
+    val overlap = trailingOverlapCount(
+        previous = previous.map(StableRenderedLogLine::line),
+        incoming = incoming,
+    )
+    val reused = if (overlap > 0) previous.takeLast(overlap) else emptyList()
+    var currentId = nextId
+    val fresh = incoming.drop(overlap).map { line ->
+        StableRenderedLogLine(
+            id = currentId++,
+            line = line,
+        )
+    }
+
+    return StableLogReconciliation(
+        lines = reused + fresh,
+        nextId = currentId,
+        appendedCount = incoming.size - overlap,
+    )
+}
+
+private fun trailingOverlapCount(
+    previous: List<RenderedLogLine>,
+    incoming: List<RenderedLogLine>,
+): Int {
+    val maxOverlap = minOf(previous.size, incoming.size)
+    for (overlap in maxOverlap downTo 1) {
+        val previousStart = previous.size - overlap
+        var matched = true
+        for (index in 0 until overlap) {
+            if (previous[previousStart + index] != incoming[index]) {
+                matched = false
+                break
+            }
+        }
+        if (matched) return overlap
+    }
+    return 0
 }
 
 private fun toneForLevel(level: String): RenderedLogTone {

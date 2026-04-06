@@ -41,6 +41,7 @@ fun AppNavigation(
                 viewModel = viewModel,
                 onOpenSettings = { navController.navigate(AppDestination.Settings.route) },
                 onOpenCoreHub = { navController.navigate(AppDestination.CoreHub.route) },
+                onOpenConsole = { navController.navigate(AppDestination.Console.route) },
             )
         }
         composable(AppDestination.CoreHub.route) {
