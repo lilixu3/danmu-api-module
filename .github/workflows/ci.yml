@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/ci/**'
+      - 'manager_app_redesign/**'
+      - 'module_template/**'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/ci/**'
+      - 'manager_app_redesign/**'
+      - 'module_template/**'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-build:
+    name: Validate manager + modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip rsync curl binutils xz-utils dpkg python3
+
+      - name: Make scripts executable
+        run: |
+          chmod +x scripts/ci/*.sh
+          chmod +x manager_app_redesign/manager_app/gradlew
+
+      - name: Build manager debug
+        run: ./scripts/ci/build_manager.sh --variant debug
+
+      - name: Build manager release
+        run: ./scripts/ci/build_manager.sh --variant release
+
+      - name: Build module bundles (validation only)
+        run: ./scripts/ci/build_modules.sh --variant both
+
+      - name: Workflow summary
+        run: |
+          {
+            echo '## CI 校验完成'
+            echo '- 已构建管理器 Debug APK'
+            echo '- 已构建管理器 Release APK'
+            echo '- 已验证 No-Node / Node 两种 Magisk 模块打包'
+            echo '- 本工作流不上传任何构建产物'
+          } >> "$GITHUB_STEP_SUMMARY"

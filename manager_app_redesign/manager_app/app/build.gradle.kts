@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val workflowVersionName = (findProperty("appVersionName") as String?)?.takeIf { it.isNotBlank() }
+val workflowVersionCode = (findProperty("appVersionCode") as String?)
+    ?.toIntOrNull()
+
 android {
     namespace = "com.danmuapi.manager"
     compileSdk = 34
@@ -12,9 +16,8 @@ android {
         minSdk = 21
         targetSdk = 34
 
-        // Patched by workflow to match module version
-        versionCode = 100
-        versionName = "1.0.0"
+        versionCode = workflowVersionCode ?: 100
+        versionName = workflowVersionName ?: "1.0.0"
 
         vectorDrawables {
             useSupportLibrary = true

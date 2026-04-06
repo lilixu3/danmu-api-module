@@ -194,18 +194,79 @@
 
 ---
 
-## 给开发者：如何用 GitHub Actions 一键打包
+## 给开发者：GitHub Actions 工作流说明
 
-本仓库提供 workflow：**Build Danmu API Magisk Modules**（手动触发）
+现在仓库里的工作流已按职责拆分，适合长期维护：
 
-1. Fork 本仓库
-2. Actions → 选择 workflow → Run workflow
-3. 选择参数：
+### 1) `CI`
 
-   * build 版本（both/node/no_node）
-4. 构建完成后在 Artifacts 或 Release 下载 zip，直接刷入
+触发时机：
 
-> Actions 会完成 APK 编译与模块打包；核心在刷入时再从 GitHub 下载，不再内置到模块包内。
+* push
+* pull request
+
+用途：
+
+* 校验管理器 Debug 构建
+* 校验管理器 Release 构建
+* 校验 No-Node / Node 两种模块打包
+
+特点：
+
+* **只做 CI 校验**
+* **不上传产物**
+* 适合日常提交后的自动验收
+
+### 2) `Build Debug APK`
+
+触发方式：
+
+* 手动触发（workflow_dispatch）
+
+用途：
+
+* 构建管理器 Debug APK
+* 上传到 Actions Artifacts，方便测试安装
+
+### 3) `Build Release Bundle`
+
+触发方式：
+
+* 手动触发（workflow_dispatch）
+
+用途：
+
+* 构建管理器 Release APK
+* 打包 No-Node / Node 两种 Magisk 模块
+* 生成 `SHA256SUMS.txt`
+* 上传到 Actions Artifacts
+
+适合：
+
+* 发版前预检
+* 先人工验证产物，再决定是否正式发布
+
+### 4) `Publish Release`
+
+触发方式：
+
+* 手动触发（workflow_dispatch）
+
+用途：
+
+* 自动计算或手动指定版本号
+* 构建管理器 Release APK
+* 打包 No-Node / Node 两种模块
+* 自动生成从**上一个发布版本到当前版本**之间的提交更新日志
+* 自动创建 GitHub Release
+* 自动上传：
+
+  * 管理器 Release APK
+  * No-Node 模块 zip
+  * Node 模块 zip
+  * `SHA256SUMS.txt`
+
+> Release 工作流不会直接修改仓库源码版本号文件，而是通过构建参数注入版本信息，方便保持仓库整洁。
 
 ---
 

@@ -1,0 +1,119 @@
+name: Build Release Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '要构建的分支 / 标签 / 提交'
+        required: true
+        default: 'main'
+      version:
+        description: '可选：手动指定版本号（如 1.6.9）'
+        required: false
+        default: ''
+      bump:
+        description: '未指定版本号时的自动递增策略'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: build-release-${{ github.event.inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip rsync curl binutils xz-utils dpkg python3
+
+      - name: Make scripts executable
+        run: |
+          chmod +x scripts/ci/*.sh
+          chmod +x manager_app_redesign/manager_app/gradlew
+
+      - name: Resolve version
+        id: resolve
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            ./scripts/ci/resolve_version.sh --version "${{ inputs.version }}" > /tmp/version-info
+          else
+            ./scripts/ci/resolve_version.sh --bump "${{ inputs.bump }}" > /tmp/version-info
+          fi
+          cat /tmp/version-info
+          while IFS='=' read -r key value; do
+            echo "$key=$value" >> "$GITHUB_OUTPUT"
+          done < /tmp/version-info
+
+      - name: Build manager release APK
+        run: |
+          ./scripts/ci/build_manager.sh \
+            --variant release \
+            --version "${{ steps.resolve.outputs.version }}" \
+            --version-code "${{ steps.resolve.outputs.version_code }}"
+
+      - name: Build release modules
+        run: |
+          ./scripts/ci/build_modules.sh \
+            --variant both \
+            --version "${{ steps.resolve.outputs.version }}" \
+            --version-code "${{ steps.resolve.outputs.version_code }}" \
+            --manager-apk manager_app_redesign/manager_app/app/build/outputs/apk/release/app-release.apk
+
+      - name: Prepare release bundle artifacts
+        shell: bash
+        run: |
+          mkdir -p build/ci/out
+          cp manager_app_redesign/manager_app/app/build/outputs/apk/release/app-release.apk \
+            "build/ci/out/DanmuApiManager-v${{ steps.resolve.outputs.version }}-release.apk"
+          (
+            cd build/ci/out
+            sha256sum ./* > SHA256SUMS.txt
+          )
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Danmu-release-bundle-v${{ steps.resolve.outputs.version }}
+          path: build/ci/out/*
+          if-no-files-found: error
+
+      - name: Workflow summary
+        run: |
+          {
+            echo '## Release 构建完成（未发布）'
+            echo "- 版本：v${{ steps.resolve.outputs.version }}"
+            echo '- 产物：管理器 Release APK、No-Node 模块、Node 模块、SHA256SUMS.txt'
+            echo '- 获取方式：Artifacts'
+          } >> "$GITHUB_STEP_SUMMARY"
