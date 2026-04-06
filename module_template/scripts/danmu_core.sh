@@ -258,6 +258,78 @@ read_version_from_globals() {
   echo ""
 }
 
+patch_core_worker_logs() {
+  # Avoid self-polluting logs when the manager polls GET /api/logs.
+  worker="$1"
+  [ -f "${worker}" ] || return 0
+
+  if grep -q 'danmu_api_manager_patch' "${worker}" 2>/dev/null; then
+    return 0
+  fi
+
+  tmp="${TMP_DIR}/worker.js.patch.$$"
+
+  if awk '
+    BEGIN {
+      patched_method = 0
+      patched_url = 0
+      patched_path = 0
+      patched_ip = 0
+      patched_route = 0
+    }
+    {
+      if ($0 == "  const method = req.method;") {
+        print
+        print "  const shouldLogRequest = !(path === \"/api/logs\" && method === \"GET\"); // danmu_api_manager_patch"
+        patched_method = 1
+        next
+      }
+      if ($0 == "  log(\"info\", `request url: ${JSON.stringify(url)}`);") {
+        print "  shouldLogRequest && log(\"info\", `request url: ${JSON.stringify(url)}`);"
+        patched_url = 1
+        next
+      }
+      if ($0 == "  log(\"info\", `request path: ${path}`);") {
+        print "  shouldLogRequest && log(\"info\", `request path: ${path}`);"
+        patched_path = 1
+        next
+      }
+      if ($0 == "  log(\"info\", `client ip: ${clientIp}`);") {
+        print "  shouldLogRequest && log(\"info\", `client ip: ${clientIp}`);"
+        patched_ip = 1
+        next
+      }
+      if ($0 == "  log(\"info\", path);") {
+        print "  shouldLogRequest && log(\"info\", path);"
+        patched_route = 1
+        next
+      }
+      print
+    }
+    END {
+      if (!(patched_method && patched_url && patched_path && patched_ip && patched_route)) {
+        exit 2
+      }
+    }
+  ' "${worker}" > "${tmp}"; then
+    if ! mv -f "${tmp}" "${worker}" 2>/dev/null; then
+      if ! cp -f "${tmp}" "${worker}" 2>/dev/null; then
+        rm -f "${tmp}" 2>/dev/null || true
+        log "failed to write patched worker.js: ${worker}"
+        return 1
+      fi
+      rm -f "${tmp}" 2>/dev/null || true
+    fi
+    rm -f "${tmp}" 2>/dev/null || true
+    log "patched worker.js request logging: ${worker}"
+    return 0
+  fi
+
+  rm -f "${tmp}" 2>/dev/null || true
+  log "skip patch worker.js request logging: ${worker}"
+  return 1
+}
+
 write_meta_json() {
   # args: id repo ref sha version installedAt sizeBytes
   id="$1"; repo="$2"; ref="$3"; sha="$4"; ver="$5"; installed="$6"; sizeb="$7"
@@ -335,6 +407,8 @@ activate_core() {
     echo "error=core_not_found"
     return 1
   fi
+
+  patch_core_worker_logs "${cdir}/worker.js" || true
 
   running_before=0
   if is_running; then running_before=1; fi
@@ -570,6 +644,8 @@ install_core() {
     return 1
   fi
 
+  patch_core_worker_logs "${dest_core}/worker.js" || true
+
   ver="$(read_version_from_globals "${dest_core}")"
   installed="$(date '+%F %T')"
   sizeb="0"
@@ -614,6 +690,7 @@ ensure_seed() {
   # If we already have an active core + link, just ensure layout + config link
   active="$(read_active_id)"
   if [ -n "${active}" ] && [ -L "${CORE_LINK}" ]; then
+    patch_core_worker_logs "$(core_dir_for "${active}")/worker.js" || true
     ensure_core_config_link "${active}" || true
     ensure_symlink_layout
     return 0
