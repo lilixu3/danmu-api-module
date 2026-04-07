@@ -260,10 +260,11 @@ read_version_from_globals() {
 
 patch_core_worker_logs() {
   # Avoid self-polluting logs when the manager polls GET /api/logs.
+  # Note: before token stripping, the real incoming path is usually /<token>/api/logs.
   worker="$1"
   [ -f "${worker}" ] || return 0
 
-  if grep -q 'danmu_api_manager_patch' "${worker}" 2>/dev/null; then
+  if grep -q 'danmu_api_manager_patch_v2' "${worker}" 2>/dev/null; then
     return 0
   fi
 
@@ -280,26 +281,34 @@ patch_core_worker_logs() {
     {
       if ($0 == "  const method = req.method;") {
         print
-        print "  const shouldLogRequest = !(path === \"/api/logs\" && method === \"GET\"); // danmu_api_manager_patch"
+        print "  const shouldLogRequest = !(method === \"GET\" && (path === \"/api/logs\" || /^\\/[^/]+\\/api\\/logs$/.test(path))); // danmu_api_manager_patch_v2"
         patched_method = 1
         next
       }
-      if ($0 == "  log(\"info\", `request url: ${JSON.stringify(url)}`);") {
+      if ($0 == "  const shouldLogRequest = !(path === \"/api/logs\" && method === \"GET\"); // danmu_api_manager_patch" ||
+          $0 == "  const shouldLogRequest = !(method === \"GET\" && (path === \"/api/logs\" || /^\\/[^/]+\\/api\\/logs$/.test(path))); // danmu_api_manager_patch_v2") {
+        next
+      }
+      if ($0 == "  log(\"info\", `request url: ${JSON.stringify(url)}`);" ||
+          $0 == "  shouldLogRequest && log(\"info\", `request url: ${JSON.stringify(url)}`);") {
         print "  shouldLogRequest && log(\"info\", `request url: ${JSON.stringify(url)}`);"
         patched_url = 1
         next
       }
-      if ($0 == "  log(\"info\", `request path: ${path}`);") {
+      if ($0 == "  log(\"info\", `request path: ${path}`);" ||
+          $0 == "  shouldLogRequest && log(\"info\", `request path: ${path}`);") {
         print "  shouldLogRequest && log(\"info\", `request path: ${path}`);"
         patched_path = 1
         next
       }
-      if ($0 == "  log(\"info\", `client ip: ${clientIp}`);") {
+      if ($0 == "  log(\"info\", `client ip: ${clientIp}`);" ||
+          $0 == "  shouldLogRequest && log(\"info\", `client ip: ${clientIp}`);") {
         print "  shouldLogRequest && log(\"info\", `client ip: ${clientIp}`);"
         patched_ip = 1
         next
       }
-      if ($0 == "  log(\"info\", path);") {
+      if ($0 == "  log(\"info\", path);" ||
+          $0 == "  shouldLogRequest && log(\"info\", path);") {
         print "  shouldLogRequest && log(\"info\", path);"
         patched_route = 1
         next
