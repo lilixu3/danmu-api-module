@@ -133,7 +133,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.resolve.outputs.tag }}
-          name: Danmu API Server ${{ steps.resolve.outputs.tag }}
+          name: V${{ steps.resolve.outputs.version }}
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
           body_path: build/ci/out/release-notes.md

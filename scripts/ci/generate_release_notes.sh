@@ -53,40 +53,41 @@ else
 fi
 
 commit_count="$(git -C "$REPO_ROOT" rev-list --count "$range")"
-current_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+asset_manager_apk="DanmuApiManager-v${version}-release.apk"
+asset_module_nonode="danmu_api_server_${version}.zip"
+asset_module_node="danmu_api_server_node_${version}.zip"
+update_list_file="$(mktemp)"
+
+cleanup() {
+  rm -f "$update_list_file"
+}
+trap cleanup EXIT
+
+if [ -n "$previous_tag" ]; then
+  git -C "$REPO_ROOT" log --no-merges --pretty=format:'- %s' "$range" > "$update_list_file"
+else
+  git -C "$REPO_ROOT" log --no-merges --pretty=format:'- %s' HEAD > "$update_list_file"
+fi
 
 {
-  echo "# Danmu API Server ${tag}"
-  echo
-  echo "## 发布信息"
-  echo "- 发布时间（UTC）：${current_date}"
-  echo "- 版本范围：${compare_text}"
-  echo "- 提交数量：${commit_count}"
-  if [ -n "$repo_slug" ] && [ -n "$previous_tag" ]; then
-    echo "- 对比链接：https://github.com/${repo_slug}/compare/${previous_tag}...${tag}"
-  fi
-  echo
-  echo "## 构建产物"
-  echo "- Danmu API 管理器 Release APK"
-  echo "- Magisk 模块（No-Node）"
-  echo "- Magisk 模块（内置 Node）"
-  echo "- SHA256SUMS.txt"
-  echo
   echo "## 本次更新"
-  if [ -n "$previous_tag" ]; then
-    git -C "$REPO_ROOT" log --no-merges --pretty=format:'- %s (`%h`)' "$range"
+  if [ "$commit_count" -gt 0 ] && [ -s "$update_list_file" ]; then
+    cat "$update_list_file"
   else
-    git -C "$REPO_ROOT" log --no-merges --pretty=format:'- %s (`%h`)' HEAD
+    echo "- 常规维护与构建更新"
   fi
   echo
   echo
-  echo "## 提交明细"
-  if [ -n "$previous_tag" ]; then
-    git -C "$REPO_ROOT" log --no-merges --date=short --pretty=format:'- %ad  %s (`%h`)' "$range"
-  else
-    git -C "$REPO_ROOT" log --no-merges --date=short --pretty=format:'- %ad  %s (`%h`)' HEAD
+  echo "## 发布产物"
+  echo "- ${asset_manager_apk}"
+  echo "- ${asset_module_nonode}"
+  echo "- ${asset_module_node}"
+  echo "- SHA256SUMS.txt"
+  if [ -n "$repo_slug" ] && [ -n "$previous_tag" ]; then
+    echo
+    echo "## 对比链接"
+    echo "- https://github.com/${repo_slug}/compare/${previous_tag}...${tag}"
   fi
-  echo
 } > "$output_path"
 
 echo "$output_path"
