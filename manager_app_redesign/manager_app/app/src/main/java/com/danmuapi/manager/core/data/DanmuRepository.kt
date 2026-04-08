@@ -74,6 +74,8 @@ class DanmuRepository(
 ) {
     suspend fun getStatus(): ManagerStatus? = cli.getStatus()
 
+    suspend fun getProcessElapsedSeconds(pid: String): Long? = cli.getProcessElapsedSeconds(pid)
+
     suspend fun listCores() = cli.listCores()
 
     suspend fun listLogs() = cli.listLogs()

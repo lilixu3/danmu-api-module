@@ -104,6 +104,8 @@ class ManagerViewModel(
         private set
     var todayReqNum: Int by mutableStateOf(0)
         private set
+    var serviceElapsedSeconds: Long? by mutableStateOf(null)
+        private set
 
     var moduleUpdateInfo: ModuleUpdateInfo? by mutableStateOf(null)
         private set
@@ -222,12 +224,19 @@ class ManagerViewModel(
         status = repository.getStatus()
         cores = repository.listCores()
         logs = repository.listLogs()
+        serviceElapsedSeconds = status
+            ?.takeIf { it.isRunning }
+            ?.service
+            ?.pid
+            ?.takeIf { it.isNotBlank() }
+            ?.let { pid -> repository.getProcessElapsedSeconds(pid) ?: 0L }
         refreshAccessInfoInternal()
         if (status?.isRunning == true) {
             refreshRequestRecordsInternal()
         } else {
             requestRecords = emptyList()
             todayReqNum = 0
+            serviceElapsedSeconds = null
         }
     }
 
@@ -1420,6 +1429,7 @@ class ManagerViewModel(
         requestRecordsError = null
         requestRecordsLoading = false
         todayReqNum = 0
+        serviceElapsedSeconds = null
     }
 
     private fun emitRootUnavailableMessage(force: Boolean = false) {

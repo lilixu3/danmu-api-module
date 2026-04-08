@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -61,7 +60,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -170,15 +168,15 @@ fun CoreHubScreen(
     ) {
         Box(
             modifier = Modifier
-                .offset(x = 212.dp, y = (-56).dp)
-                .size(224.dp)
+                .offset(x = 236.dp, y = (-32).dp)
+                .size(168.dp)
                 .clip(CircleShape)
                 .background(colors.haloPrimary),
         )
         Box(
             modifier = Modifier
-                .offset(x = (-64).dp, y = 168.dp)
-                .size(180.dp)
+                .offset(x = (-42).dp, y = 172.dp)
+                .size(122.dp)
                 .clip(CircleShape)
                 .background(colors.haloSecondary),
         )
@@ -188,19 +186,19 @@ fun CoreHubScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(bottom = contentPadding.calculateBottomPadding() + 28.dp),
+                    .padding(bottom = contentPadding.calculateBottomPadding() + 24.dp),
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                        .padding(horizontal = 16.dp, vertical = 16.dp)
                         .widthIn(max = 860.dp)
                         .align(Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     CoreHubHeader(
-                        subtitle = buildHubHeaderSubtitle(activeCore, allCores.size),
+                        subtitle = CoreHubSummaryFormatter.headerSubtitle(activeCore, allCores.size),
                         updateCount = updateCount,
                         colors = colors,
                     )
@@ -229,13 +227,6 @@ fun CoreHubScreen(
                         onOpenInstall = { showInstallSheet = true },
                     )
 
-                    HubActionRow(
-                        busy = viewModel.busy,
-                        colors = colors,
-                        onCheckUpdates = viewModel::checkUpdates,
-                        onShowInstall = { showInstallSheet = true },
-                    )
-
                     InstalledCorePanel(
                         cores = filteredCores,
                         allCount = allCores.size,
@@ -245,7 +236,10 @@ fun CoreHubScreen(
                         selectedFilter = selectedFilter,
                         onFilterChange = { selectedFilter = it },
                         updateInfo = viewModel.updateInfo,
+                        busy = viewModel.busy,
                         colors = colors,
+                        onCheckUpdates = viewModel::checkUpdates,
+                        onShowInstall = { showInstallSheet = true },
                         onOpenCore = onOpenCore,
                     )
                 }
@@ -344,23 +338,16 @@ fun CoreDetailScreen(
                     core = core,
                     isActive = isActive,
                     updateInfo = updateInfo,
+                    busy = viewModel.busy,
                     colors = colors,
+                    onInstall = { viewModel.installCore(core.repo, core.ref) },
+                    onActivate = { viewModel.activateCore(core.id) },
                 )
 
                 CoreInfoCard(
                     core = core,
                     updateInfo = updateInfo,
                     colors = colors,
-                )
-
-                CoreActionCard(
-                    core = core,
-                    isActive = isActive,
-                    updateInfo = updateInfo,
-                    busy = viewModel.busy,
-                    colors = colors,
-                    onInstall = { viewModel.installCore(core.repo, core.ref) },
-                    onActivate = { viewModel.activateCore(core.id) },
                 )
 
                 DangerActionCard(
@@ -381,28 +368,28 @@ private fun CoreHubHeader(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
                 text = "核心",
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontSize = 36.sp,
-                    lineHeight = 40.sp,
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontSize = 28.sp,
+                    lineHeight = 30.sp,
                     fontWeight = FontWeight.Black,
-                    letterSpacing = (-0.8).sp,
+                    letterSpacing = (-0.6).sp,
                 ),
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
                 ),
                 color = colors.subtleText,
             )
@@ -426,19 +413,19 @@ private fun HubStatusPill(
             .clip(CircleShape)
             .background(containerColor)
             .border(1.dp, toneColor.copy(alpha = 0.10f), CircleShape)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(8.dp)
+                .size(6.dp)
                 .clip(CircleShape)
                 .background(toneColor),
         )
         Text(
             text = text,
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
             color = toneColor,
         )
     }
@@ -451,7 +438,7 @@ private fun HubBusyStrip(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
         color = colors.cardStrong,
         border = BorderStroke(1.dp, colors.cardBorder),
         shadowElevation = 0.dp,
@@ -459,17 +446,17 @@ private fun HubBusyStrip(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(14.dp),
                 strokeWidth = 2.dp,
             )
             Text(
                 text = message,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = colors.subtleText,
             )
         }
@@ -490,147 +477,137 @@ private fun CurrentCoreHeroCard(
     val hasCore = core != null
     val updateAvailable = updateInfo?.updateAvailable == true
     val updateUnknown = updateInfo != null && updateInfo.state == CoreUpdateState.Unknown
-    val primaryLabel = when {
-        !hasCore -> "安装核心"
-        updateAvailable -> "安装更新"
-        else -> "重新安装"
-    }
-    val title = core?.shortDisplayName() ?: "先安装一个核心"
-    val subtitle = when {
-        core == null && allCoreCount == 0 -> "当前还没有已安装核心。先添加一个，再继续管理和切换。"
-        core == null -> "已经安装 $allCoreCount 个核心，但当前还没有活动项。先选择一个，或直接安装新的核心。"
-        updateAvailable -> "发现新版本，主操作会按当前仓库与分支拉取并覆盖安装。"
-        else -> "当前核心已经就绪，点卡片可以进入详情页，查看完整信息和危险操作。"
-    }
+    val primaryLabel = CoreHubSummaryFormatter.primaryActionLabel(core, updateInfo)
+    val title = core?.repoDisplayName ?: "还没有活动核心"
+    val subtitle = CoreHubSummaryFormatter.currentCoreMetaLine(core)
+    val stateText = CoreHubSummaryFormatter.currentStateBadge(core, updateInfo)
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         onClick = {
             if (hasCore) onOpenDetail() else onOpenInstall()
         },
-        shape = RoundedCornerShape(34.dp),
+        shape = RoundedCornerShape(26.dp),
         color = colors.cardStrong,
         border = BorderStroke(1.dp, colors.cardBorder),
-        shadowElevation = 4.dp,
+        shadowElevation = 0.dp,
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    brush = Brush.linearGradient(
+                    brush = Brush.verticalGradient(
                         colors = listOf(
-                            colors.accentContainer.copy(alpha = 0.76f),
+                            colors.accentContainer.copy(alpha = 0.28f),
                             colors.cardStrong,
-                            colors.cardMuted,
                         ),
                     ),
-                ),
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    HeroTag(
-                        text = if (hasCore) "当前核心" else "未选择核心",
-                        color = if (hasCore) colors.accent else colors.subtleText,
-                        container = if (hasCore) colors.accentContainer else colors.chip,
-                    )
-                    if (updateAvailable) {
-                        HeroTag(
-                            text = "可更新",
-                            color = colors.warning,
-                            container = colors.warningContainer,
-                        )
-                    } else if (updateUnknown) {
-                        HeroTag(
-                            text = "未确认",
-                            color = colors.subtleText,
-                            container = colors.chip,
-                        )
-                    }
-                }
+            Text(
+                text = "当前核心",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = colors.subtleText,
+            )
 
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(colors.accent)
+                        .border(4.dp, colors.accent.copy(alpha = 0.12f), CircleShape),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     Text(
                         text = title,
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontSize = 30.sp,
-                            lineHeight = 34.sp,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = (-0.5).sp,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 18.sp,
+                            lineHeight = 20.sp,
                         ),
-                        maxLines = 2,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
                         text = subtitle,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                        ),
+                        color = colors.subtleText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                StateBadge(
+                    text = stateText,
+                    color = when {
+                        !hasCore || updateUnknown -> colors.subtleText
+                        updateAvailable -> colors.warning
+                        else -> colors.positive
+                    },
+                    container = when {
+                        !hasCore || updateUnknown -> colors.chip
+                        updateAvailable -> colors.warningContainer
+                        else -> colors.positiveContainer
+                    },
+                )
+            }
+
+            if (hasCore) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    HubActionButton(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.AutoMirrored.Filled.OpenInNew,
+                        label = "查看详情",
+                        enabled = !busy,
+                        colors = colors,
+                        emphasized = true,
+                        onClick = onOpenDetail,
+                    )
+                    HubActionButton(
+                        modifier = Modifier.weight(1f),
+                        icon = if (updateAvailable) Icons.Filled.SystemUpdateAlt else Icons.Filled.CloudDownload,
+                        label = if (busy) "处理中" else primaryLabel,
+                        enabled = !busy,
+                        colors = colors,
+                        onClick = onPrimaryAction,
+                    )
+                }
+            } else {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = if (allCoreCount == 0) {
+                            "还没有安装核心，先添加一个开始管理。"
+                        } else {
+                            "已安装 $allCoreCount 个核心，先选择一个或直接安装新的核心。"
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
                         ),
                         color = colors.subtleText,
                     )
-                }
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    HeroMetaTag(
-                        label = if (core == null) "已安装" else "仓库",
-                        value = if (core == null) "$allCoreCount 个" else core.repoDisplayName,
-                        colors = colors,
-                    )
-                    HeroMetaTag(
-                        label = if (core == null) "建议" else "分支",
-                        value = if (core == null) "main" else core.ref,
-                        colors = colors,
-                    )
-                    HeroMetaTag(
-                        label = if (updateAvailable) "最新" else "版本",
-                        value = buildVersionLabel(core, updateInfo),
-                        colors = colors,
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = if (hasCore) "点卡片可进入详情页" else "支持 owner/repo + 分支 / tag / commit",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = colors.subtleText,
-                        )
-                        Text(
-                            text = if (hasCore) {
-                                if (updateAvailable) {
-                                    "建议先安装更新，再继续切换或删除。"
-                                } else {
-                                    "主操作会对当前仓库重新执行安装。"
-                                }
-                            } else {
-                                "推荐直接使用预设仓库开始。"
-                            },
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                        )
-                    }
-                    PrimaryActionButton(
+                    HubActionButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = Icons.Filled.CloudDownload,
                         label = if (busy) "处理中" else primaryLabel,
-                        icon = if (updateAvailable) Icons.Filled.SystemUpdateAlt else Icons.Filled.CloudDownload,
-                        busy = busy,
                         enabled = !busy,
                         colors = colors,
                         onClick = onPrimaryAction,
@@ -667,20 +644,20 @@ private fun HeroMetaTag(
 ) {
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(colors.chip)
-            .border(1.dp, colors.chipBorder, RoundedCornerShape(18.dp))
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .border(1.dp, colors.chipBorder, RoundedCornerShape(14.dp))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
             color = colors.subtleText,
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             color = MaterialTheme.colorScheme.onBackground,
@@ -697,7 +674,7 @@ private fun HubActionRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         HubActionButton(
             modifier = Modifier.weight(1f),
@@ -733,7 +710,7 @@ private fun HubActionButton(
         modifier = modifier,
         onClick = onClick,
         enabled = enabled,
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(16.dp),
         color = when {
             !enabled -> colors.disabledContainer
             emphasized -> colors.accentContainer
@@ -751,15 +728,15 @@ private fun HubActionButton(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 13.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(26.dp)
                     .clip(CircleShape)
-                    .background(colors.cardStrong)
+                    .background(if (emphasized) colors.cardStrong else colors.cardMuted)
                     .border(1.dp, colors.cardBorder, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
@@ -767,13 +744,16 @@ private fun HubActionButton(
                     imageVector = icon,
                     contentDescription = null,
                     tint = if (enabled) colors.accent else colors.subtleText,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(14.dp),
                 )
             }
             Text(
                 text = label,
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = if (enabled) MaterialTheme.colorScheme.onSurface else colors.subtleText,
@@ -792,12 +772,15 @@ private fun InstalledCorePanel(
     selectedFilter: CoreFilter,
     onFilterChange: (CoreFilter) -> Unit,
     updateInfo: Map<String, CoreUpdateInfo>,
+    busy: Boolean,
     colors: CoreHubColors,
+    onCheckUpdates: () -> Unit,
+    onShowInstall: () -> Unit,
     onOpenCore: (String) -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(30.dp),
+        shape = RoundedCornerShape(26.dp),
         color = colors.cardStrong,
         border = BorderStroke(1.dp, colors.cardBorder),
         shadowElevation = 0.dp,
@@ -805,28 +788,35 @@ private fun InstalledCorePanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "已安装核心",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        text = "核心库",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
-                        text = if (allCount == 0) "点条目进入详情页，危险操作都收进详情里。" else "保留清晰列表，不堆叠大卡片。",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = if (allCount == 0) {
+                            "安装后会在这里统一管理和切换核心。"
+                        } else {
+                            "当前核心置顶，可更新项优先显示。"
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                        ),
                         color = colors.subtleText,
                     )
                 }
                 HubCountBadge(
-                    value = "$allCount 个",
+                    value = if (cores.size == allCount) "$allCount 个" else "${cores.size} / $allCount",
                     colors = colors,
                 )
             }
@@ -836,20 +826,26 @@ private fun InstalledCorePanel(
                 onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                ),
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Filled.Search,
                         contentDescription = null,
                         tint = colors.subtleText,
+                        modifier = Modifier.size(18.dp),
                     )
                 },
                 placeholder = {
                     Text(
                         text = "搜索仓库、分支、版本或提交",
                         color = colors.subtleText,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 },
-                shape = RoundedCornerShape(22.dp),
+                shape = RoundedCornerShape(18.dp),
             )
 
             FlowRow(
@@ -860,10 +856,22 @@ private fun InstalledCorePanel(
                     FilterChip(
                         selected = filter == selectedFilter,
                         onClick = { onFilterChange(filter) },
-                        label = { Text(filter.label) },
+                        label = {
+                            Text(
+                                text = filter.label,
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            )
+                        },
                     )
                 }
             }
+
+            HubActionRow(
+                busy = busy,
+                colors = colors,
+                onCheckUpdates = onCheckUpdates,
+                onShowInstall = onShowInstall,
+            )
 
             if (cores.isEmpty()) {
                 EmptyCoreState(
@@ -873,9 +881,9 @@ private fun InstalledCorePanel(
             } else {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    cores.forEachIndexed { index, core ->
+                    cores.forEach { core ->
                         CoreListRow(
                             core = core,
                             isActive = core.id == activeId,
@@ -883,9 +891,6 @@ private fun InstalledCorePanel(
                             colors = colors,
                             onClick = { onOpenCore(core.id) },
                         )
-                        if (index != cores.lastIndex) {
-                            HorizontalDivider(color = colors.cardBorder)
-                        }
                     }
                 }
             }
@@ -904,8 +909,8 @@ private fun HubCountBadge(
             .clip(CircleShape)
             .background(colors.chip)
             .border(1.dp, colors.chipBorder, CircleShape)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
         color = colors.subtleText,
     )
 }
@@ -917,7 +922,7 @@ private fun EmptyCoreState(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(18.dp),
         color = colors.cardMuted,
         border = BorderStroke(1.dp, colors.cardBorder),
         shadowElevation = 0.dp,
@@ -925,12 +930,12 @@ private fun EmptyCoreState(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 18.dp),
+                .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
                 text = "没有匹配的核心",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
@@ -939,7 +944,7 @@ private fun EmptyCoreState(
                 } else {
                     "换个关键词试试，或者清空搜索后重新浏览。"
                 },
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = colors.subtleText,
             )
         }
@@ -957,58 +962,91 @@ private fun CoreListRow(
     val updateAvailable = updateInfo?.updateAvailable == true
     val updateUnknown = updateInfo != null && updateInfo.state == CoreUpdateState.Unknown
     val rowColor = when {
-        isActive -> colors.accentContainer.copy(alpha = 0.72f)
-        updateAvailable -> colors.warningContainer.copy(alpha = 0.85f)
-        else -> Color.Transparent
+        isActive -> colors.accentContainer.copy(alpha = 0.56f)
+        updateAvailable -> colors.warningContainer.copy(alpha = 0.72f)
+        else -> colors.cardMuted
+    }
+    val borderColor = when {
+        isActive -> colors.accent.copy(alpha = 0.12f)
+        updateAvailable -> colors.warning.copy(alpha = 0.12f)
+        else -> colors.cardBorder
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(rowColor)
+            .border(1.dp, borderColor, RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
                 text = core.repoDisplayName,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 14.sp,
+                    lineHeight = 17.sp,
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = "${core.ref} · ${buildVersionLabel(core, updateInfo = null)}",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                ),
                 color = colors.subtleText,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             StateBadge(
                 text = when {
                     isActive -> "当前"
-                    updateAvailable -> "更新"
+                    updateAvailable -> "可更新"
                     updateUnknown -> "未确认"
-                    else -> "详情"
+                    else -> "已安装"
                 },
                 color = when {
                     isActive -> colors.accent
                     updateAvailable -> colors.warning
-                else -> colors.subtleText
-            },
-            container = when {
-                isActive -> colors.accentContainer
-                updateAvailable -> colors.warningContainer
-                else -> colors.chip
-            },
-        )
+                    else -> colors.subtleText
+                },
+                container = when {
+                    isActive -> colors.accentContainer
+                    updateAvailable -> colors.warningContainer
+                    else -> colors.chip
+                },
+            )
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(colors.cardStrong)
+                    .border(1.dp, colors.cardBorder, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "›",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = colors.subtleText,
+                )
+            }
+        }
     }
 }
 
@@ -1023,8 +1061,9 @@ private fun StateBadge(
         modifier = Modifier
             .clip(CircleShape)
             .background(container)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            .border(1.dp, color.copy(alpha = 0.08f), CircleShape)
+            .padding(horizontal = 9.dp, vertical = 5.dp),
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
         color = color,
     )
 }
@@ -1162,91 +1201,128 @@ private fun CoreDetailSummaryCard(
     core: CoreRecord,
     isActive: Boolean,
     updateInfo: CoreUpdateInfo?,
+    busy: Boolean,
     colors: CoreHubColors,
+    onInstall: () -> Unit,
+    onActivate: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(30.dp),
+        shape = RoundedCornerShape(26.dp),
         color = colors.cardStrong,
         border = BorderStroke(1.dp, colors.cardBorder),
-        shadowElevation = 2.dp,
+        shadowElevation = 0.dp,
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    brush = Brush.linearGradient(
+                    brush = Brush.verticalGradient(
                         colors = listOf(
-                            colors.accentContainer.copy(alpha = 0.70f),
+                            colors.accentContainer.copy(alpha = 0.32f),
                             colors.cardStrong,
                         ),
                     ),
-                ),
+                )
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    HeroTag(
-                        text = if (isActive) "当前正在使用" else "已安装核心",
-                        color = if (isActive) colors.accent else colors.subtleText,
-                        container = if (isActive) colors.accentContainer else colors.chip,
-                    )
-                if (updateInfo?.updateAvailable == true) {
-                    HeroTag(
-                        text = "可更新",
-                        color = colors.warning,
-                        container = colors.warningContainer,
-                    )
-                } else if (updateInfo?.state == CoreUpdateState.Unknown) {
-                    HeroTag(
-                        text = "未确认",
+                    Text(
+                        text = "核心详情",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                         color = colors.subtleText,
-                        container = colors.chip,
                     )
-                }
-            }
-
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = core.repoDisplayName,
-                        style = MaterialTheme.typography.headlineSmall.copy(
+                        style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Black,
                             letterSpacing = (-0.3).sp,
                         ),
                     )
-                    Text(
-                        text = "${core.ref} · ${buildVersionLabel(core, updateInfo = null)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.subtleText,
-                    )
                 }
+                StateBadge(
+                    text = when {
+                        updateInfo?.updateAvailable == true -> "可更新"
+                        updateInfo?.state == CoreUpdateState.Unknown -> "未确认"
+                        isActive -> "当前"
+                        else -> "已安装"
+                    },
+                    color = when {
+                        updateInfo?.updateAvailable == true -> colors.warning
+                        updateInfo?.state == CoreUpdateState.Unknown -> colors.subtleText
+                        isActive -> colors.accent
+                        else -> colors.subtleText
+                    },
+                    container = when {
+                        updateInfo?.updateAvailable == true -> colors.warningContainer
+                        updateInfo?.state == CoreUpdateState.Unknown -> colors.chip
+                        isActive -> colors.accentContainer
+                        else -> colors.chip
+                    },
+                )
+            }
 
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    HeroMetaTag(
-                        label = "提交",
-                        value = core.commitLabel ?: "--",
-                        colors = colors,
-                    )
-                    HeroMetaTag(
-                        label = "安装时间",
-                        value = core.installedAt ?: "--",
-                        colors = colors,
-                    )
-                    HeroMetaTag(
-                        label = "大小",
-                        value = core.sizeBytes?.formatSizeLabel() ?: "--",
-                        colors = colors,
-                    )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                HubActionButton(
+                    modifier = Modifier.weight(1f),
+                    icon = if (updateInfo?.updateAvailable == true) Icons.Filled.SystemUpdateAlt else Icons.Filled.CloudDownload,
+                    label = if (busy) "处理中" else if (updateInfo?.updateAvailable == true) "安装更新" else "重新安装",
+                    enabled = !busy,
+                    colors = colors,
+                    emphasized = true,
+                    onClick = onInstall,
+                )
+                HubActionButton(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.AutoMirrored.Filled.OpenInNew,
+                    label = if (isActive) "当前正在使用" else "切换为当前",
+                    enabled = !busy && !isActive,
+                    colors = colors,
+                    onClick = onActivate,
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CoreHubSummaryFormatter.detailQuickStats(core).forEach { stat ->
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(16.dp),
+                        color = colors.cardMuted,
+                        border = BorderStroke(1.dp, colors.cardBorder),
+                        shadowElevation = 0.dp,
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(
+                                text = stat.label,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = colors.subtleText,
+                            )
+                            Text(
+                                text = stat.value,
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1261,7 +1337,7 @@ private fun CoreInfoCard(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(24.dp),
         color = colors.cardStrong,
         border = BorderStroke(1.dp, colors.cardBorder),
         shadowElevation = 0.dp,
@@ -1269,28 +1345,16 @@ private fun CoreInfoCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
                 text = "核心信息",
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
             )
             CoreInfoRow(title = "仓库", value = core.repo, colors = colors)
-            CoreInfoRow(title = "分支 / Ref", value = core.ref, colors = colors)
             CoreInfoRow(title = "版本", value = core.version ?: "--", colors = colors)
-            CoreInfoRow(
-                title = "提交",
-                value = core.sha ?: core.commitLabel ?: "--",
-                colors = colors,
-                monospace = true,
-            )
             CoreInfoRow(title = "安装时间", value = core.installedAt ?: "--", colors = colors)
-            CoreInfoRow(
-                title = "大小",
-                value = core.sizeBytes?.formatSizeLabel() ?: "--",
-                colors = colors,
-            )
             CoreInfoRow(
                 title = "更新状态",
                 value = buildUpdateStatusLabel(updateInfo),
@@ -1309,18 +1373,19 @@ private fun CoreInfoRow(
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
             color = colors.subtleText,
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = FontWeight.Bold,
                 fontFamily = if (monospace) DanmuMonoFamily else null,
+                lineHeight = 19.sp,
             ),
         )
     }
@@ -1418,7 +1483,7 @@ private fun DangerActionCard(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(22.dp),
         color = colors.dangerContainer,
         border = BorderStroke(1.dp, colors.danger.copy(alpha = 0.14f)),
         shadowElevation = 0.dp,
@@ -1426,8 +1491,8 @@ private fun DangerActionCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
@@ -1436,12 +1501,12 @@ private fun DangerActionCard(
             ) {
                 Text(
                     text = "删除核心",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
                     color = colors.danger,
                 )
                 Text(
                     text = "删除 ${core.repoDisplayName}@${core.ref} 后，需要重新安装或切换到其他核心。",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
                     color = colors.danger,
                 )
             }
@@ -1453,7 +1518,7 @@ private fun DangerActionCard(
                 shadowElevation = 0.dp,
             ) {
                 Box(
-                    modifier = Modifier.size(42.dp),
+                    modifier = Modifier.size(38.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -1521,14 +1586,6 @@ private fun rememberCoreHubColors(): CoreHubColors {
     return rememberImmersivePalette()
 }
 
-private fun buildHubHeaderSubtitle(activeCore: CoreRecord?, installedCount: Int): String {
-    return when {
-        activeCore != null -> "当前使用 ${activeCore.shortDisplayName()}，一共安装了 $installedCount 个核心。"
-        installedCount == 0 -> "还没有安装任何核心，先添加一个，再继续切换和管理。"
-        else -> "已经安装 $installedCount 个核心，但当前没有活动项。"
-    }
-}
-
 private fun buildVersionLabel(core: CoreRecord?, updateInfo: CoreUpdateInfo?): String {
     if (core == null) return "等待安装"
     return when {
@@ -1555,8 +1612,4 @@ private fun buildUpdateStatusLabel(updateInfo: CoreUpdateInfo?): String {
         updateInfo.state == CoreUpdateState.UpToDate -> "当前已是最新"
         else -> "暂时无法确认是否最新，建议配置 GitHub Token 后重试"
     }
-}
-
-private fun CoreRecord.shortDisplayName(): String {
-    return repoDisplayName.substringAfterLast('/').ifBlank { repoDisplayName }
 }

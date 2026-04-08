@@ -63,6 +63,28 @@ class DanmuCli(
         return parseJsonSafely(statusAdapter, result.stdout)
     }
 
+    suspend fun getProcessElapsedSeconds(pid: String): Long? {
+        val safePid = sanitizeShellArgument(pid)
+        if (safePid.isBlank() || safePid.any { !it.isDigit() }) return null
+
+        val command = buildString {
+            append("p='")
+            append(safePid)
+            append("'; ")
+            append("[ -r \"/proc/${'$'}p/stat\" ] || exit 1; ")
+            append("[ -r /proc/uptime ] || exit 1; ")
+            append("hz=\"$(getconf CLK_TCK 2>/dev/null || echo 100)\"; ")
+            append("st=\"$(awk '{print $22}' \"/proc/${'$'}p/stat\" 2>/dev/null)\"; ")
+            append("up=\"$(cut -d' ' -f1 /proc/uptime 2>/dev/null)\"; ")
+            append("awk -v up=\"${'$'}up\" -v st=\"${'$'}st\" -v hz=\"${'$'}hz\" ")
+            append("'BEGIN { if (hz <= 0) hz = 100; elapsed = int(up - (st / hz)); if (elapsed < 0) elapsed = 0; printf \"%d\", elapsed }'")
+        }
+
+        val result = runSu(command, 5_000L)
+        if (result.exitCode != 0) return null
+        return result.stdout.trim().toLongOrNull()
+    }
+
     suspend fun listCores(): CoreCatalog? {
         val result = runSu("${DanmuPaths.CORE_CLI} core list --json", 10_000L)
         if (result.exitCode != 0) return null

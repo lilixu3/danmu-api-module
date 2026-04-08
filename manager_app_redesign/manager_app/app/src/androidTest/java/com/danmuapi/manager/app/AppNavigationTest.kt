@@ -15,10 +15,9 @@ class AppNavigationTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun showsFourPrimaryDestinations() {
+    fun showsThreePrimaryDestinations() {
         composeRule.onNodeWithText("总览").assertExists()
         composeRule.onNodeWithText("核心").assertExists()
-        composeRule.onNodeWithText("控制台").assertExists()
-        composeRule.onNodeWithText("设置").assertExists()
+        composeRule.onNodeWithText("记录").assertExists()
     }
 }
