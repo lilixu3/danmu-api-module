@@ -1068,7 +1068,7 @@ private fun <T> SettingsSegmentedBar(
                         text = label(option),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                        color = if (active) Color.White else MaterialTheme.colorScheme.onSurface,
+                        color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }

@@ -42,6 +42,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -49,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +69,8 @@ import androidx.compose.ui.unit.sp
 import com.danmuapi.manager.app.state.ManagerViewModel
 import com.danmuapi.manager.core.designsystem.component.formatSizeLabel
 import com.danmuapi.manager.core.designsystem.theme.DanmuMonoFamily
+import com.danmuapi.manager.core.designsystem.theme.ImmersivePalette
+import com.danmuapi.manager.core.designsystem.theme.rememberImmersivePalette
 import com.danmuapi.manager.core.model.CoreRecord
 import com.danmuapi.manager.core.model.CoreUpdateInfo
 import com.danmuapi.manager.core.model.CoreUpdateState
@@ -77,30 +81,7 @@ private enum class CoreFilter(val label: String) {
     Updates("可更新"),
 }
 
-private data class CoreHubColors(
-    val backdropTop: Color,
-    val backdropMid: Color,
-    val backdropBottom: Color,
-    val haloPrimary: Color,
-    val haloSecondary: Color,
-    val card: Color,
-    val cardStrong: Color,
-    val cardBorder: Color,
-    val mutedBorder: Color,
-    val subtleText: Color,
-    val accent: Color,
-    val accentContainer: Color,
-    val positive: Color,
-    val positiveContainer: Color,
-    val warning: Color,
-    val warningContainer: Color,
-    val danger: Color,
-    val dangerContainer: Color,
-    val disabledContainer: Color,
-    val cardMuted: Color,
-    val chip: Color,
-    val chipBorder: Color,
-)
+private typealias CoreHubColors = ImmersivePalette
 
 private data class InstallPreset(
     val label: String,
@@ -153,6 +134,7 @@ fun CoreHubScreen(
         ModalBottomSheet(
             onDismissRequest = { showInstallSheet = false },
             containerColor = colors.cardStrong,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
             InstallCoreSheet(
                 repoInput = repoInput,
@@ -201,70 +183,72 @@ fun CoreHubScreen(
                 .background(colors.haloSecondary),
         )
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = contentPadding.calculateBottomPadding() + 28.dp),
-        ) {
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 20.dp, vertical = 18.dp)
-                    .widthIn(max = 860.dp)
-                    .align(Alignment.CenterHorizontally),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = contentPadding.calculateBottomPadding() + 28.dp),
             ) {
-                CoreHubHeader(
-                    subtitle = buildHubHeaderSubtitle(activeCore, allCores.size),
-                    updateCount = updateCount,
-                    colors = colors,
-                )
-
-                viewModel.busyMessage?.takeIf { it.isNotBlank() }?.let { message ->
-                    HubBusyStrip(
-                        message = message,
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                        .widthIn(max = 860.dp)
+                        .align(Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    CoreHubHeader(
+                        subtitle = buildHubHeaderSubtitle(activeCore, allCores.size),
+                        updateCount = updateCount,
                         colors = colors,
                     )
+
+                    viewModel.busyMessage?.takeIf { it.isNotBlank() }?.let { message ->
+                        HubBusyStrip(
+                            message = message,
+                            colors = colors,
+                        )
+                    }
+
+                    CurrentCoreHeroCard(
+                        core = activeCore,
+                        allCoreCount = allCores.size,
+                        updateInfo = activeUpdate,
+                        busy = viewModel.busy,
+                        colors = colors,
+                        onPrimaryAction = {
+                            if (activeCore == null) {
+                                showInstallSheet = true
+                            } else {
+                                viewModel.installCore(activeCore.repo, activeCore.ref)
+                            }
+                        },
+                        onOpenDetail = { activeCore?.id?.let(onOpenCore) },
+                        onOpenInstall = { showInstallSheet = true },
+                    )
+
+                    HubActionRow(
+                        busy = viewModel.busy,
+                        colors = colors,
+                        onCheckUpdates = viewModel::checkUpdates,
+                        onShowInstall = { showInstallSheet = true },
+                    )
+
+                    InstalledCorePanel(
+                        cores = filteredCores,
+                        allCount = allCores.size,
+                        activeId = activeId,
+                        query = query,
+                        onQueryChange = { query = it },
+                        selectedFilter = selectedFilter,
+                        onFilterChange = { selectedFilter = it },
+                        updateInfo = viewModel.updateInfo,
+                        colors = colors,
+                        onOpenCore = onOpenCore,
+                    )
                 }
-
-                CurrentCoreHeroCard(
-                    core = activeCore,
-                    allCoreCount = allCores.size,
-                    updateInfo = activeUpdate,
-                    busy = viewModel.busy,
-                    colors = colors,
-                    onPrimaryAction = {
-                        if (activeCore == null) {
-                            showInstallSheet = true
-                        } else {
-                            viewModel.installCore(activeCore.repo, activeCore.ref)
-                        }
-                    },
-                    onOpenDetail = { activeCore?.id?.let(onOpenCore) },
-                    onOpenInstall = { showInstallSheet = true },
-                )
-
-                HubActionRow(
-                    busy = viewModel.busy,
-                    colors = colors,
-                    onCheckUpdates = viewModel::checkUpdates,
-                    onShowInstall = { showInstallSheet = true },
-                )
-
-                InstalledCorePanel(
-                    cores = filteredCores,
-                    allCount = allCores.size,
-                    activeId = activeId,
-                    query = query,
-                    onQueryChange = { query = it },
-                    selectedFilter = selectedFilter,
-                    onFilterChange = { selectedFilter = it },
-                    updateInfo = viewModel.updateInfo,
-                    colors = colors,
-                    onOpenCore = onOpenCore,
-                )
             }
         }
     }
@@ -412,6 +396,7 @@ private fun CoreHubHeader(
                     fontWeight = FontWeight.Black,
                     letterSpacing = (-0.8).sp,
                 ),
+                color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = subtitle,
@@ -582,6 +567,7 @@ private fun CurrentCoreHeroCard(
                         ),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
                         text = subtitle,
@@ -697,6 +683,7 @@ private fun HeroMetaTag(
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onBackground,
         )
     }
 }
@@ -830,6 +817,7 @@ private fun InstalledCorePanel(
                     Text(
                         text = "已安装核心",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
                         text = if (allCount == 0) "点条目进入详情页，危险操作都收进详情里。" else "保留清晰列表，不堆叠大卡片。",
@@ -943,6 +931,7 @@ private fun EmptyCoreState(
             Text(
                 text = "没有匹配的核心",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = if (query.isBlank()) {
@@ -992,6 +981,7 @@ private fun CoreListRow(
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = "${core.ref} · ${buildVersionLabel(core, updateInfo = null)}",
@@ -1528,60 +1518,7 @@ private fun PrimaryActionButton(
 
 @Composable
 private fun rememberCoreHubColors(): CoreHubColors {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    return remember(isDark) {
-        if (isDark) {
-            CoreHubColors(
-                backdropTop = Color(0xFF0F1721),
-                backdropMid = Color(0xFF131B26),
-                backdropBottom = Color(0xFF11151A),
-                haloPrimary = Color(0xFF2C4E75).copy(alpha = 0.34f),
-                haloSecondary = Color(0xFF18304A).copy(alpha = 0.44f),
-                card = Color(0xFF171F29).copy(alpha = 0.96f),
-                cardStrong = Color(0xFF1B2430).copy(alpha = 0.98f),
-                cardBorder = Color(0xFF293341),
-                mutedBorder = Color(0xFF222B36),
-                subtleText = Color(0xFFAFBBC9),
-                accent = Color(0xFF5F83A8),
-                accentContainer = Color(0xFF203244),
-                positive = Color(0xFF7DCDA5),
-                positiveContainer = Color(0xFF173126),
-                warning = Color(0xFFE1B35C),
-                warningContainer = Color(0xFF3B3019),
-                danger = Color(0xFFF1A08F),
-                dangerContainer = Color(0xFF382725),
-                disabledContainer = Color(0xFF28313D),
-                cardMuted = Color(0xFF17202A).copy(alpha = 0.88f),
-                chip = Color(0xFF202A35),
-                chipBorder = Color(0xFF2A3542),
-            )
-        } else {
-            CoreHubColors(
-                backdropTop = Color(0xFFE9F0F8),
-                backdropMid = Color(0xFFF6F9FC),
-                backdropBottom = Color(0xFFF2F5F8),
-                haloPrimary = Color(0xFFBDD2EA).copy(alpha = 0.52f),
-                haloSecondary = Color(0xFFD8E5F3).copy(alpha = 0.78f),
-                card = Color(0xFFFBFDFF).copy(alpha = 0.92f),
-                cardStrong = Color(0xFFFFFFFF).copy(alpha = 0.97f),
-                cardBorder = Color(0xFFD8E2EC),
-                mutedBorder = Color(0xFFE5EBF2),
-                subtleText = Color(0xFF667386),
-                accent = Color(0xFF5F83A8),
-                accentContainer = Color(0xFFE7EFF8),
-                positive = Color(0xFF2E8661),
-                positiveContainer = Color(0xFFE5F2EB),
-                warning = Color(0xFFB97917),
-                warningContainer = Color(0xFFFFF1D9),
-                danger = Color(0xFFD86F5A),
-                dangerContainer = Color(0xFFF8E8E3),
-                disabledContainer = Color(0xFFDCE4EC),
-                cardMuted = Color(0xFFF8FBFE),
-                chip = Color(0xFFF3F7FB),
-                chipBorder = Color(0xFFE5ECF3),
-            )
-        }
-    }
+    return rememberImmersivePalette()
 }
 
 private fun buildHubHeaderSubtitle(activeCore: CoreRecord?, installedCount: Int): String {

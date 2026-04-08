@@ -30,10 +30,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,89 +49,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.danmuapi.manager.core.designsystem.theme.DanmuMonoFamily
+import com.danmuapi.manager.core.designsystem.theme.ImmersivePalette
+import com.danmuapi.manager.core.designsystem.theme.rememberImmersivePalette
 
-data class SettingsPalette(
-    val backdropTop: Color,
-    val backdropMid: Color,
-    val backdropBottom: Color,
-    val haloPrimary: Color,
-    val haloSecondary: Color,
-    val card: Color,
-    val cardStrong: Color,
-    val cardBorder: Color,
-    val mutedBorder: Color,
-    val subtleText: Color,
-    val accent: Color,
-    val accentContainer: Color,
-    val positive: Color,
-    val positiveContainer: Color,
-    val warning: Color,
-    val warningContainer: Color,
-    val danger: Color,
-    val dangerContainer: Color,
-    val disabledContainer: Color,
-    val cardMuted: Color,
-    val chip: Color,
-    val chipBorder: Color,
-)
+typealias SettingsPalette = ImmersivePalette
 
 @Composable
-fun rememberSettingsPalette(): SettingsPalette {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    return remember(isDark) {
-        if (isDark) {
-            SettingsPalette(
-                backdropTop = Color(0xFF0F1721),
-                backdropMid = Color(0xFF131B26),
-                backdropBottom = Color(0xFF11151A),
-                haloPrimary = Color(0xFF2C4E75).copy(alpha = 0.34f),
-                haloSecondary = Color(0xFF18304A).copy(alpha = 0.44f),
-                card = Color(0xFF171F29).copy(alpha = 0.96f),
-                cardStrong = Color(0xFF1B2430).copy(alpha = 0.98f),
-                cardBorder = Color(0xFF293341),
-                mutedBorder = Color(0xFF222B36),
-                subtleText = Color(0xFFAFBBC9),
-                accent = Color(0xFF5F83A8),
-                accentContainer = Color(0xFF203244),
-                positive = Color(0xFF7DCDA5),
-                positiveContainer = Color(0xFF173126),
-                warning = Color(0xFFE1B35C),
-                warningContainer = Color(0xFF3B3019),
-                danger = Color(0xFFF1A08F),
-                dangerContainer = Color(0xFF382725),
-                disabledContainer = Color(0xFF28313D),
-                cardMuted = Color(0xFF17202A).copy(alpha = 0.88f),
-                chip = Color(0xFF202A35),
-                chipBorder = Color(0xFF2A3542),
-            )
-        } else {
-            SettingsPalette(
-                backdropTop = Color(0xFFE9F0F8),
-                backdropMid = Color(0xFFF6F9FC),
-                backdropBottom = Color(0xFFF2F5F8),
-                haloPrimary = Color(0xFFBDD2EA).copy(alpha = 0.52f),
-                haloSecondary = Color(0xFFD8E5F3).copy(alpha = 0.78f),
-                card = Color(0xFFFBFDFF).copy(alpha = 0.92f),
-                cardStrong = Color(0xFFFFFFFF).copy(alpha = 0.97f),
-                cardBorder = Color(0xFFD8E2EC),
-                mutedBorder = Color(0xFFE5EBF2),
-                subtleText = Color(0xFF667386),
-                accent = Color(0xFF5F83A8),
-                accentContainer = Color(0xFFE7EFF8),
-                positive = Color(0xFF2E8661),
-                positiveContainer = Color(0xFFE5F2EB),
-                warning = Color(0xFFB97917),
-                warningContainer = Color(0xFFFFF1D9),
-                danger = Color(0xFFD86F5A),
-                dangerContainer = Color(0xFFF8E8E3),
-                disabledContainer = Color(0xFFDCE4EC),
-                cardMuted = Color(0xFFF8FBFE),
-                chip = Color(0xFFF3F7FB),
-                chipBorder = Color(0xFFE5ECF3),
-            )
-        }
-    }
-}
+fun rememberSettingsPalette(): SettingsPalette = rememberImmersivePalette()
 
 @Composable
 fun SettingsBackdrop(
@@ -174,22 +100,24 @@ fun SettingsScrollablePage(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     SettingsBackdrop(palette = palette) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = contentPadding.calculateBottomPadding() + 28.dp),
-        ) {
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 20.dp, vertical = 18.dp)
-                    .widthIn(max = 860.dp)
-                    .align(Alignment.CenterHorizontally),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                content = content,
-            )
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = contentPadding.calculateBottomPadding() + 28.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                        .widthIn(max = 860.dp)
+                        .align(Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    content = content,
+                )
+            }
         }
     }
 }
@@ -221,6 +149,7 @@ fun SettingsImmersiveHeader(
                     fontWeight = FontWeight.Black,
                     letterSpacing = (-0.8).sp,
                 ),
+                color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = subtitle,
@@ -308,6 +237,7 @@ fun SettingsInfoPill(
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onBackground,
         )
     }
 }
@@ -375,6 +305,7 @@ fun SettingsPanelHeader(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onBackground,
             )
             subtitle?.takeIf { it.isNotBlank() }?.let {
                 Text(
@@ -445,6 +376,7 @@ fun SettingsNavCard(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
                     text = subtitle,
@@ -500,6 +432,7 @@ fun SettingsPlainRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = subtitle,

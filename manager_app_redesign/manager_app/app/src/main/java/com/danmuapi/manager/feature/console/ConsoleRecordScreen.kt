@@ -47,12 +47,14 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -77,6 +79,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.danmuapi.manager.app.state.ManagerViewModel
 import com.danmuapi.manager.core.designsystem.theme.DanmuMonoFamily
+import com.danmuapi.manager.core.designsystem.theme.DanmuConsolePalette
+import com.danmuapi.manager.core.designsystem.theme.rememberDanmuConsolePalette
 import com.danmuapi.manager.core.model.LogFileEntry
 import com.danmuapi.manager.core.model.RequestRecord
 import com.danmuapi.manager.core.model.ServerLogEntry
@@ -117,29 +121,7 @@ private data class StableRenderedLogLine(
     val line: RenderedLogLine,
 )
 
-private data class ConsolePalette(
-    val backdropTop: Color,
-    val backdropMid: Color,
-    val backdropBottom: Color,
-    val haloPrimary: Color,
-    val haloSecondary: Color,
-    val panel: Color,
-    val panelStrong: Color,
-    val panelBorder: Color,
-    val subtleText: Color,
-    val accent: Color,
-    val accentSoft: Color,
-    val warning: Color,
-    val warningSoft: Color,
-    val danger: Color,
-    val dangerSoft: Color,
-    val terminal: Color,
-    val terminalBorder: Color,
-    val terminalText: Color,
-    val terminalMuted: Color,
-    val terminalError: Color,
-    val terminalWarning: Color,
-)
+private typealias ConsolePalette = DanmuConsolePalette
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -328,6 +310,7 @@ internal fun ConsoleRecordScreen(
         ModalBottomSheet(
             onDismissRequest = { showModuleFileSheet = false },
             containerColor = palette.panelStrong,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
             ModuleFileSheet(
                 files = moduleFiles,
@@ -369,90 +352,92 @@ internal fun ConsoleRecordScreen(
                 .background(palette.haloSecondary),
         )
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = contentPadding.calculateBottomPadding() + 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                    .fillMaxSize()
+                    .padding(bottom = contentPadding.calculateBottomPadding() + 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                ConsolePageHeader(
-                    palette = palette,
-                    onOpenSettings = onOpenSettings,
-                )
-
-                viewModel.busyMessage?.takeIf { it.isNotBlank() }?.let { message ->
-                    ConsoleBusyStrip(
-                        message = message,
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(horizontal = 18.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    ConsolePageHeader(
                         palette = palette,
+                        onOpenSettings = onOpenSettings,
                     )
-                }
 
-                RecordTabSwitcher(
-                    selectedTab = selectedTab,
-                    palette = palette,
-                    onSelect = { selectedTab = it },
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp),
-            ) {
-                when (selectedTab) {
-                    ConsoleMainTab.Logs -> {
-                        LogsWorkbench(
-                            viewModel = viewModel,
-                            consoleLogLimit = consoleLogLimit,
-                            selectedLogSource = selectedLogSource,
-                            selectedLogFilter = selectedLogFilter,
-                            selectedModuleFile = selectedModuleFile,
-                            renderedLogLines = visibleLogLines,
-                            statusText = displayStatusText,
-                            showLogSearch = showLogSearch,
-                            logSearchQuery = logSearchQuery,
+                    viewModel.busyMessage?.takeIf { it.isNotBlank() }?.let { message ->
+                        ConsoleBusyStrip(
+                            message = message,
                             palette = palette,
-                            onLogSourceChange = { selectedLogSource = it },
-                            onLogFilterChange = { selectedLogFilter = it },
-                            onSearchQueryChange = { logSearchQuery = it },
-                            onToggleSearch = {
-                                showLogSearch = !showLogSearch
-                                if (!showLogSearch) {
-                                    logSearchQuery = ""
-                                }
-                            },
-                            onExport = {
-                                pendingLogExportText = visibleLogLines.joinToString(separator = "\n") { it.text }
-                                pendingLogExportName = buildLogExportFileName(
-                                    source = selectedLogSource,
-                                    filter = selectedLogFilter,
-                                    query = logSearchQuery,
-                                )
-                                logExportLauncher.launch(pendingLogExportName)
-                            },
-                            onClear = { showClearDialog = true },
-                            onOpenModuleFiles = { showModuleFileSheet = true },
                         )
                     }
 
-                    ConsoleMainTab.Requests -> {
-                        RequestsWorkbench(
-                            viewModel = viewModel,
-                            palette = palette,
-                            expandedRequestKey = expandedRequestKey,
-                            onExpandedRequestChange = { key ->
-                                expandedRequestKey = if (expandedRequestKey == key) null else key
-                            },
-                            onRefresh = { viewModel.refreshRequestRecords() },
-                        )
+                    RecordTabSwitcher(
+                        selectedTab = selectedTab,
+                        palette = palette,
+                        onSelect = { selectedTab = it },
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp),
+                ) {
+                    when (selectedTab) {
+                        ConsoleMainTab.Logs -> {
+                            LogsWorkbench(
+                                viewModel = viewModel,
+                                consoleLogLimit = consoleLogLimit,
+                                selectedLogSource = selectedLogSource,
+                                selectedLogFilter = selectedLogFilter,
+                                selectedModuleFile = selectedModuleFile,
+                                renderedLogLines = visibleLogLines,
+                                statusText = displayStatusText,
+                                showLogSearch = showLogSearch,
+                                logSearchQuery = logSearchQuery,
+                                palette = palette,
+                                onLogSourceChange = { selectedLogSource = it },
+                                onLogFilterChange = { selectedLogFilter = it },
+                                onSearchQueryChange = { logSearchQuery = it },
+                                onToggleSearch = {
+                                    showLogSearch = !showLogSearch
+                                    if (!showLogSearch) {
+                                        logSearchQuery = ""
+                                    }
+                                },
+                                onExport = {
+                                    pendingLogExportText = visibleLogLines.joinToString(separator = "\n") { it.text }
+                                    pendingLogExportName = buildLogExportFileName(
+                                        source = selectedLogSource,
+                                        filter = selectedLogFilter,
+                                        query = logSearchQuery,
+                                    )
+                                    logExportLauncher.launch(pendingLogExportName)
+                                },
+                                onClear = { showClearDialog = true },
+                                onOpenModuleFiles = { showModuleFileSheet = true },
+                            )
+                        }
+
+                        ConsoleMainTab.Requests -> {
+                            RequestsWorkbench(
+                                viewModel = viewModel,
+                                palette = palette,
+                                expandedRequestKey = expandedRequestKey,
+                                onExpandedRequestChange = { key ->
+                                    expandedRequestKey = if (expandedRequestKey == key) null else key
+                                },
+                                onRefresh = { viewModel.refreshRequestRecords() },
+                            )
+                        }
                     }
                 }
             }
@@ -482,6 +467,7 @@ private fun ConsolePageHeader(
                     fontWeight = FontWeight.Black,
                     letterSpacing = (-0.4).sp,
                 ),
+                color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = "日志与请求集中查看，保持清晰和高信息密度。",
@@ -506,7 +492,7 @@ private fun ConsolePageHeader(
                 Icon(
                     imageVector = Icons.Filled.Settings,
                     contentDescription = "设置",
-                    tint = if (palette.panel.luminance() > 0.5f) Color(0xFF1E293B) else Color.White,
+                    tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
         }
@@ -583,7 +569,7 @@ private fun RecordTabSwitcher(
                         Text(
                             text = tab.label,
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
+                            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                         )
                     }
                 }
@@ -885,7 +871,7 @@ private fun <T> CompactSegmentGroup(
                         text = label(option),
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = if (active) Color.White else MaterialTheme.colorScheme.onSurface,
+                        color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }
@@ -1155,7 +1141,7 @@ private fun TerminalPanel(
                             text = "新增 $pendingLines 条",
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onPrimary,
                         )
                     }
                 }
@@ -1670,56 +1656,5 @@ private fun compactTimestamp(raw: String): String {
 
 @Composable
 private fun rememberConsolePalette(): ConsolePalette {
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    return remember(dark) {
-        if (dark) {
-            ConsolePalette(
-                backdropTop = Color(0xFF0F1721),
-                backdropMid = Color(0xFF131B26),
-                backdropBottom = Color(0xFF10151A),
-                haloPrimary = Color(0xFF29496E).copy(alpha = 0.28f),
-                haloSecondary = Color(0xFF162D47).copy(alpha = 0.36f),
-                panel = Color(0xFF1A2430).copy(alpha = 0.94f),
-                panelStrong = Color(0xFF1D2732).copy(alpha = 0.98f),
-                panelBorder = Color(0xFF2A3442),
-                subtleText = Color(0xFFAFBBC9),
-                accent = Color(0xFF5F83A8),
-                accentSoft = Color(0xFF203244),
-                warning = Color(0xFFE1B35C),
-                warningSoft = Color(0xFF3C311B),
-                danger = Color(0xFFF0A290),
-                dangerSoft = Color(0xFF3A2824),
-                terminal = Color(0xFF0F151C),
-                terminalBorder = Color(0xFF202C39),
-                terminalText = Color(0xFFE8EDF4),
-                terminalMuted = Color(0xFF8D9AA8),
-                terminalError = Color(0xFFFF9A8A),
-                terminalWarning = Color(0xFFF3C76F),
-            )
-        } else {
-            ConsolePalette(
-                backdropTop = Color(0xFFE9F0F8),
-                backdropMid = Color(0xFFF6F9FC),
-                backdropBottom = Color(0xFFF2F5F8),
-                haloPrimary = Color(0xFFBDD2EA).copy(alpha = 0.48f),
-                haloSecondary = Color(0xFFD8E5F3).copy(alpha = 0.74f),
-                panel = Color(0xFFFBFDFF).copy(alpha = 0.9f),
-                panelStrong = Color(0xFFFFFFFF).copy(alpha = 0.96f),
-                panelBorder = Color(0xFFD9E3ED),
-                subtleText = Color(0xFF687588),
-                accent = Color(0xFF5F83A8),
-                accentSoft = Color(0xFFE7EFF8),
-                warning = Color(0xFFB97917),
-                warningSoft = Color(0xFFFFF0D8),
-                danger = Color(0xFFD86F5A),
-                dangerSoft = Color(0xFFF8E8E3),
-                terminal = Color(0xFF121A23),
-                terminalBorder = Color(0xFF273445),
-                terminalText = Color(0xFFEAF0F7),
-                terminalMuted = Color(0xFF9AA8B7),
-                terminalError = Color(0xFFFFA08D),
-                terminalWarning = Color(0xFFF4CA76),
-            )
-        }
-    }
+    return rememberDanmuConsolePalette()
 }

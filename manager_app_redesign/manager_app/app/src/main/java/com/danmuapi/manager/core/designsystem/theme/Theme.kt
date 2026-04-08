@@ -3,11 +3,12 @@ package com.danmuapi.manager.core.designsystem.theme
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 private val LightColors = lightColorScheme(
@@ -22,14 +23,30 @@ private val LightColors = lightColorScheme(
 )
 
 private val DarkColors = darkColorScheme(
-    primary = CyanBlueDark,
-    secondary = Mint,
-    tertiary = Ember,
+    primary = Sky,
+    onPrimary = Graphite,
+    primaryContainer = SkyContainer,
+    onPrimaryContainer = NightTextStrong,
+    secondary = Positive,
+    onSecondary = Graphite,
+    secondaryContainer = PositiveContainer,
+    onSecondaryContainer = NightTextStrong,
+    tertiary = Warning,
+    onTertiary = Graphite,
+    tertiaryContainer = WarningContainer,
+    onTertiaryContainer = NightTextStrong,
     background = Graphite,
+    onBackground = NightTextStrong,
     surface = WarmSurfaceDark,
-    surfaceVariant = androidx.compose.ui.graphics.Color(0xFF252C35),
-    onSurface = androidx.compose.ui.graphics.Color(0xFFE7ECF3),
-    onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFB8C0CC),
+    onSurface = NightText,
+    surfaceVariant = NightSurfaceVariant,
+    onSurfaceVariant = NightTextMuted,
+    outline = Color(0xFF7E8FA7),
+    outlineVariant = NightBorder,
+    error = Danger,
+    onError = Graphite,
+    errorContainer = CriticalContainer,
+    onErrorContainer = NightTextStrong,
 )
 
 @Composable
@@ -40,8 +57,8 @@ fun DanmuManagerTheme(
 ) {
     val context = LocalContext.current
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !darkTheme -> {
+            dynamicLightColorScheme(context)
         }
         darkTheme -> DarkColors
         else -> LightColors
@@ -50,6 +67,12 @@ fun DanmuManagerTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = DanmuTypography,
-        content = content,
-    )
+    ) {
+        Surface(
+            color = colorScheme.background,
+            contentColor = colorScheme.onBackground,
+        ) {
+            content()
+        }
+    }
 }
