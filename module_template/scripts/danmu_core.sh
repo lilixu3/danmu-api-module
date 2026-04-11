@@ -128,7 +128,7 @@ apply_proxy_url() {
   url="$1"
   if [ "${GH_MODE}" = "proxy" ] && [ -n "${GH_PROXY_BASE}" ]; then
     case "${url}" in
-      https://github.com/*|https://api.github.com/*|https://codeload.github.com/*)
+      https://github.com/*|https://api.github.com/*|https://codeload.github.com/*|https://raw.githubusercontent.com/*)
         echo "${GH_PROXY_BASE}${url}"
         return 0
         ;;
@@ -531,19 +531,32 @@ download_file() {
   return 1
 }
 
-unzip_to() {
-  zipf="$1"
+unpack_archive_to() {
+  archive="$1"
   outdir="$2"
   rm -rf "$outdir" 2>/dev/null || true
   mkdir -p "$outdir" 2>/dev/null || true
 
-  if have_cmd unzip; then
-    unzip -q "$zipf" -d "$outdir" >/dev/null 2>&1 && return 0
-  fi
+  case "$archive" in
+    *.tar.gz|*.tgz)
+      if have_cmd tar; then
+        tar -xzf "$archive" -C "$outdir" >/dev/null 2>&1 && return 0
+      fi
 
-  if [ -n "${BB}" ] && "${BB}" unzip --help >/dev/null 2>&1; then
-    "${BB}" unzip -q "$zipf" -d "$outdir" >/dev/null 2>&1 && return 0
-  fi
+      if [ -n "${BB}" ] && "${BB}" tar --help >/dev/null 2>&1; then
+        "${BB}" tar -xzf "$archive" -C "$outdir" >/dev/null 2>&1 && return 0
+      fi
+      ;;
+    *.zip)
+      if have_cmd unzip; then
+        unzip -q "$archive" -d "$outdir" >/dev/null 2>&1 && return 0
+      fi
+
+      if [ -n "${BB}" ] && "${BB}" unzip --help >/dev/null 2>&1; then
+        "${BB}" unzip -q "$archive" -d "$outdir" >/dev/null 2>&1 && return 0
+      fi
+      ;;
+  esac
 
   return 1
 }
@@ -551,6 +564,25 @@ unzip_to() {
 resolve_sha() {
   repo="$1"
   ref="$2"
+
+  case "$ref" in
+    '' )
+      printf '%s' ""
+      return 0
+      ;;
+    *[!0-9a-fA-F]* )
+      # branch / tag / symbolic ref: keep original ref, avoid GitHub API dependency
+      printf '%s' ""
+      return 0
+      ;;
+    * )
+      if [ "${#ref}" -lt 7 ] || [ "${#ref}" -gt 40 ]; then
+        printf '%s' ""
+        return 0
+      fi
+      ;;
+  esac
+
   url="https://api.github.com/repos/${repo}/commits/${ref}"
   url="$(apply_proxy_url "${url}")"
 
@@ -614,22 +646,30 @@ install_core() {
 
   mkdir -p "${dest_root}" 2>/dev/null || true
 
-  url="https://codeload.github.com/${repo}/zip/${zip_ref}"
-  url="$(apply_proxy_url "${url}")"
   zipf="${TMP_DIR}/${id}.zip"
   exdir="${TMP_DIR}/extract_${id}"
+  tarf="${TMP_DIR}/${id}.tar.gz"
+  raw_tar_url="https://github.com/${repo}/archive/${zip_ref}.tar.gz"
+  raw_tar_url="$(apply_proxy_url "${raw_tar_url}")"
+  zip_url="https://codeload.github.com/${repo}/zip/${zip_ref}"
+  zip_url="$(apply_proxy_url "${zip_url}")"
 
   log "install begin: repo=${repo} ref=${ref} sha=${sha}"
 
-  if ! download_file "$url" "$zipf"; then
-    log "download failed: $url"
+  downloaded_archive=""
+  if download_file "$raw_tar_url" "$tarf"; then
+    downloaded_archive="$tarf"
+  elif download_file "$zip_url" "$zipf"; then
+    downloaded_archive="$zipf"
+  else
+    log "download failed: tar=${raw_tar_url} zip=${zip_url}"
     echo '{"result":"error","error":"download_failed"}'
     return 1
   fi
 
-  if ! unzip_to "$zipf" "$exdir"; then
-    log "unzip failed: $zipf"
-    echo '{"result":"error","error":"unzip_failed"}'
+  if ! unpack_archive_to "$downloaded_archive" "$exdir"; then
+    log "unpack failed: $downloaded_archive"
+    echo '{"result":"error","error":"unpack_failed"}'
     return 1
   fi
 
@@ -664,7 +704,7 @@ install_core() {
 
   write_meta_json "${id}" "${repo}" "${ref}" "${sha}" "${ver}" "${installed}" "${sizeb}"
 
-  rm -f "${zipf}" 2>/dev/null || true
+  rm -f "${zipf}" "${tarf}" 2>/dev/null || true
   rm -rf "${exdir}" 2>/dev/null || true
 
   activate_core "${id}" >/dev/null 2>&1 || true

@@ -62,8 +62,12 @@ class GitHubApi(
             .removeSuffix(".git")
         if (!cleanRepo.contains('/')) return@withContext null
 
+        val directCommit = getCommitByRef(cleanRepo, ref, token)
+        if (directCommit != null) return@withContext directCommit
+
+        val resolvedRef = resolveHistoryRef(cleanRepo, ref, token)
         val requestBuilder = Request.Builder()
-            .url("https://api.github.com/repos/$cleanRepo/commits/${ref.trim()}")
+            .url("https://api.github.com/repos/$cleanRepo/commits?sha=${resolvedRef.trim()}&per_page=1")
             .header("User-Agent", "DanmuApiManager")
             .header("Accept", "application/vnd.github+json")
 
@@ -76,7 +80,7 @@ class GitHubApi(
             client.newCall(requestBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) return@withContext null
                 val body = response.body?.string() ?: return@withContext null
-                val parsed = commitAdapter.fromJson(body) ?: return@withContext null
+                val parsed = commitListAdapter.fromJson(body).orEmpty().firstOrNull() ?: return@withContext null
                 val sha = parsed.sha ?: return@withContext null
                 LatestCommitInfo(
                     sha = sha,
@@ -98,23 +102,36 @@ class GitHubApi(
             .removeSuffix(".git")
         if (!cleanRepo.contains('/')) return@withContext null
 
-        val request = Request.Builder()
-            .url("https://raw.githubusercontent.com/$cleanRepo/${refOrSha.trim()}/danmu_api/configs/globals.js")
-            .header("User-Agent", "DanmuApiManager")
-            .build()
+        val trimmedRef = refOrSha.trim()
+        val candidateUrls = listOf(
+            "https://raw.githubusercontent.com/$cleanRepo/$trimmedRef/danmu_api/configs/globals.js",
+            "https://github.com/$cleanRepo/raw/$trimmedRef/danmu_api/configs/globals.js",
+        )
 
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val body = response.body?.string() ?: return@withContext null
-                Regex("VERSION\\s*:\\s*['\"]([^'\"]+)['\"]")
-                    .find(body)
-                    ?.groupValues
-                    ?.getOrNull(1)
+        for (url in candidateUrls) {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "DanmuApiManager")
+                .build()
+
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    val body = response.body?.string() ?: return@use null
+                    val version = Regex("VERSION\\s*:\\s*['\"]([^'\"]+)['\"]")
+                        .find(body)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                    if (!version.isNullOrBlank()) {
+                        return@withContext version
+                    }
+                }
+            } catch (_: IOException) {
+                // try next URL
             }
-        } catch (_: IOException) {
-            null
         }
+
+        null
     }
 
     suspend fun listCommits(
@@ -167,6 +184,38 @@ class GitHubApi(
             }
         } catch (error: IOException) {
             throw IOException("加载 GitHub 提交历史失败：${error.message}", error)
+        }
+    }
+
+    private suspend fun getCommitByRef(
+        cleanRepo: String,
+        ref: String,
+        token: String?,
+    ): LatestCommitInfo? {
+        val requestBuilder = Request.Builder()
+            .url("https://api.github.com/repos/$cleanRepo/commits/${ref.trim()}")
+            .header("User-Agent", "DanmuApiManager")
+            .header("Accept", "application/vnd.github+json")
+
+        val safeToken = token?.trim().orEmpty()
+        if (safeToken.isNotEmpty()) {
+            requestBuilder.header("Authorization", "token $safeToken")
+        }
+
+        return try {
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val body = response.body?.string() ?: return@use null
+                val parsed = commitAdapter.fromJson(body) ?: return@use null
+                val sha = parsed.sha ?: return@use null
+                LatestCommitInfo(
+                    sha = sha,
+                    message = parsed.commit?.message,
+                    date = parsed.commit?.author?.date,
+                )
+            }
+        } catch (_: IOException) {
+            null
         }
     }
 
