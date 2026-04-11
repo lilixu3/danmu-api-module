@@ -116,8 +116,10 @@ class GitHubApi(
 
             try {
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use null
-                    val body = response.body?.string() ?: return@use null
+                    if (!response.isSuccessful) {
+                        return@use Unit
+                    }
+                    val body = response.body?.string() ?: return@use Unit
                     val version = Regex("VERSION\\s*:\\s*['\"]([^'\"]+)['\"]")
                         .find(body)
                         ?.groupValues
