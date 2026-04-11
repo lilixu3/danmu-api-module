@@ -19,7 +19,13 @@ data class CoreRecord(
         get() = repo.ifBlank { id }
 
     val commitLabel: String?
-        get() = shaShort ?: sha?.take(7)
+        get() = shaShort?.trim()?.takeIf { it.isNotBlank() }
+            ?: sha?.trim()?.takeIf { it.isNotBlank() }?.take(7)
+            ?: ref.trim().takeIf { COMMIT_REF_REGEX.matches(it) }?.take(7)
+
+    private companion object {
+        val COMMIT_REF_REGEX = Regex("^[0-9a-fA-F]{7,40}$")
+    }
 }
 
 data class CoreUpdateInfo(

@@ -1312,9 +1312,11 @@ private fun CoreDetailSummaryCard(
     onOpenRollback: () -> Unit,
     rollbackBusy: Boolean,
 ) {
+    val statusHeadline = buildCoreDetailHeadline(isActive = isActive, updateInfo = updateInfo)
+    val latestLine = buildRemoteSnapshotLine(updateInfo)
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(28.dp),
         color = colors.cardStrong,
         border = BorderStroke(1.dp, colors.cardBorder),
         shadowElevation = 0.dp,
@@ -1325,13 +1327,13 @@ private fun CoreDetailSummaryCard(
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            colors.accentContainer.copy(alpha = 0.32f),
+                            colors.accentContainer.copy(alpha = 0.26f),
                             colors.cardStrong,
                         ),
                     ),
                 )
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1351,8 +1353,21 @@ private fun CoreDetailSummaryCard(
                         text = core.repoDisplayName,
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Black,
-                            letterSpacing = (-0.3).sp,
+                            fontSize = 24.sp,
+                            lineHeight = 28.sp,
+                            letterSpacing = (-0.4).sp,
                         ),
+                    )
+                    Text(
+                        text = "${core.repo}@${core.ref}",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = DanmuMonoFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 16.sp,
+                        ),
+                        color = colors.subtleText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 StateBadge(
@@ -1377,73 +1392,75 @@ private fun CoreDetailSummaryCard(
                 )
             }
 
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                color = colors.cardMuted,
+                border = BorderStroke(1.dp, colors.cardBorder),
+                shadowElevation = 0.dp,
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = statusHeadline,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
+                    )
+                    Text(
+                        text = buildRollbackCurrentHint(core.version, core.commitLabel),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = colors.subtleText,
+                    )
+                    latestLine?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = DanmuMonoFamily,
+                            ),
+                            color = colors.accent,
+                        )
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                HubActionButton(
+                CoreDetailActionButton(
                     modifier = Modifier.weight(1f),
+                    label = when {
+                        busy -> "处理中"
+                        updateInfo?.updateAvailable == true -> "安装更新"
+                        else -> "重新安装"
+                    },
                     icon = if (updateInfo?.updateAvailable == true) Icons.Filled.SystemUpdateAlt else Icons.Filled.CloudDownload,
-                    label = if (busy) "处理中" else if (updateInfo?.updateAvailable == true) "安装更新" else "重新安装",
+                    busy = busy,
                     enabled = !busy,
                     colors = colors,
                     emphasized = true,
                     onClick = onInstall,
                 )
-                HubActionButton(
+                CoreDetailActionButton(
                     modifier = Modifier.weight(1f),
                     icon = Icons.Filled.History,
-                    label = if (rollbackBusy) "读取历史中" else "版本回退",
+                    label = if (rollbackBusy) "读取历史" else "版本回退",
+                    busy = rollbackBusy,
                     enabled = !busy && !rollbackBusy,
                     colors = colors,
                     onClick = onOpenRollback,
                 )
-                HubActionButton(
+                CoreDetailActionButton(
                     modifier = Modifier.weight(1f),
                     icon = Icons.AutoMirrored.Filled.OpenInNew,
-                    label = if (isActive) "当前正在使用" else "切换为当前",
+                    label = if (isActive) "当前使用" else "设为当前",
                     enabled = !busy && !isActive,
                     colors = colors,
                     onClick = onActivate,
                 )
-            }
-
-            Text(
-                text = buildRollbackCurrentHint(core.version, core.commitLabel),
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                color = colors.accent,
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                CoreHubSummaryFormatter.detailQuickStats(core).forEach { stat ->
-                    Surface(
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(16.dp),
-                        color = colors.cardMuted,
-                        border = BorderStroke(1.dp, colors.cardBorder),
-                        shadowElevation = 0.dp,
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
-                            verticalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            Text(
-                                text = stat.label,
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = colors.subtleText,
-                            )
-                            Text(
-                                text = stat.value,
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
             }
         }
     }
@@ -1466,19 +1483,133 @@ private fun CoreInfoCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "核心信息",
+                text = "本地信息",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
             )
-            CoreInfoRow(title = "仓库", value = core.repo, colors = colors)
-            CoreInfoRow(title = "版本", value = core.version ?: "--", colors = colors)
-            CoreInfoRow(title = "安装时间", value = core.installedAt ?: "--", colors = colors)
-            CoreInfoRow(
-                title = "更新状态",
-                value = buildUpdateStatusLabel(updateInfo),
+            CoreInfoMetricRow(
+                leftTitle = "仓库",
+                leftValue = core.repo.ifBlank { "--" },
+                rightTitle = "分支",
+                rightValue = core.ref.ifBlank { "--" },
                 colors = colors,
+                leftMonospace = true,
+                rightMonospace = true,
+            )
+            CoreInfoMetricRow(
+                leftTitle = "版本",
+                leftValue = core.version ?: "--",
+                rightTitle = "提交",
+                rightValue = core.commitLabel ?: "--",
+                colors = colors,
+                rightMonospace = true,
+            )
+            CoreInfoMetricRow(
+                leftTitle = "大小",
+                leftValue = core.sizeBytes?.formatSizeLabel() ?: "--",
+                rightTitle = "安装时间",
+                rightValue = core.installedAt ?: "--",
+                colors = colors,
+            )
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = colors.cardMuted,
+                border = BorderStroke(1.dp, colors.cardBorder),
+                shadowElevation = 0.dp,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CoreInfoRow(
+                        title = "更新状态",
+                        value = buildUpdateStatusLabel(updateInfo),
+                        colors = colors,
+                    )
+                    buildRemoteSnapshotLine(updateInfo)?.let {
+                        CoreInfoRow(
+                            title = "远端快照",
+                            value = it,
+                            colors = colors,
+                            monospace = true,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CoreInfoMetricRow(
+    leftTitle: String,
+    leftValue: String,
+    rightTitle: String,
+    rightValue: String,
+    colors: CoreHubColors,
+    leftMonospace: Boolean = false,
+    rightMonospace: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CoreInfoMetricCard(
+            modifier = Modifier.weight(1f),
+            title = leftTitle,
+            value = leftValue,
+            colors = colors,
+            monospace = leftMonospace,
+        )
+        CoreInfoMetricCard(
+            modifier = Modifier.weight(1f),
+            title = rightTitle,
+            value = rightValue,
+            colors = colors,
+            monospace = rightMonospace,
+        )
+    }
+}
+
+@Composable
+private fun CoreInfoMetricCard(
+    title: String,
+    value: String,
+    colors: CoreHubColors,
+    modifier: Modifier = Modifier,
+    monospace: Boolean = false,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = colors.cardMuted,
+        border = BorderStroke(1.dp, colors.cardBorder),
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = colors.subtleText,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 18.sp,
+                    fontFamily = if (monospace) DanmuMonoFamily else null,
+                ),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -1803,6 +1934,28 @@ private fun buildRollbackMetaLine(commit: RollbackCommitItem): String {
     return parts.joinToString(" · ")
 }
 
+private fun buildCoreDetailHeadline(
+    isActive: Boolean,
+    updateInfo: CoreUpdateInfo?,
+): String {
+    return when {
+        updateInfo?.updateAvailable == true -> "检测到新版本，可直接安装更新"
+        updateInfo?.state == CoreUpdateState.UpToDate && isActive -> "当前核心正在使用，且本地已是最新"
+        updateInfo?.state == CoreUpdateState.UpToDate -> "核心已安装完成，可随时切换为当前"
+        isActive -> "当前核心正在使用，建议定期检查更新"
+        else -> "可重新安装、回退版本，或切换为当前核心"
+    }
+}
+
+private fun buildRemoteSnapshotLine(updateInfo: CoreUpdateInfo?): String? {
+    if (updateInfo == null) return null
+    val parts = buildList {
+        updateInfo.latestVersion?.takeIf { it.isNotBlank() }?.let { add("最新版本：$it") }
+        updateInfo.latestCommit?.sha?.takeIf { it.isNotBlank() }?.take(7)?.let { add("最新提交：$it") }
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
 @Composable
 private fun PrimaryActionButton(
     label: String,
@@ -1847,6 +2000,69 @@ private fun PrimaryActionButton(
                 text = label,
                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                 color = colors.cardStrong,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CoreDetailActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    enabled: Boolean,
+    colors: CoreHubColors,
+    busy: Boolean = false,
+    emphasized: Boolean = false,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(22.dp),
+        color = when {
+            !enabled -> colors.disabledContainer
+            emphasized -> colors.accentContainer
+            else -> colors.cardMuted
+        },
+        border = BorderStroke(
+            1.dp,
+            if (emphasized) colors.accent.copy(alpha = 0.12f) else colors.cardBorder,
+        ),
+        shadowElevation = if (emphasized) 1.dp else 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 13.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (busy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 2.dp,
+                    color = if (emphasized && enabled) colors.accent else colors.subtleText,
+                )
+            } else {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (enabled) colors.accent else colors.subtleText,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+            Spacer(modifier = Modifier.size(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else colors.subtleText,
             )
         }
     }
