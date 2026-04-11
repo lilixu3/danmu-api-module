@@ -3,7 +3,10 @@ package com.danmuapi.manager.core.data
 import com.danmuapi.manager.core.model.CoreRecord
 import com.danmuapi.manager.core.model.CoreUpdateState
 import com.danmuapi.manager.core.model.LatestCommitInfo
+import com.danmuapi.manager.core.model.RollbackCommitItem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DanmuRepositoryTest {
@@ -90,5 +93,35 @@ class DanmuRepositoryTest {
         )
 
         assertEquals(CoreUpdateState.UpToDate, state)
+    }
+
+    @Test
+    fun `rollback commit item exposes fallback labels`() {
+        val item = RollbackCommitItem(
+            sha = "1234567890abcdef",
+            shortSha = "1234567",
+        )
+
+        assertEquals("版本未知", item.versionLabel)
+        assertEquals("无提交标题", item.titleLabel)
+    }
+
+    @Test
+    fun `rollback search filters by normalized version`() {
+        val commits = listOf(
+            RollbackCommitItem(sha = "a", shortSha = "a", version = "v1.10.2"),
+            RollbackCommitItem(sha = "b", shortSha = "b", version = "1.10.1"),
+            RollbackCommitItem(sha = "c", shortSha = "c", version = null),
+        )
+        val normalizedQuery = "v1.10.2".trim().removePrefix("v")
+
+        val filtered = commits.filter { item ->
+            item.version?.trim()?.removePrefix("v")?.equals(normalizedQuery, ignoreCase = true) == true
+        }
+
+        assertEquals(1, filtered.size)
+        assertEquals("a", filtered.first().sha)
+        assertFalse(filtered.any { it.sha == "b" })
+        assertTrue(filtered.none { it.sha == "c" })
     }
 }

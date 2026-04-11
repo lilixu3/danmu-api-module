@@ -35,6 +35,8 @@ import com.danmuapi.manager.core.model.ManualDanmuStep
 import com.danmuapi.manager.core.model.ModuleUpdateInfo
 import com.danmuapi.manager.core.model.RequestRecord
 import com.danmuapi.manager.core.model.RequestRecordsSnapshot
+import com.danmuapi.manager.core.model.RollbackCommitItem
+import com.danmuapi.manager.core.model.RollbackSearchSnapshot
 import com.danmuapi.manager.core.model.ServerConfig
 import com.danmuapi.manager.core.model.ServerLogEntry
 import com.danmuapi.manager.core.root.RootShell
@@ -110,6 +112,18 @@ class ManagerViewModel(
     var moduleUpdateInfo: ModuleUpdateInfo? by mutableStateOf(null)
         private set
     var updateInfo: Map<String, CoreUpdateInfo> by mutableStateOf(emptyMap())
+        private set
+    var rollbackCommits: List<RollbackCommitItem> by mutableStateOf(emptyList())
+        private set
+    var rollbackSearchSnapshot: RollbackSearchSnapshot by mutableStateOf(RollbackSearchSnapshot())
+        private set
+    var rollbackLoading: Boolean by mutableStateOf(false)
+        private set
+    var rollbackHasNextPage: Boolean by mutableStateOf(false)
+        private set
+    var rollbackCurrentPage: Int by mutableStateOf(0)
+        private set
+    var rollbackError: String? by mutableStateOf(null)
         private set
 
     var busy: Boolean by mutableStateOf(false)
@@ -345,6 +359,70 @@ class ManagerViewModel(
                 deleted
             }
             snackbars.tryEmit(if (ok) "已删除核心" else "删除核心失败")
+        }
+    }
+
+    fun resetRollbackState() {
+        rollbackCommits = emptyList()
+        rollbackSearchSnapshot = RollbackSearchSnapshot()
+        rollbackLoading = false
+        rollbackHasNextPage = false
+        rollbackCurrentPage = 0
+        rollbackError = null
+    }
+
+    fun loadRollbackCommits(coreId: String, versionQuery: String = "", append: Boolean = false) {
+        viewModelScope.launch {
+            val core = cores?.cores.orEmpty().firstOrNull { it.id == coreId }
+            if (core == null) {
+                rollbackError = "未找到核心"
+                return@launch
+            }
+            rollbackLoading = true
+            rollbackError = null
+            val targetPage = if (append) rollbackCurrentPage + 1 else 1
+            try {
+                val (page, snapshot) = repository.listRollbackCommits(
+                    core = core,
+                    page = targetPage,
+                    pageSize = 20,
+                    token = githubToken.value,
+                    versionQuery = versionQuery,
+                )
+                rollbackCommits = if (append) rollbackCommits + page.commits else page.commits
+                rollbackSearchSnapshot = if (append) {
+                    rollbackSearchSnapshot.copy(
+                        query = snapshot.query,
+                        scannedCount = rollbackSearchSnapshot.scannedCount + snapshot.scannedCount,
+                        matchedCount = rollbackCommits.size,
+                    )
+                } else {
+                    snapshot.copy(matchedCount = page.commits.size)
+                }
+                rollbackCurrentPage = page.page
+                rollbackHasNextPage = page.hasNextPage
+            } catch (_: Throwable) {
+                rollbackError = "加载回退版本失败"
+            } finally {
+                rollbackLoading = false
+            }
+        }
+    }
+
+    fun rollbackToCommit(coreId: String, commitSha: String) {
+        viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
+            val core = cores?.cores.orEmpty().firstOrNull { it.id == coreId }
+            if (core == null) {
+                snackbars.tryEmit("未找到核心")
+                return@launch
+            }
+            val ok = withBusy("回退核心中…") {
+                val installed = repository.installCore(core.repo, commitSha)
+                refreshAllInternal()
+                installed
+            }
+            snackbars.tryEmit(if (ok) "回退版本已安装，请切换到新核心" else "回退失败")
         }
     }
 

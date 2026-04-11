@@ -1,7 +1,10 @@
 package com.danmuapi.manager.core.data.network
 
 import com.danmuapi.manager.core.model.LatestCommitInfo
+import com.danmuapi.manager.core.model.RollbackCommitItem
+import com.squareup.moshi.Json
 import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,7 +21,13 @@ class GitHubApi(
 
     private data class CommitResponse(
         val sha: String? = null,
+        @Json(name = "html_url") val htmlUrl: String? = null,
+        val author: UserSummary? = null,
         val commit: CommitDetail? = null,
+    )
+
+    private data class UserSummary(
+        val login: String? = null,
     )
 
     private data class CommitDetail(
@@ -27,10 +36,14 @@ class GitHubApi(
     )
 
     private data class CommitAuthor(
+        val name: String? = null,
         val date: String? = null,
     )
 
     private val commitAdapter = moshi.adapter(CommitResponse::class.java)
+    private val commitListAdapter = moshi.adapter<List<CommitResponse>>(
+        Types.newParameterizedType(List::class.java, CommitResponse::class.java),
+    )
 
     suspend fun getLatestCommit(
         repo: String,
@@ -94,6 +107,56 @@ class GitHubApi(
             }
         } catch (_: IOException) {
             null
+        }
+    }
+
+    suspend fun listCommits(
+        repo: String,
+        ref: String,
+        page: Int,
+        perPage: Int,
+        token: String?,
+    ): List<RollbackCommitItem> = withContext(Dispatchers.IO) {
+        val cleanRepo = repo.trim()
+            .removePrefix("https://github.com/")
+            .removeSuffix(".git")
+        if (!cleanRepo.contains('/')) return@withContext emptyList()
+
+        val safePage = page.coerceAtLeast(1)
+        val safePerPage = perPage.coerceIn(1, 100)
+        val requestBuilder = Request.Builder()
+            .url("https://api.github.com/repos/$cleanRepo/commits?sha=${ref.trim()}&page=$safePage&per_page=$safePerPage")
+            .header("User-Agent", "DanmuApiManager")
+            .header("Accept", "application/vnd.github+json")
+
+        val safeToken = token?.trim().orEmpty()
+        if (safeToken.isNotEmpty()) {
+            requestBuilder.header("Authorization", "token $safeToken")
+        }
+
+        try {
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val parsed = commitListAdapter.fromJson(body).orEmpty()
+                parsed.mapNotNull { item ->
+                    val sha = item.sha ?: return@mapNotNull null
+                    val message = item.commit?.message.orEmpty()
+                    val title = message.lineSequence().firstOrNull()?.trim().orEmpty()
+                    val detail = message.lineSequence().drop(1).joinToString("\n").trim().ifBlank { null }
+                    RollbackCommitItem(
+                        sha = sha,
+                        shortSha = sha.take(7),
+                        title = title.ifBlank { null },
+                        body = detail,
+                        authorName = item.author?.login ?: item.commit?.author?.name,
+                        date = item.commit?.author?.date,
+                        htmlUrl = item.htmlUrl,
+                    )
+                }
+            }
+        } catch (_: IOException) {
+            emptyList()
         }
     }
 }

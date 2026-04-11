@@ -10,6 +10,9 @@ import com.danmuapi.manager.core.model.ManagerStatus
 import com.danmuapi.manager.core.model.ModuleRelease
 import com.danmuapi.manager.core.model.ModuleUpdateInfo
 import com.danmuapi.manager.core.model.ReleaseAsset
+import com.danmuapi.manager.core.model.RollbackCommitItem
+import com.danmuapi.manager.core.model.RollbackCommitPage
+import com.danmuapi.manager.core.model.RollbackSearchSnapshot
 import com.danmuapi.manager.core.root.DanmuCli
 
 internal fun compareVersions(left: String, right: String): Int {
@@ -101,6 +104,47 @@ class DanmuRepository(
     suspend fun readEnvFile(): String? = cli.readEnvFile()
 
     suspend fun writeEnvFile(content: String): Boolean = cli.writeEnvFile(content)
+
+    suspend fun listRollbackCommits(
+        core: CoreRecord,
+        page: Int,
+        pageSize: Int,
+        token: String?,
+        versionQuery: String? = null,
+    ): Pair<RollbackCommitPage, RollbackSearchSnapshot> {
+        if (core.repo.isBlank() || core.ref.isBlank()) {
+            return RollbackCommitPage() to RollbackSearchSnapshot(query = versionQuery.orEmpty())
+        }
+
+        val commits = gitHubApi.listCommits(
+            repo = core.repo,
+            ref = core.ref,
+            page = page,
+            perPage = pageSize,
+            token = token,
+        )
+        val enriched = commits.map { commit ->
+            commit.copy(version = gitHubApi.getRemoteCoreVersion(core.repo, commit.sha))
+        }
+        val normalizedQuery = versionQuery.orEmpty().trim().removePrefix("v")
+        val filtered = if (normalizedQuery.isBlank()) {
+            enriched
+        } else {
+            enriched.filter { item ->
+                item.version?.trim()?.removePrefix("v")?.equals(normalizedQuery, ignoreCase = true) == true
+            }
+        }
+        return RollbackCommitPage(
+            commits = filtered,
+            page = page,
+            pageSize = pageSize,
+            hasNextPage = commits.size >= pageSize,
+        ) to RollbackSearchSnapshot(
+            query = versionQuery.orEmpty(),
+            scannedCount = commits.size,
+            matchedCount = filtered.size,
+        )
+    }
 
     suspend fun checkUpdate(core: CoreRecord, token: String?): CoreUpdateInfo {
         if (core.repo.isBlank() || core.ref.isBlank()) {

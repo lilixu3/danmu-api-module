@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SystemUpdateAlt
@@ -72,6 +73,7 @@ import com.danmuapi.manager.core.designsystem.theme.rememberImmersivePalette
 import com.danmuapi.manager.core.model.CoreRecord
 import com.danmuapi.manager.core.model.CoreUpdateInfo
 import com.danmuapi.manager.core.model.CoreUpdateState
+import com.danmuapi.manager.core.model.RollbackCommitItem
 
 private enum class CoreFilter(val label: String) {
     All("全部"),
@@ -261,6 +263,10 @@ fun CoreDetailScreen(
     val isActive = core?.id == activeId
     val updateInfo = core?.id?.let(viewModel.updateInfo::get)
     var deleteTarget by remember { mutableStateOf<CoreRecord?>(null) }
+    var showRollbackSheet by remember { mutableStateOf(false) }
+    var selectedCommit by remember { mutableStateOf<RollbackCommitItem?>(null) }
+    var confirmRollbackCommit by remember { mutableStateOf<RollbackCommitItem?>(null) }
+    var rollbackQuery by rememberSaveable { mutableStateOf("") }
 
     if (deleteTarget != null) {
         val target = deleteTarget!!
@@ -281,6 +287,95 @@ fun CoreDetailScreen(
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) {
                     Text("取消")
+                }
+            },
+        )
+    }
+
+    if (confirmRollbackCommit != null && core != null) {
+        val commit = confirmRollbackCommit!!
+        AlertDialog(
+            onDismissRequest = { confirmRollbackCommit = null },
+            title = { Text("确认回退") },
+            text = { Text("将安装 ${core.repoDisplayName}@${commit.shortSha}（${commit.versionLabel}）作为新的本地核心版本。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRollbackCommit = null
+                        viewModel.rollbackToCommit(core.id, commit.sha)
+                    },
+                ) {
+                    Text("继续")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRollbackCommit = null }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+
+    if (showRollbackSheet && core != null) {
+        ModalBottomSheet(
+            onDismissRequest = {
+                showRollbackSheet = false
+                selectedCommit = null
+                viewModel.resetRollbackState()
+            },
+            containerColor = colors.cardStrong,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            RollbackSheet(
+                core = core,
+                query = rollbackQuery,
+                onQueryChange = { rollbackQuery = it },
+                commits = viewModel.rollbackCommits,
+                snapshotText = buildRollbackSnapshotText(viewModel.rollbackSearchSnapshot.scannedCount, viewModel.rollbackSearchSnapshot.matchedCount, rollbackQuery),
+                loading = viewModel.rollbackLoading,
+                hasNextPage = viewModel.rollbackHasNextPage,
+                error = viewModel.rollbackError,
+                colors = colors,
+                onSearch = { viewModel.loadRollbackCommits(core.id, rollbackQuery, append = false) },
+                onClear = {
+                    rollbackQuery = ""
+                    viewModel.loadRollbackCommits(core.id, "", append = false)
+                },
+                onLoadMore = { viewModel.loadRollbackCommits(core.id, rollbackQuery, append = true) },
+                onViewDetail = { selectedCommit = it },
+                onRollback = { confirmRollbackCommit = it },
+            )
+        }
+    }
+
+    if (selectedCommit != null) {
+        val commit = selectedCommit!!
+        AlertDialog(
+            onDismissRequest = { selectedCommit = null },
+            title = { Text(commit.versionLabel) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("SHA: ${commit.sha}")
+                    Text("标题: ${commit.titleLabel}")
+                    commit.authorName?.takeIf { it.isNotBlank() }?.let { Text("作者: $it") }
+                    commit.date?.takeIf { it.isNotBlank() }?.let { Text("时间: $it") }
+                    commit.body?.takeIf { it.isNotBlank() }?.let { Text("说明: $it") }
+                    commit.htmlUrl?.takeIf { it.isNotBlank() }?.let { Text("链接: $it") }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        selectedCommit = null
+                        confirmRollbackCommit = commit
+                    },
+                ) {
+                    Text("回退到此版本")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedCommit = null }) {
+                    Text("关闭")
                 }
             },
         )
@@ -348,6 +443,17 @@ fun CoreDetailScreen(
                     core = core,
                     updateInfo = updateInfo,
                     colors = colors,
+                )
+
+                RollbackActionCard(
+                    colors = colors,
+                    busy = viewModel.busy || viewModel.rollbackLoading,
+                    onOpen = {
+                        showRollbackSheet = true
+                        rollbackQuery = ""
+                        viewModel.resetRollbackState()
+                        viewModel.loadRollbackCommits(core.id, "", append = false)
+                    },
                 )
 
                 DangerActionCard(
@@ -1529,6 +1635,176 @@ private fun DangerActionCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RollbackActionCard(
+    colors: CoreHubColors,
+    busy: Boolean,
+    onOpen: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = colors.cardStrong,
+        border = BorderStroke(1.dp, colors.cardBorder),
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = "版本回退",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
+                )
+                Text(
+                    text = "按页查看提交历史，按版本号筛选，并查看单个提交详情。",
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
+                    color = colors.subtleText,
+                )
+            }
+            HubActionButton(
+                icon = Icons.Filled.Info,
+                label = if (busy) "处理中" else "打开回退列表",
+                enabled = !busy,
+                colors = colors,
+                emphasized = true,
+                onClick = onOpen,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RollbackSheet(
+    core: CoreRecord,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    commits: List<RollbackCommitItem>,
+    snapshotText: String,
+    loading: Boolean,
+    hasNextPage: Boolean,
+    error: String?,
+    colors: CoreHubColors,
+    onSearch: () -> Unit,
+    onClear: () -> Unit,
+    onLoadMore: () -> Unit,
+    onViewDetail: (RollbackCommitItem) -> Unit,
+    onRollback: (RollbackCommitItem) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = "版本回退 · ${core.repoDisplayName}",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+        )
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("输入版本号，如 1.10.2") },
+            shape = RoundedCornerShape(18.dp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            HubActionButton(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Filled.Search,
+                label = "搜索",
+                enabled = !loading,
+                colors = colors,
+                emphasized = true,
+                onClick = onSearch,
+            )
+            HubActionButton(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Filled.Refresh,
+                label = "清空搜索",
+                enabled = !loading,
+                colors = colors,
+                onClick = onClear,
+            )
+        }
+        Text(
+            text = snapshotText,
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.subtleText,
+        )
+        error?.takeIf { it.isNotBlank() }?.let {
+            Text(text = it, color = colors.danger, style = MaterialTheme.typography.bodySmall)
+        }
+        commits.forEach { commit ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = colors.cardMuted,
+                border = BorderStroke(1.dp, colors.cardBorder),
+                shadowElevation = 0.dp,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(commit.versionLabel, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                    Text("${commit.shortSha} · ${commit.date.orEmpty()}", style = MaterialTheme.typography.bodySmall, color = colors.subtleText)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HubActionButton(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Filled.Info,
+                            label = "查看详情",
+                            enabled = !loading,
+                            colors = colors,
+                            onClick = { onViewDetail(commit) },
+                        )
+                        HubActionButton(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Filled.CloudDownload,
+                            label = "回退到此版本",
+                            enabled = !loading,
+                            colors = colors,
+                            emphasized = true,
+                            onClick = { onRollback(commit) },
+                        )
+                    }
+                }
+            }
+        }
+        if (loading) {
+            CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+        }
+        if (hasNextPage && !loading) {
+            HubActionButton(
+                modifier = Modifier.fillMaxWidth(),
+                icon = Icons.Filled.Refresh,
+                label = "下一页",
+                enabled = true,
+                colors = colors,
+                onClick = onLoadMore,
+            )
+        }
+    }
+}
+
+private fun buildRollbackSnapshotText(scanned: Int, matched: Int, query: String): String {
+    return if (query.isBlank()) {
+        "已加载 $scanned 条提交"
+    } else {
+        "已扫描 $scanned 条提交，找到 $matched 条版本为 $query 的提交"
     }
 }
 

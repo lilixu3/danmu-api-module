@@ -41,6 +41,36 @@ data class LatestCommitInfo(
     val date: String? = null,
 )
 
+data class RollbackCommitPage(
+    val commits: List<RollbackCommitItem> = emptyList(),
+    val page: Int = 1,
+    val pageSize: Int = 20,
+    val hasNextPage: Boolean = false,
+)
+
+data class RollbackCommitItem(
+    val sha: String,
+    val shortSha: String,
+    val version: String? = null,
+    val title: String? = null,
+    val body: String? = null,
+    val authorName: String? = null,
+    val date: String? = null,
+    val htmlUrl: String? = null,
+) {
+    val versionLabel: String
+        get() = version?.takeIf { it.isNotBlank() } ?: "版本未知"
+
+    val titleLabel: String
+        get() = title?.takeIf { it.isNotBlank() } ?: "无提交标题"
+}
+
+data class RollbackSearchSnapshot(
+    val query: String = "",
+    val scannedCount: Int = 0,
+    val matchedCount: Int = 0,
+)
+
 data class ModuleRelease(
     val tagName: String = "",
     val name: String = "",
