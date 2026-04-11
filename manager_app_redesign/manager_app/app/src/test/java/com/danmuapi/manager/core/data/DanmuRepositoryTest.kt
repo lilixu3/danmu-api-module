@@ -48,6 +48,22 @@ class DanmuRepositoryTest {
     }
 
     @Test
+    fun `resolveCoreUpdateState returns update when local version is stale even if sha is unavailable`() {
+        val state = resolveCoreUpdateState(
+            core = CoreRecord(
+                repo = "lilixu3/danmu_api",
+                ref = "main",
+                sha = null,
+                version = "1.6.11",
+            ),
+            latestCommit = null,
+            latestVersion = "1.6.12",
+        )
+
+        assertEquals(CoreUpdateState.UpdateAvailable, state)
+    }
+
+    @Test
     fun `resolveCoreUpdateState falls back to version when local sha missing and remote version is newer`() {
         val state = resolveCoreUpdateState(
             core = CoreRecord(

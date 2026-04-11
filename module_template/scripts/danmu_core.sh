@@ -623,25 +623,43 @@ install_core() {
   sha_short=""
   if [ -n "${sha}" ]; then sha_short="$(printf '%s' "${sha}" | cut -c1-7)"; fi
 
+  ref_is_commit_like=0
+  case "$ref" in
+    '' ) ;;
+    *[!0-9a-fA-F]* ) ;;
+    * )
+      if [ "${#ref}" -ge 7 ] && [ "${#ref}" -le 40 ]; then
+        ref_is_commit_like=1
+      fi
+      ;;
+  esac
+
   id="$(sanitize_id "${repo}_${ref}_${sha_short}")"
   [ -n "${id}" ] || id="$(sanitize_id "${repo}_${ref}")"
 
   dest_root="${CORES_DIR}/${id}"
   dest_core="${dest_root}/danmu_api"
 
-  # If already installed, just activate
+  # If already installed, refresh mutable metadata and activate.
+  # For branch/tag installs, remote content may have advanced even if repo/ref is unchanged,
+  # so do not trust stale meta.json blindly.
   if [ -d "${dest_core}" ] && [ -f "${dest_core}/worker.js" ]; then
-    activate_core "${id}" >/dev/null 2>&1 || true
-    removed_old="$(cleanup_repo_ref_duplicates "${repo}" "${ref}" "${id}")"
-    mp="$(meta_path_for "${id}")"
-    if [ -f "$mp" ]; then
-      printf '{"result":"ok","action":"already_installed","activated":true,"removedOldCount":%s,"core":' "${removed_old}"
-      cat "$mp" 2>/dev/null || echo '{}'
-      echo '}'
+    if [ "${ref_is_commit_like}" -eq 1 ]; then
+      activate_core "${id}" >/dev/null 2>&1 || true
+      removed_old="$(cleanup_repo_ref_duplicates "${repo}" "${ref}" "${id}")"
+      mp="$(meta_path_for "${id}")"
+      if [ -f "$mp" ]; then
+        printf '{"result":"ok","action":"already_installed","activated":true,"removedOldCount":%s,"core":' "${removed_old}"
+        cat "$mp" 2>/dev/null || echo '{}'
+        echo '}'
+        return 0
+      fi
+      printf '{"result":"ok","action":"already_installed","activated":true,"removedOldCount":%s}\n' "${removed_old}"
       return 0
     fi
-    printf '{"result":"ok","action":"already_installed","activated":true,"removedOldCount":%s}\n' "${removed_old}"
-    return 0
+
+    rm -rf "${dest_root}" 2>/dev/null || true
+    mkdir -p "${dest_root}" 2>/dev/null || true
   fi
 
   mkdir -p "${dest_root}" 2>/dev/null || true

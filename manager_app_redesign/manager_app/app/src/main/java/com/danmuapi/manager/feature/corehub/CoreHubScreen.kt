@@ -1878,9 +1878,17 @@ private fun buildUpdateStatusLabel(updateInfo: CoreUpdateInfo?): String {
         updateInfo == null -> "未检查"
         updateInfo.updateAvailable -> {
             val latest = updateInfo.latestVersion ?: updateInfo.latestCommit?.sha?.take(7) ?: "新版本"
-            "可更新到 $latest"
+            val current = updateInfo.currentVersion ?: updateInfo.currentCommit ?: "当前版本"
+            "当前 $current，可更新到 $latest"
         }
-        updateInfo.state == CoreUpdateState.UpToDate -> "当前已是最新"
-        else -> "暂时无法确认是否最新，建议配置 GitHub Token 后重试"
+        updateInfo.state == CoreUpdateState.UpToDate -> {
+            val current = updateInfo.currentVersion ?: updateInfo.currentCommit
+            if (current.isNullOrBlank()) {
+                "当前已是最新"
+            } else {
+                "当前已是最新（$current）"
+            }
+        }
+        else -> "暂时无法确认是否最新，建议稍后重试"
     }
 }

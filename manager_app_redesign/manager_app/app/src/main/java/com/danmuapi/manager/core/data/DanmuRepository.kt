@@ -171,6 +171,8 @@ class DanmuRepository(
             latestVersion = latestVersion,
             updateAvailable = state == CoreUpdateState.UpdateAvailable,
             state = state,
+            currentVersion = core.version,
+            currentCommit = core.commitLabel,
         )
     }
 

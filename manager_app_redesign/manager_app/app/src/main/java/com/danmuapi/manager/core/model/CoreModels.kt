@@ -27,6 +27,8 @@ data class CoreUpdateInfo(
     val latestVersion: String? = null,
     val updateAvailable: Boolean = false,
     val state: CoreUpdateState = CoreUpdateState.Unknown,
+    val currentVersion: String? = null,
+    val currentCommit: String? = null,
 )
 
 enum class CoreUpdateState {
