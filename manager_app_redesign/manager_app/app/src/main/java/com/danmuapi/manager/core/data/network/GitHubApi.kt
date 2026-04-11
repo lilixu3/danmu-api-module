@@ -2,6 +2,7 @@ package com.danmuapi.manager.core.data.network
 
 import com.danmuapi.manager.core.model.LatestCommitInfo
 import com.danmuapi.manager.core.model.RollbackCommitItem
+import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Json
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
@@ -15,6 +16,11 @@ import java.io.IOException
 class GitHubApi(
     private val client: OkHttpClient = OkHttpClient(),
 ) {
+    @JsonClass(generateAdapter = true)
+    private data class RepoResponse(
+        @Json(name = "default_branch") val defaultBranch: String? = null,
+    )
+
     private val moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
         .build()
@@ -44,6 +50,7 @@ class GitHubApi(
     private val commitListAdapter = moshi.adapter<List<CommitResponse>>(
         Types.newParameterizedType(List::class.java, CommitResponse::class.java),
     )
+    private val repoAdapter = moshi.adapter(RepoResponse::class.java)
 
     suspend fun getLatestCommit(
         repo: String,
@@ -122,10 +129,11 @@ class GitHubApi(
             .removeSuffix(".git")
         if (!cleanRepo.contains('/')) return@withContext emptyList()
 
+        val resolvedRef = resolveHistoryRef(cleanRepo, ref, token)
         val safePage = page.coerceAtLeast(1)
         val safePerPage = perPage.coerceIn(1, 100)
         val requestBuilder = Request.Builder()
-            .url("https://api.github.com/repos/$cleanRepo/commits?sha=${ref.trim()}&page=$safePage&per_page=$safePerPage")
+            .url("https://api.github.com/repos/$cleanRepo/commits?sha=${resolvedRef.trim()}&page=$safePage&per_page=$safePerPage")
             .header("User-Agent", "DanmuApiManager")
             .header("Accept", "application/vnd.github+json")
 
@@ -157,6 +165,35 @@ class GitHubApi(
             }
         } catch (_: IOException) {
             emptyList()
+        }
+    }
+
+    private suspend fun resolveHistoryRef(
+        cleanRepo: String,
+        ref: String,
+        token: String?,
+    ): String {
+        val trimmed = ref.trim()
+        val looksLikeCommit = Regex("^[0-9a-fA-F]{7,40}$").matches(trimmed)
+        if (!looksLikeCommit) return trimmed.ifBlank { "main" }
+
+        val safeToken = token?.trim().orEmpty()
+        val requestBuilder = Request.Builder()
+            .url("https://api.github.com/repos/$cleanRepo")
+            .header("User-Agent", "DanmuApiManager")
+            .header("Accept", "application/vnd.github+json")
+        if (safeToken.isNotEmpty()) {
+            requestBuilder.header("Authorization", "token $safeToken")
+        }
+
+        return try {
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@use "main"
+                val body = response.body?.string() ?: return@use "main"
+                repoAdapter.fromJson(body)?.defaultBranch?.takeIf { it.isNotBlank() } ?: "main"
+            }
+        } catch (_: IOException) {
+            "main"
         }
     }
 }

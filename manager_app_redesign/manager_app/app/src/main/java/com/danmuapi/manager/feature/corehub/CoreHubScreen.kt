@@ -446,6 +446,8 @@ fun CoreDetailScreen(
                 )
 
                 RollbackActionCard(
+                    currentVersion = core.version,
+                    currentCommit = core.commitLabel,
                     colors = colors,
                     busy = viewModel.busy || viewModel.rollbackLoading,
                     onOpen = {
@@ -1640,6 +1642,8 @@ private fun DangerActionCard(
 
 @Composable
 private fun RollbackActionCard(
+    currentVersion: String?,
+    currentCommit: String?,
     colors: CoreHubColors,
     busy: Boolean,
     onOpen: () -> Unit,
@@ -1660,16 +1664,21 @@ private fun RollbackActionCard(
         ) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
                     text = "版本回退",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
                 )
                 Text(
-                    text = "按页查看提交历史，按版本号筛选，并查看单个提交详情。",
+                    text = "先看版本号，再选提交回退，避免只看 SHA 误选。",
                     style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
                     color = colors.subtleText,
+                )
+                Text(
+                    text = buildRollbackCurrentHint(currentVersion, currentCommit),
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = colors.accent,
                 )
             }
             HubActionButton(
@@ -1761,7 +1770,17 @@ private fun RollbackSheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(commit.versionLabel, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-                    Text("${commit.shortSha} · ${commit.date.orEmpty()}", style = MaterialTheme.typography.bodySmall, color = colors.subtleText)
+                    Text(
+                        commit.titleLabel,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        buildRollbackMetaLine(commit),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.subtleText,
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         HubActionButton(
                             modifier = Modifier.weight(1f),
@@ -1802,10 +1821,25 @@ private fun RollbackSheet(
 
 private fun buildRollbackSnapshotText(scanned: Int, matched: Int, query: String): String {
     return if (query.isBlank()) {
-        "已加载 $scanned 条提交"
+        "已加载 $scanned 条提交，可直接按版本号和提交时间挑选"
     } else {
         "已扫描 $scanned 条提交，找到 $matched 条版本为 $query 的提交"
     }
+}
+
+private fun buildRollbackCurrentHint(currentVersion: String?, currentCommit: String?): String {
+    val versionLabel = currentVersion?.takeIf { it.isNotBlank() } ?: "版本未知"
+    val commitLabel = currentCommit?.takeIf { it.isNotBlank() } ?: "提交未知"
+    return "当前版本：$versionLabel · 当前提交：$commitLabel"
+}
+
+private fun buildRollbackMetaLine(commit: RollbackCommitItem): String {
+    val parts = buildList {
+        add(commit.shortSha)
+        commit.date?.takeIf { it.isNotBlank() }?.let(::add)
+        commit.authorName?.takeIf { it.isNotBlank() }?.let(::add)
+    }
+    return parts.joinToString(" · ")
 }
 
 @Composable
