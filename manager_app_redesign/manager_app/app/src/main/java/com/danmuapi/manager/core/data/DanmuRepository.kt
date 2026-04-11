@@ -116,6 +116,10 @@ class DanmuRepository(
             return RollbackCommitPage() to RollbackSearchSnapshot(query = versionQuery.orEmpty())
         }
 
+        if (token.isNullOrBlank()) {
+            throw IllegalStateException("请先在设置里保存 GitHub Token，再加载提交历史")
+        }
+
         val commits = gitHubApi.listCommits(
             repo = core.repo,
             ref = core.ref,

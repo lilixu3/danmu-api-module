@@ -437,25 +437,19 @@ fun CoreDetailScreen(
                     colors = colors,
                     onInstall = { viewModel.installCore(core.repo, core.ref) },
                     onActivate = { viewModel.activateCore(core.id) },
+                    onOpenRollback = {
+                        showRollbackSheet = true
+                        rollbackQuery = ""
+                        viewModel.resetRollbackState()
+                        viewModel.loadRollbackCommits(core.id, "", append = false)
+                    },
+                    rollbackBusy = viewModel.rollbackLoading,
                 )
 
                 CoreInfoCard(
                     core = core,
                     updateInfo = updateInfo,
                     colors = colors,
-                )
-
-                RollbackActionCard(
-                    currentVersion = core.version,
-                    currentCommit = core.commitLabel,
-                    colors = colors,
-                    busy = viewModel.busy || viewModel.rollbackLoading,
-                    onOpen = {
-                        showRollbackSheet = true
-                        rollbackQuery = ""
-                        viewModel.resetRollbackState()
-                        viewModel.loadRollbackCommits(core.id, "", append = false)
-                    },
                 )
 
                 DangerActionCard(
@@ -1313,6 +1307,8 @@ private fun CoreDetailSummaryCard(
     colors: CoreHubColors,
     onInstall: () -> Unit,
     onActivate: () -> Unit,
+    onOpenRollback: () -> Unit,
+    rollbackBusy: Boolean,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1394,6 +1390,14 @@ private fun CoreDetailSummaryCard(
                 )
                 HubActionButton(
                     modifier = Modifier.weight(1f),
+                    icon = Icons.Filled.History,
+                    label = if (rollbackBusy) "读取历史中" else "版本回退",
+                    enabled = !busy && !rollbackBusy,
+                    colors = colors,
+                    onClick = onOpenRollback,
+                )
+                HubActionButton(
+                    modifier = Modifier.weight(1f),
                     icon = Icons.AutoMirrored.Filled.OpenInNew,
                     label = if (isActive) "当前正在使用" else "切换为当前",
                     enabled = !busy && !isActive,
@@ -1401,6 +1405,12 @@ private fun CoreDetailSummaryCard(
                     onClick = onActivate,
                 )
             }
+
+            Text(
+                text = buildRollbackCurrentHint(core.version, core.commitLabel),
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                color = colors.accent,
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1636,59 +1646,6 @@ private fun DangerActionCard(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun RollbackActionCard(
-    currentVersion: String?,
-    currentCommit: String?,
-    colors: CoreHubColors,
-    busy: Boolean,
-    onOpen: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        color = colors.cardStrong,
-        border = BorderStroke(1.dp, colors.cardBorder),
-        shadowElevation = 0.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    text = "版本回退",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
-                )
-                Text(
-                    text = "先看版本号，再选提交回退，避免只看 SHA 误选。",
-                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
-                    color = colors.subtleText,
-                )
-                Text(
-                    text = buildRollbackCurrentHint(currentVersion, currentCommit),
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = colors.accent,
-                )
-            }
-            HubActionButton(
-                icon = Icons.Filled.Info,
-                label = if (busy) "处理中" else "打开回退列表",
-                enabled = !busy,
-                colors = colors,
-                emphasized = true,
-                onClick = onOpen,
-            )
         }
     }
 }

@@ -144,7 +144,9 @@ class GitHubApi(
 
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyList()
+                if (!response.isSuccessful) {
+                    throw IOException("GitHub commits API failed: ${response.code}")
+                }
                 val body = response.body?.string() ?: return@withContext emptyList()
                 val parsed = commitListAdapter.fromJson(body).orEmpty()
                 parsed.mapNotNull { item ->
@@ -163,8 +165,8 @@ class GitHubApi(
                     )
                 }
             }
-        } catch (_: IOException) {
-            emptyList()
+        } catch (error: IOException) {
+            throw IOException("加载 GitHub 提交历史失败：${error.message}", error)
         }
     }
 

@@ -401,8 +401,8 @@ class ManagerViewModel(
                 }
                 rollbackCurrentPage = page.page
                 rollbackHasNextPage = page.hasNextPage
-            } catch (_: Throwable) {
-                rollbackError = "加载回退版本失败"
+            } catch (error: Throwable) {
+                rollbackError = error.message?.takeIf { it.isNotBlank() } ?: "加载回退版本失败"
             } finally {
                 rollbackLoading = false
             }
