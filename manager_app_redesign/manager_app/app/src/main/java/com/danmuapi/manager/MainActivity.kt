@@ -3,19 +3,23 @@ package com.danmuapi.manager
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.viewModels
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.view.WindowCompat
 import com.danmuapi.manager.app.DanmuManagerApp
 import com.danmuapi.manager.app.state.ManagerViewModel
 import com.danmuapi.manager.core.designsystem.theme.DanmuManagerTheme
 
 class MainActivity : ComponentActivity() {
+    private val managerViewModel: ManagerViewModel by viewModels {
+        ManagerViewModel.factory(application)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -24,11 +28,8 @@ class MainActivity : ComponentActivity() {
         window.navigationBarColor = Color.TRANSPARENT
 
         setContent {
-            val viewModel: ManagerViewModel = viewModel(
-                factory = ManagerViewModel.factory(application),
-            )
-            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
-            val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
+            val themeMode by managerViewModel.themeMode.collectAsStateWithLifecycle()
+            val dynamicColor by managerViewModel.dynamicColor.collectAsStateWithLifecycle()
             val systemDark = isSystemInDarkTheme()
 
             val darkTheme = when (themeMode) {
@@ -48,8 +49,13 @@ class MainActivity : ComponentActivity() {
                         isAppearanceLightNavigationBars = !darkTheme
                     }
                 }
-                DanmuManagerApp(viewModel = viewModel)
+                DanmuManagerApp(viewModel = managerViewModel)
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        managerViewModel.onAppForegrounded()
     }
 }

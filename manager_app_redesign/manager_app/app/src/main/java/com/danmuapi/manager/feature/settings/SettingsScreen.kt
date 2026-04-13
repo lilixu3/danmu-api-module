@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.danmuapi.manager.BuildConfig
 import com.danmuapi.manager.app.state.ManagerViewModel
+import com.danmuapi.manager.core.data.formatSilentCoreUpdateIntervalLabel
 
 @Composable
 fun SettingsScreen(
@@ -39,6 +40,9 @@ fun SettingsScreen(
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     val logCleanIntervalDays by viewModel.logCleanIntervalDays.collectAsStateWithLifecycle()
     val consoleLogLimit by viewModel.consoleLogLimit.collectAsStateWithLifecycle()
+    val coreUpdateForegroundEnabled by viewModel.coreUpdateForegroundEnabled.collectAsStateWithLifecycle()
+    val coreUpdateBackgroundEnabled by viewModel.coreUpdateBackgroundEnabled.collectAsStateWithLifecycle()
+    val coreUpdateBackgroundIntervalMinutes by viewModel.coreUpdateBackgroundIntervalMinutes.collectAsStateWithLifecycle()
 
     val rootLabel = when (viewModel.rootAvailable) {
         true -> "已就绪"
@@ -51,12 +55,23 @@ fun SettingsScreen(
         2 -> "深色"
         else -> "跟随系统"
     }
-    val accessSummary = remember(viewModel.moduleUpdateInfo, viewModel.updateInfo) {
+    val accessSummary = remember(
+        viewModel.moduleUpdateInfo,
+        viewModel.updateInfo,
+        coreUpdateForegroundEnabled,
+        coreUpdateBackgroundEnabled,
+        coreUpdateBackgroundIntervalMinutes,
+    ) {
         val updateCount = viewModel.updateInfo.values.count { it.updateAvailable }
         when {
             viewModel.moduleUpdateInfo?.hasUpdate == true -> "模块有更新"
             updateCount > 0 -> "$updateCount 个核心可更新"
-            else -> "Token / 模块 / 核心"
+            coreUpdateForegroundEnabled && coreUpdateBackgroundEnabled ->
+                "前台检查 / 后台 ${formatSilentCoreUpdateIntervalLabel(coreUpdateBackgroundIntervalMinutes)}"
+
+            coreUpdateForegroundEnabled -> "仅前台静默检查"
+            coreUpdateBackgroundEnabled -> "仅后台 ${formatSilentCoreUpdateIntervalLabel(coreUpdateBackgroundIntervalMinutes)}"
+            else -> "Token / 手动检查"
         }
     }
     val backupSummary = if (webDavUrl.isBlank()) {

@@ -9,8 +9,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.danmuapi.manager.core.data.CoreUpdateSilentCoordinator
+import com.danmuapi.manager.core.data.DEFAULT_SILENT_CORE_UPDATE_BACKGROUND_INTERVAL_MINUTES
 import com.danmuapi.manager.core.data.DanmuRepository
+import com.danmuapi.manager.core.data.SilentCoreUpdateTrigger
 import com.danmuapi.manager.core.data.SettingsRepository
+import com.danmuapi.manager.core.data.formatSilentCoreUpdateIntervalLabel
 import com.danmuapi.manager.core.data.network.DanmuApiClient
 import com.danmuapi.manager.core.data.network.HttpResult
 import com.danmuapi.manager.core.data.network.WebDavClient
@@ -40,6 +44,7 @@ import com.danmuapi.manager.core.model.RollbackSearchSnapshot
 import com.danmuapi.manager.core.model.ServerConfig
 import com.danmuapi.manager.core.model.ServerLogEntry
 import com.danmuapi.manager.core.root.RootShell
+import com.danmuapi.manager.worker.CoreUpdateSilentCheckScheduler
 import com.danmuapi.manager.worker.LogCleanupScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -62,6 +67,10 @@ class ManagerViewModel(
     private val webDavClient: WebDavClient = WebDavClient(),
     private val danmuApiClient: DanmuApiClient = DanmuApiClient(),
 ) : AndroidViewModel(application) {
+    private val silentCoreUpdateCoordinator = CoreUpdateSilentCoordinator(
+        repository = repository,
+        settings = settings,
+    )
 
     var rootAvailable: Boolean? by mutableStateOf(null)
         private set
@@ -189,14 +198,36 @@ class ManagerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val consoleLogLimit: StateFlow<Int> = settings.consoleLogLimit
         .stateIn(viewModelScope, SharingStarted.Eagerly, 300)
+    val coreUpdateForegroundEnabled: StateFlow<Boolean> = settings.coreUpdateForegroundEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val coreUpdateBackgroundEnabled: StateFlow<Boolean> = settings.coreUpdateBackgroundEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val coreUpdateBackgroundIntervalMinutes: StateFlow<Int> = settings.coreUpdateBackgroundIntervalMinutes
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            DEFAULT_SILENT_CORE_UPDATE_BACKGROUND_INTERVAL_MINUTES,
+        )
 
     val snackbars = MutableSharedFlow<String>(extraBufferCapacity = 8)
     private var hasShownRootUnavailableNotice = false
 
     init {
         viewModelScope.launch {
+            updateInfo = silentCoreUpdateCoordinator.loadCachedUpdateInfo()
+        }
+        viewModelScope.launch {
             logCleanIntervalDays.collectLatest { days ->
                 LogCleanupScheduler.schedule(getApplication(), days)
+            }
+        }
+        viewModelScope.launch {
+            settings.silentCoreUpdateSettings.collectLatest { config ->
+                CoreUpdateSilentCheckScheduler.schedule(
+                    context = getApplication(),
+                    enabled = config.backgroundEnabled,
+                    intervalMinutes = config.backgroundIntervalMinutes,
+                )
             }
         }
         refreshAll()
@@ -237,6 +268,7 @@ class ManagerViewModel(
         hasShownRootUnavailableNotice = false
         status = repository.getStatus()
         cores = repository.listCores()
+        pruneUpdateInfoToInstalledCores()
         logs = repository.listLogs()
         serviceElapsedSeconds = status
             ?.takeIf { it.isRunning }
@@ -465,6 +497,15 @@ class ManagerViewModel(
         }
     }
 
+    fun onAppForegrounded() {
+        viewModelScope.launch {
+            val result = silentCoreUpdateCoordinator.run(SilentCoreUpdateTrigger.Foreground)
+            if (result.executed || result.updateInfo.isNotEmpty() || updateInfo.isEmpty()) {
+                updateInfo = result.updateInfo
+            }
+        }
+    }
+
     fun checkUpdates() {
         viewModelScope.launch {
             val list = cores?.cores.orEmpty()
@@ -474,11 +515,14 @@ class ManagerViewModel(
             }
 
             val results = withBusy("检查核心更新中…") {
-                buildMap {
-                    list.forEach { core ->
-                        put(core.id, repository.checkUpdate(core, githubToken.value))
-                    }
-                }
+                silentCoreUpdateCoordinator.run(
+                    trigger = SilentCoreUpdateTrigger.Manual,
+                    force = true,
+                ).updateInfo
+            }
+            if (results.isEmpty()) {
+                snackbars.tryEmit("检查更新失败")
+                return@launch
             }
             updateInfo = results
             val updateCount = results.values.count { it.updateAvailable }
@@ -503,11 +547,19 @@ class ManagerViewModel(
             }
 
             val info = withBusy("检查当前核心更新中…") {
-                repository.checkUpdate(core, githubToken.value)
+                runCatching {
+                    repository.checkUpdate(core, githubToken.value)
+                }.getOrDefault(
+                    CoreUpdateInfo(
+                        currentVersion = core.version,
+                        currentCommit = core.commitLabel,
+                    ),
+                )
             }
             updateInfo = updateInfo.toMutableMap().apply {
                 put(core.id, info)
             }
+            persistCoreUpdateCache(updateInfo)
             snackbars.tryEmit(
                 when {
                     info.updateAvailable -> "当前核心有更新"
@@ -558,6 +610,27 @@ class ManagerViewModel(
         viewModelScope.launch {
             settings.setConsoleLogLimit(limit)
             snackbars.tryEmit("日志显示行数已更新")
+        }
+    }
+
+    fun setCoreUpdateForegroundEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settings.setCoreUpdateForegroundEnabled(enabled)
+            snackbars.tryEmit(if (enabled) "已开启进入前台静默检查" else "已关闭进入前台静默检查")
+        }
+    }
+
+    fun setCoreUpdateBackgroundEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settings.setCoreUpdateBackgroundEnabled(enabled)
+            snackbars.tryEmit(if (enabled) "已开启后台静默检查" else "已关闭后台静默检查")
+        }
+    }
+
+    fun setCoreUpdateBackgroundIntervalMinutes(minutes: Int) {
+        viewModelScope.launch {
+            settings.setCoreUpdateBackgroundIntervalMinutes(minutes)
+            snackbars.tryEmit("后台静默检查周期已更新为 ${formatSilentCoreUpdateIntervalLabel(minutes)}")
         }
     }
 
@@ -1497,6 +1570,20 @@ class ManagerViewModel(
             }
         }
         return values
+    }
+
+    private fun pruneUpdateInfoToInstalledCores() {
+        val installedIds = cores?.cores.orEmpty().map { it.id }.toSet()
+        updateInfo = if (installedIds.isEmpty()) {
+            emptyMap()
+        } else {
+            updateInfo.filterKeys { it in installedIds }
+        }
+    }
+
+    private suspend fun persistCoreUpdateCache(snapshot: Map<String, CoreUpdateInfo>) {
+        settings.setCachedCoreUpdateInfo(snapshot)
+        settings.setLastSilentCoreUpdateCheckAt(System.currentTimeMillis())
     }
 
     private fun clearRootBackedState() {

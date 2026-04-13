@@ -41,6 +41,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.danmuapi.manager.app.state.ManagerViewModel
+import com.danmuapi.manager.core.data.SILENT_CORE_UPDATE_BACKGROUND_INTERVAL_OPTIONS
+import com.danmuapi.manager.core.data.formatSilentCoreUpdateIntervalLabel
 import com.danmuapi.manager.core.model.CoreUpdateInfo
 import com.danmuapi.manager.core.model.CoreUpdateState
 import com.danmuapi.manager.core.model.ModuleUpdateInfo
@@ -55,6 +57,9 @@ fun SettingsAccessScreen(
 ) {
     val palette = rememberSettingsPalette()
     val githubToken by viewModel.githubToken.collectAsStateWithLifecycle()
+    val coreUpdateForegroundEnabled by viewModel.coreUpdateForegroundEnabled.collectAsStateWithLifecycle()
+    val coreUpdateBackgroundEnabled by viewModel.coreUpdateBackgroundEnabled.collectAsStateWithLifecycle()
+    val coreUpdateBackgroundIntervalMinutes by viewModel.coreUpdateBackgroundIntervalMinutes.collectAsStateWithLifecycle()
     var githubTokenInput by remember(githubToken) { mutableStateOf(githubToken) }
     val moduleVersion = viewModel.status?.module?.version?.takeIf { it.isNotBlank() } ?: "--"
     val installedCoreCount = viewModel.cores?.cores.orEmpty().size
@@ -143,6 +148,78 @@ fun SettingsAccessScreen(
                 value = buildCoreUpdateSummary(viewModel.updateInfo),
                 palette = palette,
             )
+        }
+
+        SettingsPanel(palette = palette) {
+            SettingsPanelHeader(
+                title = "静默检查",
+                subtitle = "进入管理器前台和后台周期任务共享 10 分钟去重，避免重复联网检查。",
+                palette = palette,
+                trailing = {
+                    SettingsTag(
+                        text = when {
+                            coreUpdateForegroundEnabled && coreUpdateBackgroundEnabled ->
+                                "前台 / ${formatSilentCoreUpdateIntervalLabel(coreUpdateBackgroundIntervalMinutes)}"
+
+                            coreUpdateForegroundEnabled -> "仅前台"
+                            coreUpdateBackgroundEnabled -> formatSilentCoreUpdateIntervalLabel(coreUpdateBackgroundIntervalMinutes)
+                            else -> "已关闭"
+                        },
+                        palette = palette,
+                        tone = if (coreUpdateForegroundEnabled || coreUpdateBackgroundEnabled) palette.accent else palette.subtleText,
+                    )
+                },
+            )
+            SettingsPlainRow(
+                title = "进入前台检查",
+                subtitle = "每次回到管理器前台时静默检查一次核心更新状态。",
+                palette = palette,
+                trailing = {
+                    Switch(
+                        checked = coreUpdateForegroundEnabled,
+                        onCheckedChange = viewModel::setCoreUpdateForegroundEnabled,
+                    )
+                },
+            )
+            SettingsDivider(palette)
+            SettingsPlainRow(
+                title = "后台静默检查",
+                subtitle = "使用系统 WorkManager 周期任务，联网且电量不低时再执行。",
+                palette = palette,
+                trailing = {
+                    Switch(
+                        checked = coreUpdateBackgroundEnabled,
+                        onCheckedChange = viewModel::setCoreUpdateBackgroundEnabled,
+                    )
+                },
+            )
+            if (coreUpdateBackgroundEnabled) {
+                SettingsDivider(palette)
+                SettingsPanelHeader(
+                    title = "后台检查周期",
+                    subtitle = "系统最短支持 15 分钟；周期越短，联网与耗电越频繁。",
+                    palette = palette,
+                    trailing = {
+                        SettingsTag(
+                            text = formatSilentCoreUpdateIntervalLabel(coreUpdateBackgroundIntervalMinutes),
+                            palette = palette,
+                            tone = palette.warning,
+                        )
+                    },
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SILENT_CORE_UPDATE_BACKGROUND_INTERVAL_OPTIONS.forEach { minutes ->
+                        FilterChip(
+                            selected = coreUpdateBackgroundIntervalMinutes == minutes,
+                            onClick = { viewModel.setCoreUpdateBackgroundIntervalMinutes(minutes) },
+                            label = { Text(formatSilentCoreUpdateIntervalLabel(minutes)) },
+                        )
+                    }
+                }
+            }
         }
     }
 }
