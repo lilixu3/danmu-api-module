@@ -151,15 +151,11 @@ class DanmuRepository(
             return CoreUpdateInfo()
         }
 
+        val latestCommit = gitHubApi.getLatestCommit(core.repo, core.ref, token)
         val latestVersion = gitHubApi.getRemoteCoreVersion(
             repo = core.repo,
-            refOrSha = core.ref,
+            refOrSha = latestCommit?.sha?.takeIf { it.isNotBlank() } ?: core.ref,
         )
-        val latestCommit = token?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?.let { safeToken ->
-                gitHubApi.getLatestCommit(core.repo, core.ref, safeToken)
-            }
         val state = resolveCoreUpdateState(
             core = core,
             latestCommit = latestCommit,

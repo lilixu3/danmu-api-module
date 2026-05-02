@@ -101,6 +101,7 @@ fun OverviewScreen(
         val activeId = status?.activeCoreId ?: viewModel.cores?.activeCoreId
         viewModel.cores?.cores.orEmpty().firstOrNull { it.id == activeId }
     }
+    val activeUpdate = activeCore?.id?.let(viewModel.updateInfo::get)
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
 
     val localAccessUrl = remember(viewModel.apiPort, viewModel.apiToken) {
@@ -129,6 +130,7 @@ fun OverviewScreen(
         running,
         status?.service?.pid,
         activeCore?.version,
+        activeUpdate,
         liveElapsedSeconds,
     ) {
         OverviewRuntimeSummaryFormatter.buildItems(
@@ -136,6 +138,7 @@ fun OverviewScreen(
             pid = status?.service?.pid,
             coreVersion = activeCore?.version,
             elapsedSeconds = liveElapsedSeconds,
+            coreUpdateInfo = activeUpdate,
         )
     }
 
@@ -163,10 +166,14 @@ fun OverviewScreen(
         ),
         OverviewMetricSpec(
             label = "核心状态",
-            value = if (activeCore != null) "已加载" else "未加载",
+            value = when {
+                activeCore == null -> "未加载"
+                activeUpdate?.updateAvailable == true -> "可更新"
+                else -> "已加载"
+            },
             ringLabel = "核",
             progress = if (activeCore != null) 0.66f else 0.28f,
-            tone = Color(0xFFD97706),
+            tone = if (activeUpdate?.updateAvailable == true) colors.warning else Color(0xFFD97706),
         ),
     )
 

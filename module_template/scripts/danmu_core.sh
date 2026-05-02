@@ -408,6 +408,41 @@ ensure_core_config_link() {
   ln -s "${CFG_DIR}" "${root}/config" 2>/dev/null || true
 }
 
+ensure_core_node_modules_link() {
+  # Ensure each core code dir has node_modules near its realpath.
+  # Node resolves symlinked core files to /data/adb/danmu_api_server/cores/<id>/danmu_api,
+  # so package imports such as node-fetch must also be visible from that realpath.
+  cid="$1"
+  [ -n "${cid}" ] || return 0
+
+  root="$(core_dir_for "${cid}")"
+  [ -d "${root}" ] || return 0
+
+  deps="${MODDIR}/app/node_modules"
+  if [ ! -d "${deps}" ]; then
+    log "module node_modules missing: ${deps}"
+    return 0
+  fi
+
+  link="${root}/node_modules"
+  if [ -L "${link}" ]; then
+    current="$(readlink "${link}" 2>/dev/null || true)"
+    [ "${current}" = "${deps}" ] && return 0
+    rm -f "${link}" 2>/dev/null || true
+  elif [ -e "${link}" ]; then
+    # Do not delete a custom core's real node_modules; move it aside once.
+    bk="${root}/node_modules.bak.$(date +%s)"
+    if mv "${link}" "${bk}" 2>/dev/null; then
+      log "backed up per-core node_modules -> ${bk}"
+    else
+      log "cannot replace per-core node_modules: ${link}"
+      return 0
+    fi
+  fi
+
+  ln -s "${deps}" "${link}" 2>/dev/null || true
+}
+
 
 activate_core() {
   id="$1"
@@ -432,6 +467,7 @@ activate_core() {
   echo "${id}" > "${ACTIVE_FILE}" 2>/dev/null || true
 
   ensure_core_config_link "${id}" || true
+  ensure_core_node_modules_link "${id}" || true
 
   ensure_symlink_layout
 
@@ -570,13 +606,8 @@ resolve_sha() {
       printf '%s' ""
       return 0
       ;;
-    *[!0-9a-fA-F]* )
-      # branch / tag / symbolic ref: keep original ref, avoid GitHub API dependency
-      printf '%s' ""
-      return 0
-      ;;
     * )
-      if [ "${#ref}" -lt 7 ] || [ "${#ref}" -gt 40 ]; then
+      if [ "${#ref}" -gt 200 ]; then
         printf '%s' ""
         return 0
       fi
@@ -586,19 +617,16 @@ resolve_sha() {
   url="https://api.github.com/repos/${repo}/commits/${ref}"
   url="$(apply_proxy_url "${url}")"
 
-  # Optional token (to avoid rate limits)
-  auth_args=""
-  if [ -n "${DANMU_GH_TOKEN:-}" ]; then
-    auth_args="-H Authorization: token ${DANMU_GH_TOKEN}"
-  fi
-
   if ! have_cmd curl; then
     echo ""
     return 0
   fi
 
-  # shellcheck disable=SC2086
-  out="$(curl -fsSL -H 'User-Agent: danmu_api_manager' ${auth_args} "$url" 2>/dev/null || true)"
+  if [ -n "${DANMU_GH_TOKEN:-}" ]; then
+    out="$(curl -fsSL -H 'User-Agent: danmu_api_manager' -H "Authorization: token ${DANMU_GH_TOKEN}" "$url" 2>/dev/null || true)"
+  else
+    out="$(curl -fsSL -H 'User-Agent: danmu_api_manager' "$url" 2>/dev/null || true)"
+  fi
   sha="$(printf '%s' "$out" | grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-f]+' | head -n1 | sed -E 's/.*"sha"[[:space:]]*:[[:space:]]*"([0-9a-f]+).*/\1/' || true)"
   printf '%s' "${sha}"
 }
@@ -712,6 +740,7 @@ install_core() {
   fi
 
   patch_core_worker_logs "${dest_core}/worker.js" || true
+  ensure_core_node_modules_link "${id}" || true
 
   ver="$(read_version_from_globals "${dest_core}")"
   installed="$(date '+%F %T')"
@@ -759,6 +788,7 @@ ensure_seed() {
   if [ -n "${active}" ] && [ -L "${CORE_LINK}" ]; then
     patch_core_worker_logs "$(core_dir_for "${active}")/worker.js" || true
     ensure_core_config_link "${active}" || true
+    ensure_core_node_modules_link "${active}" || true
     ensure_symlink_layout
     return 0
   fi

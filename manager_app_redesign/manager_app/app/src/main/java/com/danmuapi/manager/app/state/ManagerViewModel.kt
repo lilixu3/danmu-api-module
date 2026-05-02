@@ -527,8 +527,20 @@ class ManagerViewModel(
             updateInfo = results
             val updateCount = results.values.count { it.updateAvailable }
             val unknownCount = results.values.count { it.state == CoreUpdateState.Unknown }
+            val activeId = cores?.activeCoreId ?: status?.activeCoreId
+            val activeUpdate = activeId?.let(results::get)
             snackbars.tryEmit(
                 when {
+                    activeUpdate?.updateAvailable == true -> {
+                        val latest = activeUpdate.latestVersion
+                            ?: activeUpdate.latestCommit?.sha?.take(7)
+                            ?: "新版本"
+                        if (updateCount > 1) {
+                            "当前核心可更新到 $latest，共 $updateCount 个核心可更新"
+                        } else {
+                            "当前核心可更新到 $latest"
+                        }
+                    }
                     updateCount > 0 && unknownCount > 0 -> "发现 $updateCount 个核心可更新，另有 $unknownCount 个状态未确认"
                     updateCount > 0 -> "发现 $updateCount 个核心可更新"
                     unknownCount > 0 -> "有 $unknownCount 个核心暂时无法确认是否最新"

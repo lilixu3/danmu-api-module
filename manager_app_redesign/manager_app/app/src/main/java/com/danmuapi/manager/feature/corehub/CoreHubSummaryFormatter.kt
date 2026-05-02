@@ -26,10 +26,17 @@ internal object CoreHubSummaryFormatter {
     }
 
     fun currentCoreMetaLine(core: CoreRecord?): String {
+        return currentCoreMetaLine(core = core, updateInfo = null)
+    }
+
+    fun currentCoreMetaLine(
+        core: CoreRecord?,
+        updateInfo: CoreUpdateInfo?,
+    ): String {
         if (core == null) return "安装后可在这里查看分支、版本和提交"
         return buildList {
             add(core.ref)
-            core.version?.takeIf { it.isNotBlank() }?.let(::add)
+            versionLabel(core, updateInfo).takeIf { it.isNotBlank() && it != "--" }?.let(::add)
             core.commitLabel?.takeIf { it.isNotBlank() }?.let(::add)
         }.joinToString(" · ")
     }
@@ -57,10 +64,57 @@ internal object CoreHubSummaryFormatter {
         }
     }
 
+    fun coreListStateBadge(
+        isActive: Boolean,
+        updateInfo: CoreUpdateInfo?,
+    ): String {
+        val updateAvailable = updateInfo?.updateAvailable == true
+        val updateUnknown = updateInfo != null && updateInfo.state == CoreUpdateState.Unknown
+        return when {
+            isActive && updateAvailable -> "当前 · 可更新"
+            updateAvailable -> "可更新"
+            isActive -> "当前"
+            updateUnknown -> "未确认"
+            else -> "已安装"
+        }
+    }
+
+    fun versionLabel(
+        core: CoreRecord?,
+        updateInfo: CoreUpdateInfo?,
+    ): String {
+        if (core == null) return "等待安装"
+        val current = core.version?.takeIf { it.isNotBlank() }
+            ?: core.commitLabel?.takeIf { it.isNotBlank() }
+            ?: "--"
+        if (updateInfo?.updateAvailable != true) return current
+
+        val latest = updateInfo.latestVersion?.takeIf { it.isNotBlank() }
+            ?: updateInfo.latestCommit?.sha?.takeIf { it.isNotBlank() }?.take(7)
+            ?: "新版本"
+        return if (latest == current) {
+            "$current ↑ 新版本"
+        } else {
+            "$current ↑ $latest"
+        }
+    }
+
+    fun displayCommitLabel(
+        core: CoreRecord,
+        updateInfo: CoreUpdateInfo?,
+    ): String {
+        core.commitLabel?.takeIf { it.isNotBlank() }?.let { return it }
+        if (updateInfo?.state == CoreUpdateState.UpToDate && updateInfo.latestCommit?.sha?.isNotBlank() == true) {
+            return updateInfo.latestCommit.sha.take(7)
+        }
+        updateInfo?.currentCommit?.takeIf { it.isNotBlank() }?.let { return it }
+        return "提交未知"
+    }
+
     fun detailQuickStats(core: CoreRecord): List<CoreDetailQuickStat> {
         return listOf(
             CoreDetailQuickStat("分支", core.ref.ifBlank { "--" }),
-            CoreDetailQuickStat("提交", core.commitLabel ?: "--"),
+            CoreDetailQuickStat("提交", displayCommitLabel(core, updateInfo = null)),
             CoreDetailQuickStat("大小", core.sizeBytes?.formatSizeLabel() ?: "--"),
         )
     }

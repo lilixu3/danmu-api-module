@@ -1,5 +1,6 @@
 package com.danmuapi.manager.feature.overview
 
+import com.danmuapi.manager.core.model.CoreUpdateInfo
 import java.util.Locale
 
 internal data class OverviewRuntimeSummaryItem(
@@ -13,6 +14,7 @@ internal object OverviewRuntimeSummaryFormatter {
         pid: String?,
         coreVersion: String?,
         elapsedSeconds: Long?,
+        coreUpdateInfo: CoreUpdateInfo? = null,
     ): List<OverviewRuntimeSummaryItem> {
         return listOf(
             OverviewRuntimeSummaryItem(
@@ -25,7 +27,7 @@ internal object OverviewRuntimeSummaryFormatter {
             ),
             OverviewRuntimeSummaryItem(
                 label = "核心版本",
-                value = coreVersion?.takeIf { it.isNotBlank() } ?: "--",
+                value = coreVersionLabel(coreVersion, coreUpdateInfo),
             ),
             OverviewRuntimeSummaryItem(
                 label = "运行时间",
@@ -36,6 +38,22 @@ internal object OverviewRuntimeSummaryFormatter {
                 },
             ),
         )
+    }
+
+    private fun coreVersionLabel(
+        coreVersion: String?,
+        coreUpdateInfo: CoreUpdateInfo?,
+    ): String {
+        val current = coreVersion?.takeIf { it.isNotBlank() } ?: "--"
+        if (coreUpdateInfo?.updateAvailable != true) return current
+        val latest = coreUpdateInfo.latestVersion?.takeIf { it.isNotBlank() }
+            ?: coreUpdateInfo.latestCommit?.sha?.takeIf { it.isNotBlank() }?.take(7)
+            ?: "新版本"
+        return if (current == latest) {
+            "$current ↑ 新版本"
+        } else {
+            "$current ↑ $latest"
+        }
     }
 
     fun formatElapsedSeconds(seconds: Long): String {

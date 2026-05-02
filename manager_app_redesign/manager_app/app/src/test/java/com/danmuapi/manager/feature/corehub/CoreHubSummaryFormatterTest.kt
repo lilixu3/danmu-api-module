@@ -41,6 +41,29 @@ class CoreHubSummaryFormatterTest {
     }
 
     @Test
+    fun currentCoreMetaLineShowsUpdateTargetWhenAvailable() {
+        val core = CoreRecord(
+            id = "active",
+            repo = "lilixu3/danmu_api",
+            ref = "main",
+            version = "v1.6.12",
+            shaShort = "8f23d9a",
+        )
+
+        val summary = CoreHubSummaryFormatter.currentCoreMetaLine(
+            core = core,
+            updateInfo = CoreUpdateInfo(
+                latestCommit = LatestCommitInfo(sha = "1234567abcdef"),
+                latestVersion = "v1.6.14",
+                updateAvailable = true,
+                state = CoreUpdateState.UpdateAvailable,
+            ),
+        )
+
+        assertEquals("main · v1.6.12 ↑ v1.6.14 · 8f23d9a", summary)
+    }
+
+    @Test
     fun currentStateBadgeUsesUpdateWhenAvailable() {
         val badge = CoreHubSummaryFormatter.currentStateBadge(
             core = CoreRecord(id = "active", repo = "lilixu3/danmu_api", ref = "main"),
@@ -53,6 +76,43 @@ class CoreHubSummaryFormatterTest {
         )
 
         assertEquals("可更新", badge)
+    }
+
+    @Test
+    fun activeCoreListBadgeKeepsCurrentAndUpdateSignal() {
+        val badge = CoreHubSummaryFormatter.coreListStateBadge(
+            isActive = true,
+            updateInfo = CoreUpdateInfo(
+                latestCommit = LatestCommitInfo(sha = "1234567abcdef"),
+                latestVersion = "v1.6.14",
+                updateAvailable = true,
+                state = CoreUpdateState.UpdateAvailable,
+            ),
+        )
+
+        assertEquals("当前 · 可更新", badge)
+    }
+
+    @Test
+    fun versionLabelShowsCurrentAndLatestVersionWhenUpdateAvailable() {
+        val core = CoreRecord(
+            id = "active",
+            repo = "lilixu3/danmu_api",
+            ref = "main",
+            version = "v1.6.12",
+        )
+
+        val label = CoreHubSummaryFormatter.versionLabel(
+            core = core,
+            updateInfo = CoreUpdateInfo(
+                latestCommit = LatestCommitInfo(sha = "1234567abcdef"),
+                latestVersion = "v1.6.14",
+                updateAvailable = true,
+                state = CoreUpdateState.UpdateAvailable,
+            ),
+        )
+
+        assertEquals("v1.6.12 ↑ v1.6.14", label)
     }
 
     @Test
@@ -81,5 +141,25 @@ class CoreHubSummaryFormatterTest {
         assertEquals("main", stats[0].value)
         assertEquals("8f23d9a", stats[1].value)
         assertFalse(stats[2].value.isBlank())
+    }
+
+    @Test
+    fun commitLabelFallsBackToLatestCommitWhenCoreIsUpToDateButLocalShaMissing() {
+        val label = CoreHubSummaryFormatter.displayCommitLabel(
+            core = CoreRecord(
+                id = "active",
+                repo = "huangxd-/danmu_api",
+                ref = "main",
+                version = "v1.6.14",
+            ),
+            updateInfo = CoreUpdateInfo(
+                latestCommit = LatestCommitInfo(sha = "1234567abcdef"),
+                latestVersion = "v1.6.14",
+                updateAvailable = false,
+                state = CoreUpdateState.UpToDate,
+            ),
+        )
+
+        assertEquals("1234567", label)
     }
 }

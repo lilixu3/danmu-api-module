@@ -14,9 +14,6 @@ const __dirname = path.dirname(__filename);
 const HOME = process.env.DANMU_API_HOME || __dirname;
 const CONFIG_DIR = process.env.DANMU_API_CONFIG_DIR || path.join(HOME, 'config');
 
-const HOST = process.env.DANMU_API_HOST || '0.0.0.0';
-const PORT = Number(process.env.DANMU_API_PORT || 9321);
-const PROXY_PORT = Number(process.env.DANMU_API_PROXY_PORT || 5321);
 let managedEnvKeys = new Set();
 
 function log(...args) {
@@ -51,6 +48,25 @@ function applyEnv(kv, { override = true } = {}) {
     if (!override && process.env[k] !== undefined) continue;
     process.env[k] = v;
   }
+}
+
+function readPort(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    log(`Invalid ${name}=${raw}, using ${fallback}`);
+    return fallback;
+  }
+  return port;
+}
+
+function readListenConfig() {
+  return {
+    host: process.env.DANMU_API_HOST || '0.0.0.0',
+    port: readPort('DANMU_API_PORT', 9321),
+    proxyPort: readPort('DANMU_API_PROXY_PORT', 5321),
+  };
 }
 
 function loadConfigOnce() {
@@ -160,10 +176,10 @@ async function readRequestBody(req) {
   });
 }
 
-function createMainServer() {
+function createMainServer(port) {
   const server = http.createServer(async (req, res) => {
     try {
-      const host = req.headers.host || `127.0.0.1:${PORT}`;
+      const host = req.headers.host || `127.0.0.1:${port}`;
       const fullUrl = new URL(req.url || '/', `http://${host}`);
 
       // Build headers (Node gives lower-cased keys)
@@ -298,21 +314,22 @@ async function main() {
   ensureDirs();
   loadConfigOnce();
   watchConfigs();
+  const { host, port, proxyPort } = readListenConfig();
 
-  const mainServer = createMainServer();
+  const mainServer = createMainServer(port);
   const proxyServer = createProxyServer();
 
   await new Promise((resolve, reject) => {
-    mainServer.listen(PORT, HOST, () => {
-      log(`Main server listening on http://${HOST}:${PORT}`);
+    mainServer.listen(port, host, () => {
+      log(`Main server listening on http://${host}:${port}`);
       resolve();
     });
     mainServer.on('error', reject);
   });
 
   await new Promise((resolve, reject) => {
-    proxyServer.listen(PROXY_PORT, HOST, () => {
-      log(`Proxy server listening on http://${HOST}:${PROXY_PORT}/proxy?url=...`);
+    proxyServer.listen(proxyPort, host, () => {
+      log(`Proxy server listening on http://${host}:${proxyPort}/proxy?url=...`);
       resolve();
     });
     proxyServer.on('error', reject);

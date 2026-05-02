@@ -4,7 +4,7 @@
 #
 # Runtime notes:
 # - Core service logs stay in memory and are exposed via /api/logs
-# - Do not mirror service stdout/stderr into local files
+# - Startup stdout/stderr is kept in logs/startup.log for fatal boot errors
 set -u
 
 # Module id
@@ -25,6 +25,7 @@ fi
 PERSIST="/data/adb/danmu_api_server"
 LOGDIR="$PERSIST/logs"
 PIDFILE="$PERSIST/danmu_api.pid"
+STARTUP_LOG="$LOGDIR/startup.log"
 
 NODE_HOME="$MODDIR/node"
 MODULE_NODE="$NODE_HOME/bin/node"
@@ -43,6 +44,11 @@ cleanup_legacy_service_logs() {
     "$PERSIST/nohup.out" \
     "$MODDIR/app/nohup.out" \
     2>/dev/null || true
+}
+
+reset_startup_log() {
+  : > "$STARTUP_LOG" 2>/dev/null || true
+  chmod 600 "$STARTUP_LOG" 2>/dev/null || true
 }
 
 ensure_bundled_libcxx() {
@@ -189,9 +195,15 @@ do_start() {
   export NODE_ENV=production
 
   cleanup_legacy_service_logs
+  reset_startup_log
 
   log "starting (node=$NODE_BIN, entry=$APP_ENTRY)"
-  nohup "$NODE_BIN" "$APP_ENTRY" </dev/null >/dev/null 2>&1 &
+  {
+    echo "===== $(date '+%F %T' 2>/dev/null || echo start) ====="
+    echo "node=$NODE_BIN"
+    echo "entry=$APP_ENTRY"
+  } >>"$STARTUP_LOG" 2>/dev/null || true
+  nohup "$NODE_BIN" "$APP_ENTRY" </dev/null >>"$STARTUP_LOG" 2>&1 &
   echo $! > "$PIDFILE"
   return 0
 }

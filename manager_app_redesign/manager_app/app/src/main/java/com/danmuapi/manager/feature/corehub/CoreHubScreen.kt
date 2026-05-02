@@ -204,6 +204,7 @@ fun CoreHubScreen(
                     CoreHubHeader(
                         subtitle = CoreHubSummaryFormatter.headerSubtitle(activeCore, allCores.size),
                         updateCount = updateCount,
+                        activeHasUpdate = activeUpdate?.updateAvailable == true,
                         colors = colors,
                     )
 
@@ -468,6 +469,7 @@ fun CoreDetailScreen(
 private fun CoreHubHeader(
     subtitle: String,
     updateCount: Int,
+    activeHasUpdate: Boolean,
     colors: CoreHubColors,
 ) {
     Row(
@@ -499,7 +501,11 @@ private fun CoreHubHeader(
             )
         }
         HubStatusPill(
-            text = if (updateCount > 0) "$updateCount 个可更新" else "已对齐",
+            text = when {
+                activeHasUpdate -> "当前可更新 · 共 $updateCount 个"
+                updateCount > 0 -> "$updateCount 个可更新"
+                else -> "已对齐"
+            },
             toneColor = if (updateCount > 0) colors.warning else colors.positive,
             containerColor = if (updateCount > 0) colors.warningContainer else colors.positiveContainer,
         )
@@ -583,8 +589,10 @@ private fun CurrentCoreHeroCard(
     val updateUnknown = updateInfo != null && updateInfo.state == CoreUpdateState.Unknown
     val primaryLabel = CoreHubSummaryFormatter.primaryActionLabel(core, updateInfo)
     val title = core?.repoDisplayName ?: "还没有活动核心"
-    val subtitle = CoreHubSummaryFormatter.currentCoreMetaLine(core)
+    val subtitle = CoreHubSummaryFormatter.currentCoreMetaLine(core, updateInfo)
     val stateText = CoreHubSummaryFormatter.currentStateBadge(core, updateInfo)
+    val heroTone = if (updateAvailable) colors.warning else colors.accent
+    val heroToneContainer = if (updateAvailable) colors.warningContainer else colors.accentContainer
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -593,7 +601,7 @@ private fun CurrentCoreHeroCard(
         },
         shape = RoundedCornerShape(26.dp),
         color = colors.cardStrong,
-        border = BorderStroke(1.dp, colors.cardBorder),
+        border = BorderStroke(1.dp, if (updateAvailable) colors.warning.copy(alpha = 0.24f) else colors.cardBorder),
         shadowElevation = 0.dp,
     ) {
         Column(
@@ -602,7 +610,7 @@ private fun CurrentCoreHeroCard(
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            colors.accentContainer.copy(alpha = 0.28f),
+                            heroToneContainer.copy(alpha = if (updateAvailable) 0.44f else 0.28f),
                             colors.cardStrong,
                         ),
                     ),
@@ -625,8 +633,8 @@ private fun CurrentCoreHeroCard(
                     modifier = Modifier
                         .size(12.dp)
                         .clip(CircleShape)
-                        .background(colors.accent)
-                        .border(4.dp, colors.accent.copy(alpha = 0.12f), CircleShape),
+                        .background(heroTone)
+                        .border(4.dp, heroTone.copy(alpha = 0.12f), CircleShape),
                 )
                 Column(
                     modifier = Modifier.weight(1f),
@@ -1064,15 +1072,14 @@ private fun CoreListRow(
     onClick: () -> Unit,
 ) {
     val updateAvailable = updateInfo?.updateAvailable == true
-    val updateUnknown = updateInfo != null && updateInfo.state == CoreUpdateState.Unknown
     val rowColor = when {
-        isActive -> colors.accentContainer.copy(alpha = 0.56f)
         updateAvailable -> colors.warningContainer.copy(alpha = 0.72f)
+        isActive -> colors.accentContainer.copy(alpha = 0.56f)
         else -> colors.cardMuted
     }
     val borderColor = when {
-        isActive -> colors.accent.copy(alpha = 0.12f)
         updateAvailable -> colors.warning.copy(alpha = 0.12f)
+        isActive -> colors.accent.copy(alpha = 0.12f)
         else -> colors.cardBorder
     }
 
@@ -1103,7 +1110,7 @@ private fun CoreListRow(
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = "${core.ref} · ${buildVersionLabel(core, updateInfo = null)}",
+                text = "${core.ref} · ${CoreHubSummaryFormatter.versionLabel(core, updateInfo)}",
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
@@ -1119,20 +1126,15 @@ private fun CoreListRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             StateBadge(
-                text = when {
-                    isActive -> "当前"
-                    updateAvailable -> "可更新"
-                    updateUnknown -> "未确认"
-                    else -> "已安装"
-                },
+                text = CoreHubSummaryFormatter.coreListStateBadge(isActive, updateInfo),
                 color = when {
-                    isActive -> colors.accent
                     updateAvailable -> colors.warning
+                    isActive -> colors.accent
                     else -> colors.subtleText
                 },
                 container = when {
-                    isActive -> colors.accentContainer
                     updateAvailable -> colors.warningContainer
+                    isActive -> colors.accentContainer
                     else -> colors.chip
                 },
             )
@@ -1372,6 +1374,7 @@ private fun CoreDetailSummaryCard(
                 }
                 StateBadge(
                     text = when {
+                        isActive && updateInfo?.updateAvailable == true -> "当前 · 可更新"
                         updateInfo?.updateAvailable == true -> "可更新"
                         updateInfo?.state == CoreUpdateState.Unknown -> "未确认"
                         isActive -> "当前"
@@ -1408,7 +1411,10 @@ private fun CoreDetailSummaryCard(
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
                     )
                     Text(
-                        text = buildRollbackCurrentHint(core.version, core.commitLabel),
+                        text = buildRollbackCurrentHint(
+                            core.version,
+                            CoreHubSummaryFormatter.displayCommitLabel(core, updateInfo),
+                        ),
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
                         color = colors.subtleText,
                     )
@@ -1502,7 +1508,7 @@ private fun CoreInfoCard(
                 leftTitle = "版本",
                 leftValue = core.version ?: "--",
                 rightTitle = "提交",
-                rightValue = core.commitLabel ?: "--",
+                rightValue = CoreHubSummaryFormatter.displayCommitLabel(core, updateInfo),
                 colors = colors,
                 rightMonospace = true,
             )
@@ -2071,22 +2077,6 @@ private fun CoreDetailActionButton(
 @Composable
 private fun rememberCoreHubColors(): CoreHubColors {
     return rememberImmersivePalette()
-}
-
-private fun buildVersionLabel(core: CoreRecord?, updateInfo: CoreUpdateInfo?): String {
-    if (core == null) return "等待安装"
-    return when {
-        updateInfo?.updateAvailable == true -> {
-            updateInfo.latestVersion
-                ?: updateInfo.latestCommit?.sha?.take(7)
-                ?: core.version
-                ?: core.commitLabel
-                ?: "--"
-        }
-        !core.version.isNullOrBlank() -> core.version
-        !core.commitLabel.isNullOrBlank() -> core.commitLabel.orEmpty()
-        else -> "--"
-    }
 }
 
 private fun buildUpdateStatusLabel(updateInfo: CoreUpdateInfo?): String {
