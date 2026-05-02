@@ -38,12 +38,36 @@ if (pkg.type !== 'module') {
   fail('module_template/app/package.json must declare "type": "module"');
 }
 
-for (const name of ['node-fetch', 'pako', 'redis']) {
+const requiredRuntimeDeps = [
+  'chokidar',
+  'dotenv',
+  'esbuild',
+  'https-proxy-agent',
+  'node-fetch',
+  'pako',
+];
+
+for (const name of requiredRuntimeDeps) {
   if (!deps[name]) {
     fail(`module_template/app/package.json missing dependency: ${name}`);
   }
   if (!fs.existsSync(path.join(appDir, 'node_modules', name, 'package.json'))) {
     fail(`module_template/app/node_modules missing installed package: ${name}`);
+  }
+}
+
+for (const name of ['redis']) {
+  if (deps[name]) {
+    fail(`module_template/app/package.json should not include optional heavy dependency in default bundle: ${name}`);
+  }
+  if (fs.existsSync(path.join(appDir, 'node_modules', name))) {
+    fail(`module_template/app/node_modules should not vendor optional heavy package by default: ${name}`);
+  }
+}
+
+for (const name of ['@redis', 'cluster-key-slot']) {
+  if (fs.existsSync(path.join(appDir, 'node_modules', name))) {
+    fail(`module_template/app/node_modules should not vendor optional redis transitive package by default: ${name}`);
   }
 }
 NODE
