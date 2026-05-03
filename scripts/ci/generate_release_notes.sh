@@ -63,11 +63,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -n "$previous_tag" ]; then
-  git -C "$REPO_ROOT" log --no-merges --pretty=format:'- %s' "$range" > "$update_list_file"
-else
-  git -C "$REPO_ROOT" log --no-merges --pretty=format:'- %s' HEAD > "$update_list_file"
-fi
+while IFS= read -r commit_hash; do
+  subject="$(git -C "$REPO_ROOT" log -1 --format=%s "$commit_hash")"
+  body="$(git -C "$REPO_ROOT" log -1 --format=%b "$commit_hash")"
+
+  printf -- "- %s\n" "$subject"
+  if [ -n "$body" ]; then
+    printf "%s\n" "$body" | sed 's/^/  /'
+  fi
+done < <(git -C "$REPO_ROOT" log --no-merges --format=%H "$range") > "$update_list_file"
 
 {
   echo "## 本次更新"
