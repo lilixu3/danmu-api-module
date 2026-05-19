@@ -15,6 +15,7 @@ import com.danmuapi.manager.core.data.DanmuRepository
 import com.danmuapi.manager.core.data.SilentCoreUpdateTrigger
 import com.danmuapi.manager.core.data.SettingsRepository
 import com.danmuapi.manager.core.data.formatSilentCoreUpdateIntervalLabel
+import com.danmuapi.manager.core.data.resolveInstalledCoreUpdateInfo
 import com.danmuapi.manager.core.data.network.DanmuApiClient
 import com.danmuapi.manager.core.data.network.HttpResult
 import com.danmuapi.manager.core.data.network.WebDavClient
@@ -25,6 +26,7 @@ import com.danmuapi.manager.core.model.ApiDebugPresetCatalog
 import com.danmuapi.manager.core.model.ApiTestAnimeItem
 import com.danmuapi.manager.core.model.ApiTestEpisodeItem
 import com.danmuapi.manager.core.model.CoreCatalog
+import com.danmuapi.manager.core.model.CoreRecord
 import com.danmuapi.manager.core.model.CoreUpdateInfo
 import com.danmuapi.manager.core.model.CoreUpdateState
 import com.danmuapi.manager.core.model.DanmuPreviewItem
@@ -364,6 +366,9 @@ class ManagerViewModel(
             val ok = withBusy("下载并安装核心中…") {
                 val installed = repository.installCore(repoText, refText)
                 refreshAllInternal()
+                if (installed) {
+                    markInstalledActiveCoreUpToDate()
+                }
                 installed
             }
             snackbars.tryEmit(if (ok) "核心已安装" else "核心安装失败")
@@ -452,6 +457,9 @@ class ManagerViewModel(
             val ok = withBusy("回退核心中…") {
                 val installed = repository.installCore(core.repo, commitSha)
                 refreshAllInternal()
+                if (installed) {
+                    markInstalledActiveCoreUpToDate()
+                }
                 installed
             }
             snackbars.tryEmit(if (ok) "回退版本已安装，请切换到新核心" else "回退失败")
@@ -1596,6 +1604,21 @@ class ManagerViewModel(
     private suspend fun persistCoreUpdateCache(snapshot: Map<String, CoreUpdateInfo>) {
         settings.setCachedCoreUpdateInfo(snapshot)
         settings.setLastSilentCoreUpdateCheckAt(System.currentTimeMillis())
+    }
+
+    private fun currentActiveCore(): CoreRecord? {
+        val activeId = cores?.activeCoreId ?: status?.activeCoreId
+        return activeId
+            ?.let { id -> cores?.cores.orEmpty().firstOrNull { it.id == id } }
+            ?: status?.activeCore
+    }
+
+    private suspend fun markInstalledActiveCoreUpToDate() {
+        val core = currentActiveCore() ?: return
+        updateInfo = updateInfo.toMutableMap().apply {
+            put(core.id, resolveInstalledCoreUpdateInfo(core))
+        }
+        persistCoreUpdateCache(updateInfo)
     }
 
     private fun clearRootBackedState() {

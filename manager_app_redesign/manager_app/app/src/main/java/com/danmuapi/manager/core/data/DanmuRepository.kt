@@ -70,6 +70,25 @@ internal fun resolveCoreUpdateState(
     return CoreUpdateState.Unknown
 }
 
+internal fun resolveInstalledCoreUpdateInfo(core: CoreRecord): CoreUpdateInfo {
+    val localSha = core.sha?.trim()?.takeIf { it.isNotBlank() }
+    val localVersion = core.version?.trim()?.takeIf { it.isNotBlank() }
+    val state = if (localSha != null || localVersion != null) {
+        CoreUpdateState.UpToDate
+    } else {
+        CoreUpdateState.Unknown
+    }
+
+    return CoreUpdateInfo(
+        latestCommit = localSha?.let(::LatestCommitInfo),
+        latestVersion = localVersion,
+        updateAvailable = false,
+        state = state,
+        currentVersion = localVersion,
+        currentCommit = core.commitLabel,
+    )
+}
+
 class DanmuRepository(
     private val cli: DanmuCli = DanmuCli(),
     private val gitHubApi: GitHubApi = GitHubApi(),

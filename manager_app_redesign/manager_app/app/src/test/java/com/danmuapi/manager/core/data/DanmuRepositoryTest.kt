@@ -112,6 +112,27 @@ class DanmuRepositoryTest {
     }
 
     @Test
+    fun `installed core update info marks refreshed metadata as up to date`() {
+        val info = resolveInstalledCoreUpdateInfo(
+            CoreRecord(
+                id = "lilixu3_danmu_api_main_aaaaaaaa",
+                repo = "lilixu3/danmu_api",
+                ref = "main",
+                sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                shaShort = "aaaaaaa",
+                version = "1.18.4",
+            ),
+        )
+
+        assertEquals(CoreUpdateState.UpToDate, info.state)
+        assertFalse(info.updateAvailable)
+        assertEquals("1.18.4", info.currentVersion)
+        assertEquals("aaaaaaa", info.currentCommit)
+        assertEquals("1.18.4", info.latestVersion)
+        assertEquals("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", info.latestCommit?.sha)
+    }
+
+    @Test
     fun `rollback commit item exposes fallback labels`() {
         val item = RollbackCommitItem(
             sha = "1234567890abcdef",
