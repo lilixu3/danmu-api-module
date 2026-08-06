@@ -62,7 +62,8 @@ jobs:
         run: sh scripts/ci/test_runtime_dependency_shell.sh
 
       - name: Node pinning & lockfile contract tests
-        run: sh scripts/ci/test_build_node_pinning.sh
+        # 脚本使用 pipefail/BASH_SOURCE/source，必须以 Bash 执行；ubuntu-latest 的 sh 是 dash。
+        run: bash scripts/ci/test_build_node_pinning.sh
 
       - name: Runtime pack fetch contract tests
         run: sh scripts/ci/test_fetch_runtime_deps.sh
