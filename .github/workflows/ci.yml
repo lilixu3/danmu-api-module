@@ -52,6 +52,12 @@ jobs:
           chmod +x scripts/ci/*.sh
           chmod +x manager_app_redesign/manager_app/gradlew
 
+      - name: Check runtime dependency lockfile contract
+        run: ./scripts/ci/check_runtime_lockfile.sh
+
+      - name: Check module runtime contract
+        run: ./scripts/ci/check_module_runtime_contract.sh
+
       - name: Build manager debug
         run: ./scripts/ci/build_manager.sh --variant debug
 

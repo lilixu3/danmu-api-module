@@ -389,6 +389,21 @@ copy_template() {
   rsync -a --delete "$MODULE_TEMPLATE_DIR/" "$target/"
 }
 
+verify_runtime_closure() {
+  # 打包前必须校验：锁文件与 package.json 一致、vendor 树包含锁文件声明的包。
+  # 引导依赖树由 scripts/ci/prune_runtime_deps.py 从完整闭包生成，任何漂移都应失败。
+  local app_dir="$MODULE_TEMPLATE_DIR/app"
+  [ -f "$app_dir/package-lock.json" ] || {
+    echo "缺少运行时锁文件: $app_dir/package-lock.json（请先执行 npm ci 并运行 prune_runtime_deps.py）" >&2
+    exit 1
+  }
+  sh "$SCRIPT_DIR/check_runtime_lockfile.sh" "$REPO_ROOT" >/dev/null 2>&1 || {
+    echo "运行时依赖锁文件契约校验失败（check_runtime_lockfile.sh）" >&2
+    sh "$SCRIPT_DIR/check_runtime_lockfile.sh" "$REPO_ROOT" 2>&1 >&2 || true
+    exit 1
+  }
+}
+
 patch_package_json_version() {
   local package_json="$1"
   local new_version="$2"
@@ -466,6 +481,7 @@ build_variant() {
   local build_time_utc
   build_time_utc="$(date -u +%FT%TZ)"
 
+  verify_runtime_closure
   copy_template "$module_root"
   prepare_module_root "$module_root" "$build_time_utc"
 
