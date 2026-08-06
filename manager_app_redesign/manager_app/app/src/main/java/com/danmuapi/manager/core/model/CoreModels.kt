@@ -37,6 +37,18 @@ data class CoreUpdateInfo(
     val currentCommit: String? = null,
 )
 
+/** 核心激活被依赖门禁阻断时 CLI 输出的结构化信息 */
+data class CoreDependencyRepairRequired(
+    val core: String = "",
+    val missing: List<String> = emptyList(),
+    val incompatible: List<String> = emptyList(),
+    val conditional: List<String> = emptyList(),
+    val skipped: String? = null,
+) {
+    val allNames: List<String>
+        get() = (missing + incompatible + conditional).distinct()
+}
+
 enum class CoreUpdateState {
     Unknown,
     UpToDate,

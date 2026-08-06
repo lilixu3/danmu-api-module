@@ -36,7 +36,43 @@ PIDFILE="${PERSIST}/danmu_api.pid"
 FLAG_AUTOSTART_NEW="${PERSIST}/autostart.disabled"
 FLAG_AUTOSTART_OLD="${PERSIST}/service.disabled"  # legacy
 
+# 测试注入：仅 CORE_DANMU_TEST_MODE=1 时允许覆盖持久路径/二进制。
+# 防止生产 su 调用方通过同名环境变量重定向 root 文件操作。
+CORE_DANMU_TEST_MODE="${CORE_DANMU_TEST_MODE:-0}"
+if [ "${CORE_DANMU_TEST_MODE}" = "1" ]; then
+  if [ -n "${CORE_DANMU_TEST_PERSIST:-}" ]; then
+    PERSIST="${CORE_DANMU_TEST_PERSIST}"
+    CFG_DIR="${PERSIST}/config"
+    CORES_DIR="${PERSIST}/cores"
+    CORE_LINK="${PERSIST}/core"
+    ACTIVE_FILE="${PERSIST}/active_core_id"
+    TMP_DIR="${PERSIST}/tmp"
+    LOGDIR="${PERSIST}/logs"
+    DOWNLOAD_CONF="${PERSIST}/core_download.conf"
+    PIDFILE="${PERSIST}/danmu_api.pid"
+    FLAG_AUTOSTART_NEW="${PERSIST}/autostart.disabled"
+    FLAG_AUTOSTART_OLD="${PERSIST}/service.disabled"
+  fi
+  if [ -n "${CORE_DANMU_TEST_MODDIR:-}" ]; then
+    MODDIR="${CORE_DANMU_TEST_MODDIR}"
+  fi
+  if [ -n "${CORE_DANMU_TEST_NODE:-}" ]; then
+    MODULE_NODE_MODULES="${CORE_DANMU_TEST_NODE}"
+  fi
+  if [ -n "${CORE_DANMU_TEST_NODE_MODULES:-}" ]; then
+    MODULE_NODE_MODULES="${CORE_DANMU_TEST_NODE_MODULES}"
+  fi
+  if [ -n "${CORE_DANMU_TEST_NODE_BIN:-}" ]; then
+    TEST_NODE_BIN="${CORE_DANMU_TEST_NODE_BIN}"
+  fi
+  if [ -n "${CORE_DANMU_TEST_RUNTIME_DEPS:-}" ]; then
+    RUNTIME_DEPS_JS="${CORE_DANMU_TEST_RUNTIME_DEPS}"
+  fi
+fi
+
 mkdir -p "${PERSIST}" "${CFG_DIR}" "${CORES_DIR}" "${TMP_DIR}" "${LOGDIR}" 2>/dev/null || true
+
+DEPS_DIR="${PERSIST}/deps"
 
 # Prefer persistent scripts (survive module disable/update)
 CTRL="${PERSIST}/bin/danmu_control.sh"
@@ -418,7 +454,16 @@ ensure_core_node_modules_link() {
   root="$(core_dir_for "${cid}")"
   [ -d "${root}" ] || return 0
 
-  deps="${MODDIR}/app/node_modules"
+  # 优先使用持久化依赖目录（按 dependencyId），否则回退到模块内置 node_modules
+  deps="${MODULE_NODE_MODULES:-${MODDIR}/app/node_modules}"
+  if [ -n "${cid}" ]; then
+    mp="$(meta_path_for "${cid}")"
+    dep_id="$(read_meta_string "${mp}" "dependencyId" 2>/dev/null || true)"
+    if [ -n "${dep_id}" ] && [ -d "${DEPS_DIR}/${dep_id}/node_modules" ]; then
+      deps="${DEPS_DIR}/${dep_id}/node_modules"
+    fi
+  fi
+
   if [ ! -d "${deps}" ]; then
     log "module node_modules missing: ${deps}"
     return 0
@@ -427,7 +472,9 @@ ensure_core_node_modules_link() {
   link="${root}/node_modules"
   if [ -L "${link}" ]; then
     current="$(readlink "${link}" 2>/dev/null || true)"
-    [ "${current}" = "${deps}" ] && return 0
+    if [ "${current}" = "${deps}" ]; then
+      return 0
+    fi
     rm -f "${link}" 2>/dev/null || true
   elif [ -e "${link}" ]; then
     # Do not delete a custom core's real node_modules; move it aside once.
@@ -443,13 +490,364 @@ ensure_core_node_modules_link() {
   ln -s "${deps}" "${link}" 2>/dev/null || true
 }
 
+compute_dependency_id() {
+  # 以核心根 package-lock.json 的 sha256 作为依赖指纹（无锁文件时退化为 package.json）
+  local src="$1"
+  local id_file=""
+  if [ -f "${src}/package-lock.json" ]; then
+    id_file="${src}/package-lock.json"
+  elif [ -f "${src}/package.json" ]; then
+    id_file="${src}/package.json"
+  fi
+  [ -n "${id_file}" ] || { echo "unknown"; return 1; }
+  if have_cmd sha256sum; then
+    sha256sum "${id_file}" 2>/dev/null | awk '{print substr($1,1,16)}'
+  elif [ -n "${BB}" ] && "${BB}" sha256sum --help >/dev/null 2>&1; then
+    "${BB}" sha256sum "${id_file}" 2>/dev/null | awk '{print substr($1,1,16)}'
+  else
+    echo "unknown"
+    return 1
+  fi
+}
+
+core_dependency_fingerprint() {
+  # 输出核心依赖指纹（64 位 sha256）。算法与 runtime-packs 发布端一致：
+  # sha256(canonical_json(sorted(dependencies + optionalDependencies)))，其中
+  # canonical_json 为 JSON.stringify 的 sort_keys + separators=(",",":")，
+  # 与 App 的 RuntimeDependencyPackProtocol.dependencyFingerprint 完全等价。
+  # 输出: {"result":"ok","core":"<id>","fingerprint":"<sha256>"}
+  cid="$1"
+  core_root="$(core_dir_for "${cid}")"
+  pkg_file="${core_root}/package.json"
+  [ -f "${pkg_file}" ] || {
+    echo '{"result":"error","error":"package_json_missing"}'
+    return 1
+  }
+
+  if have_cmd node; then
+    node_bin="node"
+  elif [ -x "${MODDIR}/node/bin/node" ]; then
+    node_bin="${MODDIR}/node/bin/node"
+  elif [ -x "${PERSIST}/node/bin/node" ]; then
+    node_bin="${PERSIST}/node/bin/node"
+  else
+    node_bin=""
+  fi
+
+  fingerprint=""
+  if [ -n "${node_bin}" ]; then
+    fingerprint="$("${node_bin}" -e '
+      const fs = require("node:fs");
+      const crypto = require("node:crypto");
+      const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const deps = { ...(pkg.dependencies || {}), ...(pkg.optionalDependencies || {}) };
+      const canonical = JSON.stringify(deps, Object.keys(deps).sort());
+      process.stdout.write(crypto.createHash("sha256").update(canonical, "utf8").digest("hex"));
+    ' "${pkg_file}" 2>/dev/null || true)"
+  fi
+
+  if [ -z "${fingerprint}" ]; then
+    echo '{"result":"error","error":"fingerprint_compute_failed"}'
+    return 1
+  fi
+
+  printf '{"result":"ok","core":"%s","fingerprint":"%s"}\n' "$(json_escape "${cid}")" "${fingerprint}"
+  return 0
+}
+
+resolve_runtime_deps_js() {
+  # 显式指定的检查器路径必须真实存在；否则 fail closed
+  if [ -n "${RUNTIME_DEPS_JS:-}" ]; then
+    if [ -f "${RUNTIME_DEPS_JS}" ]; then
+      echo "${RUNTIME_DEPS_JS}"
+      return 0
+    fi
+    return 1
+  fi
+  if [ -f "${MODDIR}/app/runtime-deps.mjs" ]; then
+    echo "${MODDIR}/app/runtime-deps.mjs"
+    return 0
+  fi
+  return 1
+}
+
+check_core_dependencies() {
+  # 在激活/安装前检查核心依赖。healthy=0；缺失/不兼容=1 并输出 JSON 到 stdout。
+  # 输出: {"result":"dependency_repair_required","core":"<id>","missing":[...],"incompatible":[...],"conditional":[...]}
+  cid="$1"
+  core_root="$(core_dir_for "${cid}")"
+  [ -d "${core_root}" ] || { echo '{"result":"error","error":"core_not_found"}'; return 1; }
+
+  runtime_deps="$(resolve_runtime_deps_js)" || {
+    echo '{"result":"error","error":"runtime_deps_missing"}'
+    return 1
+  }
+
+  node_bin="${TEST_NODE_BIN:-}"
+  if [ -z "${node_bin}" ]; then
+    if have_cmd node; then
+      node_bin="node"
+    elif [ -x "${MODDIR}/node/bin/node" ]; then
+      node_bin="${MODDIR}/node/bin/node"
+    elif [ -x "${PERSIST}/node/bin/node" ]; then
+      node_bin="${PERSIST}/node/bin/node"
+    fi
+  fi
+  if [ -z "${node_bin}" ]; then
+    # 无 node 时无法精确检查；不阻断（no_node 变体由用户外部环境提供 node）
+    echo '{"result":"ok","skipped":"no_node_binary"}'
+    return 0
+  fi
+
+  # 先确保 node_modules 链接就位，再检查
+  ensure_core_node_modules_link "${cid}" || true
+  nm_dir=""
+  if [ -d "${core_root}/node_modules" ]; then
+    nm_dir="$(readlink "${core_root}/node_modules" 2>/dev/null || echo "${core_root}/node_modules")"
+  fi
+  [ -n "${nm_dir}" ] || nm_dir="${MODULE_NODE_MODULES:-${MODDIR}/app/node_modules}"
+
+  env_file=""
+  if [ -f "${CFG_DIR}/.env" ]; then
+    env_file="${CFG_DIR}/.env"
+  fi
+
+  if [ -n "${env_file}" ]; then
+    output="$("${node_bin}" "${runtime_deps}" inspect \
+      --core-root "${core_root}" \
+      --node-modules "${nm_dir}" \
+      --env-file "${env_file}" 2>/dev/null || true)"
+  else
+    output="$("${node_bin}" "${runtime_deps}" inspect \
+      --core-root "${core_root}" \
+      --node-modules "${nm_dir}" 2>/dev/null || true)"
+  fi
+  if [ -z "${output}" ]; then
+    # 检查器异常/不可解析：fail closed，拒绝激活（保持可用性需显式降级）
+    echo '{"result":"dependency_repair_required","core":"'$(json_escape "${cid}")'","missing":[],"incompatible":[],"conditional":[],"skipped":"inspect_failed"}'
+    return "${DEP_EXIT_CODE}"
+  fi
+
+  blocked="$(printf '%s' "${output}" | grep -o '"blocked":true' || true)"
+  if [ -n "${blocked}" ]; then
+    missing="$(printf '%s' "${output}" | grep -o '"missing":\[[^]]*\]' | head -n 1)"
+    incompatible="$(printf '%s' "${output}" | grep -o '"incompatible":\[[^]]*\]' | head -n 1)"
+    conditional="$(printf '%s' "${output}" | grep -o '"conditional":\[[^]]*\]' | head -n 1)"
+    printf '{"result":"dependency_repair_required","core":"%s",%s,%s,%s}\n' \
+      "$(json_escape "${cid}")" \
+      "${missing:-"\"missing\":[]"}" \
+      "${incompatible:-"\"incompatible\":[]"}" \
+      "${conditional:-"\"conditional\":[]"}"
+    return "${DEP_EXIT_CODE}"
+  fi
+
+  echo '{"result":"ok"}'
+  return 0
+}
+
+# 依赖阻断固定退出码（Manager 可识别）
+DEP_EXIT_CODE=78
+
+write_meta_dependency_id() {
+  # 使用模块实际 Node 原子更新 meta.json，避免依赖 Android 上未必存在的 python/jq。
+  mp="$1"
+  dep_id="$2"
+  node_bin="$3"
+  tmp_meta="${mp}.tmp.$$"
+
+  [ -f "${mp}" ] || return 1
+  if ! "${node_bin}" -e '
+    const fs = require("node:fs");
+    const [src, dst, dependencyId] = process.argv.slice(1);
+    const data = JSON.parse(fs.readFileSync(src, "utf8"));
+    data.dependencyId = dependencyId;
+    fs.writeFileSync(dst, `${JSON.stringify(data, null, 2)}\n`);
+  ' "${mp}" "${tmp_meta}" "${dep_id}" 2>/dev/null; then
+    rm -f "${tmp_meta}" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f "${tmp_meta}" "${mp}" 2>/dev/null; then
+    rm -f "${tmp_meta}" 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
+deps_install() {
+  # deps install <core-id> <source-node-modules> <dependency-id>
+  # source -> 同文件系统 staging -> 校验 -> live -> backup，失败恢复旧目录
+  cid="$1"
+  source_nm="$2"
+  dep_id="$3"
+
+  case "${dep_id}" in
+    ''|*[!A-Za-z0-9._-]*) echo '{"result":"error","error":"invalid_dependency_id"}'; return 2 ;;
+  esac
+
+  [ -d "${source_nm}" ] || { echo '{"result":"error","error":"source_missing"}'; return 1; }
+
+  core_root="$(core_dir_for "${cid}")"
+  [ -d "${core_root}" ] || { echo '{"result":"error","error":"core_not_found"}'; return 1; }
+
+  mkdir -p "${DEPS_DIR}" 2>/dev/null || true
+
+  target="${DEPS_DIR}/${dep_id}"
+  staging="${DEPS_DIR}/.staging-${dep_id}-$$-$(date +%s)"
+  backup="${DEPS_DIR}/.backup-${dep_id}-$$-$(date +%s)"
+
+  # 1) staging：在同一文件系统创建标准 deps/<id>/node_modules 布局
+  mkdir -p "${staging}" 2>/dev/null || {
+    echo '{"result":"error","error":"staging_failed"}'
+    return 1
+  }
+  if ! cp -a "${source_nm}" "${staging}/node_modules" 2>/dev/null; then
+    rm -rf "${staging}" 2>/dev/null || true
+    echo '{"result":"error","error":"staging_failed"}'
+    return 1
+  fi
+
+  # 2) 校验 staging（用 runtime-deps 检查核心依赖是否满足）
+  runtime_deps="$(resolve_runtime_deps_js)" || {
+    rm -rf "${staging}" 2>/dev/null || true
+    echo '{"result":"error","error":"runtime_deps_missing"}'
+    return 1
+  }
+  node_bin=""
+  if have_cmd node; then
+    node_bin="node"
+  elif [ -x "${MODDIR}/node/bin/node" ]; then
+    node_bin="${MODDIR}/node/bin/node"
+  elif [ -x "${PERSIST}/node/bin/node" ]; then
+    node_bin="${PERSIST}/node/bin/node"
+  fi
+
+  env_file=""
+  if [ -f "${CFG_DIR}/.env" ]; then
+    env_file="${CFG_DIR}/.env"
+  fi
+
+  if [ -z "${node_bin}" ]; then
+    rm -rf "${staging}" 2>/dev/null || true
+    echo '{"result":"error","error":"node_binary_missing"}'
+    return 1
+  fi
+
+  env_file=""
+  if [ -f "${CFG_DIR}/.env" ]; then
+    env_file="${CFG_DIR}/.env"
+  fi
+
+  if [ -n "${env_file}" ]; then
+    inspect_out="$("${node_bin}" -- "${runtime_deps}" inspect \
+      --core-root "${core_root}" \
+      --node-modules "${staging}/node_modules" \
+      --env-file "${env_file}" 2>/dev/null || true)"
+  else
+    inspect_out="$("${node_bin}" -- "${runtime_deps}" inspect \
+      --core-root "${core_root}" \
+      --node-modules "${staging}/node_modules" 2>/dev/null || true)"
+  fi
+  if [ -z "${inspect_out}" ]; then
+    rm -rf "${staging}" 2>/dev/null || true
+    echo '{"result":"error","error":"dependency_inspect_failed"}'
+    return 1
+  fi
+  if printf '%s' "${inspect_out}" | grep -q '"blocked":true'; then
+    rm -rf "${staging}" 2>/dev/null || true
+    printf '{"result":"error","error":"invalid_candidate","detail":%s}\n' "${inspect_out}"
+    return 1
+  fi
+
+  # 2b) staging 可导入性冒烟（node 存在且未显式禁用时）：版本正确但文件损坏的
+  # 候选会被真实 import 拒绝，避免损坏包进入 live 并删掉旧备份。
+  if [ "${CORE_DANMU_SMOKE_OFF:-0}" != "1" ]; then
+    smoke_status=0
+    "${node_bin}" -- "${runtime_deps}" smoke \
+      --core-root "${core_root}" \
+      --node-modules "${staging}/node_modules" >/dev/null 2>&1 || smoke_status=$?
+    if [ "${smoke_status}" -ne 0 ]; then
+      rm -rf "${staging}" 2>/dev/null || true
+      printf '{"result":"error","error":"smoke_failed","detail":"worker import 失败（exit %s）"}\n' "${smoke_status}"
+      return 1
+    fi
+  fi
+
+  # 3) 原子替换：先备份同指纹 live，再 staging -> live
+  mp="$(meta_path_for "${cid}")"
+  if [ ! -f "${mp}" ]; then
+    rm -rf "${staging}" 2>/dev/null || true
+    echo '{"result":"error","error":"core_meta_missing"}'
+    return 1
+  fi
+  meta_backup="${TMP_DIR}/meta-${cid}-$$.bak"
+  if ! cp -f "${mp}" "${meta_backup}" 2>/dev/null; then
+    rm -rf "${staging}" 2>/dev/null || true
+    echo '{"result":"error","error":"meta_backup_failed"}'
+    return 1
+  fi
+
+  if [ -e "${target}" ]; then
+    if ! mv "${target}" "${backup}" 2>/dev/null; then
+      rm -f "${meta_backup}" 2>/dev/null || true
+      rm -rf "${staging}" 2>/dev/null || true
+      echo '{"result":"error","error":"backup_failed"}'
+      return 1
+    fi
+  fi
+
+  if ! mv "${staging}" "${target}" 2>/dev/null; then
+    # 回滚依赖 live
+    rm -rf "${target}" 2>/dev/null || true
+    if [ -e "${backup}" ]; then
+      mv "${backup}" "${target}" 2>/dev/null || true
+    fi
+    rm -f "${meta_backup}" 2>/dev/null || true
+    echo '{"result":"error","error":"install_failed"}'
+    return 1
+  fi
+
+  # 4) 元数据和核心链接必须与 live 依赖一起提交；任一步失败都回滚
+  if ! write_meta_dependency_id "${mp}" "${dep_id}" "${node_bin}"; then
+    rm -rf "${target}" 2>/dev/null || true
+    if [ -e "${backup}" ]; then mv "${backup}" "${target}" 2>/dev/null || true; fi
+    mv -f "${meta_backup}" "${mp}" 2>/dev/null || true
+    echo '{"result":"error","error":"meta_update_failed"}'
+    return 1
+  fi
+
+  ensure_core_node_modules_link "${cid}" || true
+  link_target="$(readlink "${core_root}/node_modules" 2>/dev/null || true)"
+  if [ "${link_target}" != "${target}/node_modules" ]; then
+    rm -rf "${target}" 2>/dev/null || true
+    if [ -e "${backup}" ]; then mv "${backup}" "${target}" 2>/dev/null || true; fi
+    mv -f "${meta_backup}" "${mp}" 2>/dev/null || true
+    ensure_core_node_modules_link "${cid}" || true
+    echo '{"result":"error","error":"symlink_update_failed"}'
+    return 1
+  fi
+
+  rm -rf "${backup}" "${meta_backup}" 2>/dev/null || true
+  printf '{"result":"ok","dependencyId":"%s"}\n' "${dep_id}"
+  return 0
+}
+
 
 activate_core() {
   id="$1"
   cdir="$(core_dir_for "${id}")"
   if [ ! -d "${cdir}" ] || [ ! -f "${cdir}/worker.js" ]; then
-    echo "error=core_not_found"
+    echo '{"result":"error","error":"core_not_found"}'
     return 1
+  fi
+
+  # 依赖门禁：缺失/不兼容依赖时拒绝激活，保留现有 CORE_LINK 与运行中的服务。
+  # 必须透传 78；core_not_found/runtime_deps_missing 等普通错误保持 exit 1。
+  set +e
+  check_core_dependencies "${id}"
+  dependency_status=$?
+  set -e
+  if [ "${dependency_status}" -ne 0 ]; then
+    return "${dependency_status}"
   fi
 
   patch_core_worker_logs "${cdir}/worker.js" || true
@@ -551,17 +949,15 @@ download_file() {
 
   if have_cmd curl; then
     curl -fL --retry 3 --connect-timeout 10 --max-time 600 "$url" -o "$out" >/dev/null 2>&1 && return 0
-    curl -fkL --retry 3 --connect-timeout 10 --max-time 600 "$url" -o "$out" >/dev/null 2>&1 && return 0
   fi
 
   if have_cmd wget; then
     wget -O "$out" "$url" >/dev/null 2>&1 && return 0
-    wget --no-check-certificate -O "$out" "$url" >/dev/null 2>&1 && return 0
   fi
 
   if [ -n "${BB}" ] && "${BB}" wget --help >/dev/null 2>&1; then
     "${BB}" wget -O "$out" "$url" >/dev/null 2>&1 && return 0
-    "${BB}" wget --no-check-certificate -O "$out" "$url" >/dev/null 2>&1 && return 0
+    "${BB}" wget -O "$out" "$url" >/dev/null 2>&1 && return 0
   fi
 
   return 1
@@ -631,6 +1027,16 @@ resolve_sha() {
   printf '%s' "${sha}"
 }
 
+emit_install_activation_failure() {
+  activation_json="$1"
+  if [ -n "${activation_json}" ]; then
+    # activate_core 的失败载荷均为单行 JSON；附加安装状态但保留顶层 result/error 契约。
+    printf '%s\n' "${activation_json}" | sed '$ s/}$/,"action":"installed","activated":false}/'
+  else
+    echo '{"result":"error","error":"activation_failed","action":"installed","activated":false}'
+  fi
+}
+
 install_core() {
   repo_raw="$1"
   ref="$2"
@@ -643,7 +1049,10 @@ install_core() {
     *) echo "error=invalid_repo"; return 2 ;;
   esac
 
-  sha="$(resolve_sha "$repo" "$ref")"
+  sha=""
+  if [ "${CORE_DANMU_TEST_MODE}" != "1" ] || [ -z "${CORE_DANMU_TEST_ARCHIVE:-}" ]; then
+    sha="$(resolve_sha "$repo" "$ref")"
+  fi
   zip_ref="$ref"
   if [ -n "${sha}" ]; then
     zip_ref="$sha"
@@ -673,7 +1082,14 @@ install_core() {
   # so do not trust stale meta.json blindly.
   if [ -d "${dest_core}" ] && [ -f "${dest_core}/worker.js" ]; then
     if [ "${ref_is_commit_like}" -eq 1 ]; then
-      activate_core "${id}" >/dev/null 2>&1 || true
+      set +e
+      activation_output="$(activate_core "${id}" 2>&1)"
+      activation_status=$?
+      set -e
+      if [ "${activation_status}" -ne 0 ]; then
+        emit_install_activation_failure "${activation_output}"
+        return "${activation_status}"
+      fi
       removed_old="$(cleanup_repo_ref_duplicates "${repo}" "${ref}" "${id}")"
       mp="$(meta_path_for "${id}")"
       if [ -f "$mp" ]; then
@@ -703,7 +1119,13 @@ install_core() {
   log "install begin: repo=${repo} ref=${ref} sha=${sha}"
 
   downloaded_archive=""
-  if download_file "$raw_tar_url" "$tarf"; then
+  if [ "${CORE_DANMU_TEST_MODE}" = "1" ] && [ -n "${CORE_DANMU_TEST_ARCHIVE:-}" ]; then
+    [ -f "${CORE_DANMU_TEST_ARCHIVE}" ] || {
+      echo '{"result":"error","error":"test_archive_missing"}'
+      return 1
+    }
+    downloaded_archive="${CORE_DANMU_TEST_ARCHIVE}"
+  elif download_file "$raw_tar_url" "$tarf"; then
     downloaded_archive="$tarf"
   elif download_file "$zip_url" "$zipf"; then
     downloaded_archive="$zipf"
@@ -728,9 +1150,69 @@ install_core() {
 
   src_dir="$(dirname "${worker_path}")"
 
-  rm -rf "${dest_core}" 2>/dev/null || true
-  mkdir -p "${dest_core}" 2>/dev/null || true
-  cp -a "${src_dir}/." "${dest_core}/" 2>/dev/null || true
+  # staging：先完整复制到唯一 staging 目录（包含核心根 package.json/package-lock.json），
+  # 校验通过后再原子 rename 到最终位置，避免 rm 正在使用的 dest。
+  staging_root="${TMP_DIR}/core_staging_${id}_$(date +%s)"
+  mkdir -p "${staging_root}" 2>/dev/null || true
+  if ! cp -a "${src_dir}/." "${staging_root}/danmu_api/" 2>/dev/null; then
+    mkdir -p "${staging_root}/danmu_api" 2>/dev/null || true
+    cp -a "${src_dir}/." "${staging_root}/danmu_api/" 2>/dev/null || true
+  fi
+
+  # 保留归档根依赖声明。GitHub archive 布局为 <repo>-<ref>/danmu_api/worker.js，
+  # 因此归档根就是 src_dir 的父目录，而不是 exdir 本身。
+  archive_root="$(dirname "${src_dir}")"
+  for root_file in package.json package-lock.json; do
+    f="${archive_root}/${root_file}"
+    if [ -f "$f" ]; then
+      cp -f "$f" "${staging_root}/${root_file}" 2>/dev/null || {
+        rm -rf "${staging_root}" 2>/dev/null || true
+        echo '{"result":"error","error":"manifest_copy_failed"}'
+        return 1
+      }
+      cp -f "$f" "${staging_root}/danmu_api/${root_file}" 2>/dev/null || {
+        rm -rf "${staging_root}" 2>/dev/null || true
+        echo '{"result":"error","error":"manifest_copy_failed"}'
+        return 1
+      }
+    fi
+  done
+
+  # package.json 是运行时门禁与 dependencyFingerprint 的权威输入，缺失必须 fail closed。
+  if [ ! -f "${staging_root}/package.json" ] || [ ! -f "${staging_root}/danmu_api/package.json" ]; then
+    log "core package.json not found at archive root: ${archive_root}"
+    rm -rf "${staging_root}" 2>/dev/null || true
+    echo '{"result":"error","error":"core_manifest_missing"}'
+    return 1
+  fi
+
+  if [ ! -f "${staging_root}/danmu_api/worker.js" ]; then
+    log "copy failed"
+    rm -rf "${staging_root}" 2>/dev/null || true
+    echo '{"result":"error","error":"copy_failed"}'
+    return 1
+  fi
+
+  # staging 内容完整后再原子落位；实际依赖门禁在 activate_core 中执行。
+  patch_core_worker_logs "${staging_root}/danmu_api/worker.js" || true
+
+  # 原子落位：staging -> dest
+  if [ -d "${dest_core}" ]; then
+    rm -rf "${dest_root}.old.$(date +%s)" 2>/dev/null || true
+  fi
+  if ! mv "${staging_root}/danmu_api" "${dest_core}" 2>/dev/null; then
+    log "staging move failed"
+    rm -rf "${staging_root}" 2>/dev/null || true
+    echo '{"result":"error","error":"copy_failed"}'
+    return 1
+  fi
+  # 根锁文件
+  for root_file in package.json package-lock.json; do
+    if [ -f "${staging_root}/${root_file}" ]; then
+      cp -f "${staging_root}/${root_file}" "${dest_root}/${root_file}" 2>/dev/null || true
+    fi
+  done
+  rm -rf "${staging_root}" 2>/dev/null || true
 
   if [ ! -f "${dest_core}/worker.js" ]; then
     log "copy failed"
@@ -754,7 +1236,14 @@ install_core() {
   rm -f "${zipf}" "${tarf}" 2>/dev/null || true
   rm -rf "${exdir}" 2>/dev/null || true
 
-  activate_core "${id}" >/dev/null 2>&1 || true
+  set +e
+  activation_output="$(activate_core "${id}" 2>&1)"
+  activation_status=$?
+  set -e
+  if [ "${activation_status}" -ne 0 ]; then
+    emit_install_activation_failure "${activation_output}"
+    return "${activation_status}"
+  fi
   removed_old="$(cleanup_repo_ref_duplicates "${repo}" "${ref}" "${id}")"
 
   mp="$(meta_path_for "${id}")"
@@ -846,6 +1335,7 @@ Usage:
   $0 core install <owner/repo> <ref>
   $0 core activate <id>
   $0 core delete <id>
+  $0 deps install <core-id> <source-node-modules> <dependency-id>
   $0 logs list [--json]
   $0 logs clear
 
@@ -905,20 +1395,41 @@ case "$cmd" in
       activate)
         id="${3:-}"
         [ -n "${id}" ] || { usage; exit 2; }
-        if activate_core "${id}"; then
+        set +e
+        activate_core "${id}"
+        activate_status=$?
+        set -e
+        if [ "${activate_status}" -eq 0 ]; then
           mp="$(meta_path_for "${id}")"
           printf '{"result":"ok","activated":true,"core":'
           cat "$mp" 2>/dev/null || echo '{}'
           echo '}'
         else
-          echo '{"result":"error","error":"activate_failed"}'
-          exit 1
+          # activate_core 已输出结构化 JSON；严格透传实际退出码。
+          exit "${activate_status}"
         fi
+        ;;
+      fingerprint)
+        id="${3:-}"
+        [ -n "${id}" ] || { usage; exit 2; }
+        core_dependency_fingerprint "${id}"
         ;;
       delete)
         id="${3:-}"
         [ -n "${id}" ] || { usage; exit 2; }
         delete_core "${id}"
+        ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+
+  deps)
+    sub="${2:-}"
+    case "$sub" in
+      install)
+        cid="${3:-}"; source_nm="${4:-}"; dep_id="${5:-}"
+        if [ -z "${cid}" ] || [ -z "${source_nm}" ] || [ -z "${dep_id}" ]; then usage; exit 2; fi
+        deps_install "${cid}" "${source_nm}" "${dep_id}"
         ;;
       *) usage; exit 2 ;;
     esac

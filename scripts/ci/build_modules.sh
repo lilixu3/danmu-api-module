@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
+# shellcheck source=./node_pinning_lib.sh
+source "$SCRIPT_DIR/node_pinning_lib.sh"
 
 variant="both"
 version="$(default_build_version)"
@@ -49,6 +51,12 @@ if [ -z "$version_code" ]; then
   version_code="$(calc_version_code "$version")"
 fi
 
+# finalize_zip 在模块根目录的子 shell 中执行 zip，相对 out_dir 会解析错位
+case "$out_dir" in
+  /*) ;;
+  *) out_dir="$(pwd)/$out_dir" ;;
+esac
+
 case "$variant" in
   both|node|no_node) ;;
   *)
@@ -71,7 +79,8 @@ mkdir -p "$out_dir" "$build_root"
 termux_prepare_index() {
   local arch="aarch64"
   local repo_base="https://packages.termux.dev/apt/termux-main"
-  local index_xz="${repo_base}/dists/stable/main/binary-${arch}/Packages.xz"
+  # 实测官方索引无 .xz（404），提供 .gz 与明文两级回退
+  local index_gz="${repo_base}/dists/stable/main/binary-${arch}/Packages.gz"
   local index_plain="${repo_base}/dists/stable/main/binary-${arch}/Packages"
 
   local work_dir
@@ -79,8 +88,8 @@ termux_prepare_index() {
 
   echo "$repo_base" > "$work_dir/.repo_base"
 
-  if curl -fLsS --retry 3 "$index_xz" -o "$work_dir/Packages.xz"; then
-    xz -dc "$work_dir/Packages.xz" > "$work_dir/Packages"
+  if curl -fLsS --retry 3 "$index_gz" -o "$work_dir/Packages.gz"; then
+    gzip -dc "$work_dir/Packages.gz" > "$work_dir/Packages"
   else
     curl -fLsS --retry 3 "$index_plain" -o "$work_dir/Packages"
   fi
@@ -111,10 +120,12 @@ termux_pkg_filename() {
 }
 
 prepare_termux_busybox() {
-  if [ -f "$CI_TMP_DIR/busybox/busybox" ]; then
+  # 缓存必须 stub + libbusybox.so 同时存在才复用；旧缓存（只有 stub）作废重下
+  if [ -f "$CI_TMP_DIR/busybox/busybox" ] && \
+     find "$CI_TMP_DIR/busybox/lib" -maxdepth 1 -name 'libbusybox.so*' -print -quit 2>/dev/null | grep -q .; then
     return 0
   fi
-
+  rm -rf "$CI_TMP_DIR/busybox"
   mkdir -p "$CI_TMP_DIR/busybox"
   local idx_dir
   idx_dir="$(termux_prepare_index)"
@@ -145,6 +156,36 @@ prepare_termux_busybox() {
 
   cp -f "$busybox_bin" "$CI_TMP_DIR/busybox/busybox"
   chmod 0755 "$CI_TMP_DIR/busybox/busybox"
+
+  # Termux busybox 是动态链接（NEEDED libbusybox.so.*，位于 deb 的 usr/lib/）。
+  # 只拷二进制会在设备上 CANNOT LINK；把 .so 一起拷入 bin/lib，
+  # danmu_core.sh 已将该目录加入 LD_LIBRARY_PATH。
+  local bb_so
+  while IFS= read -r bb_so; do
+    [ -n "$bb_so" ] || continue
+    mkdir -p "$CI_TMP_DIR/busybox/lib"
+    cp -f "$bb_so" "$CI_TMP_DIR/busybox/lib/"
+  done < <(find "$idx_dir/extract" -type f -name 'libbusybox.so*' 2>/dev/null)
+
+  # 供应链加固：busybox 的 NEEDED 库必须全部可解析，否则设备端直接无法运行。
+  # Android 系统库（bionic）由设备提供，仅校验 Termux 侧库。
+  if command -v readelf >/dev/null 2>&1; then
+    local missing_needed
+    missing_needed="$(readelf -d "$CI_TMP_DIR/busybox/busybox" 2>/dev/null \
+      | awk '/NEEDED/{gsub(/\[|\]/,"",$5); print $5}' \
+      | while read -r soname; do
+          case "$soname" in
+            libc.so|libm.so|libdl.so|liblog.so|libc++_shared.so|libz.so|ld-android.so|libstdc++.so)
+              continue ;;
+          esac
+          [ -e "$CI_TMP_DIR/busybox/lib/$soname" ] || echo "$soname"
+        done)"
+    if [ -n "$missing_needed" ]; then
+      echo "供应链加固失败：busybox 依赖缺失库: $missing_needed" >&2
+      exit 1
+    fi
+  fi
+
   rm -rf "$idx_dir"
 }
 
@@ -152,7 +193,10 @@ fetch_termux_node() {
   local root="$1"
   local arch="aarch64"
   local repo_base="https://packages.termux.dev/apt/termux-main"
-  local index_xz="${repo_base}/dists/stable/main/binary-${arch}/Packages.xz"
+  # 供应链加固：node 闭包版本/SHA 全部固定于锁文件，索引解析仅作存在性回退
+  local node_lockfile="${NODE_LOCKFILE:-$SCRIPT_DIR/termux-node-aarch64.lock.json}"
+  # 实测官方索引无 .xz（404），提供 .gz 与明文两级回退
+  local index_gz="${repo_base}/dists/stable/main/binary-${arch}/Packages.gz"
   local index_plain="${repo_base}/dists/stable/main/binary-${arch}/Packages"
 
   local work_dir
@@ -160,16 +204,18 @@ fetch_termux_node() {
   local extracted="${work_dir}/extracted"
   mkdir -p "$extracted"
 
-  if curl -fLsS --retry 3 "$index_xz" -o "$work_dir/Packages.xz"; then
-    xz -dc "$work_dir/Packages.xz" > "$work_dir/Packages"
+  if curl -fLsS --retry 3 "$index_gz" -o "$work_dir/Packages.gz"; then
+    gzip -dc "$work_dir/Packages.gz" > "$work_dir/Packages"
   else
     curl -fLsS --retry 3 "$index_plain" -o "$work_dir/Packages"
   fi
   local pkg_index="$work_dir/Packages"
 
-  pkg_filename() {
-    local pkg="$1"
-    awk -v pkg="$pkg" '
+  pkg_field() {
+    local index="$1"
+    local pkg="$2"
+    local field="$3"
+    awk -v pkg="$pkg" -v field="$field" '
       BEGIN{RS="";FS="\n"}
       {
         hit=0
@@ -177,127 +223,75 @@ fetch_termux_node() {
           if($i == "Package: " pkg){ hit=1; break }
         }
         if(hit){
+          prefix=field ": "
           for(i=1;i<=NF;i++){
-            if(index($i,"Filename: ")==1){
-              sub(/^Filename: /,"",$i)
-              print $i
-              exit
-            }
-          }
-        }
-      }' "$pkg_index"
-  }
-
-  pkg_depends() {
-    local pkg="$1"
-    awk -v pkg="$pkg" '
-      BEGIN{RS="";FS="\n"}
-      {
-        hit=0
-        for(i=1;i<=NF;i++){
-          if($i == "Package: " pkg){ hit=1; break }
-        }
-        if(hit){
-          for(i=1;i<=NF;i++){
-            if(index($i,"Depends: ")==1){
-              dep=substr($i,10)
-              for(j=i+1;j<=NF && $j ~ /^ /; j++){
-                dep=dep " " substr($j,2)
+            if(index($i,prefix)==1){
+              val=substr($i,length(prefix)+1)
+              for(j=i+1;j<=NF && substr($j,1,1)==" "; j++){
+                val=val " " substr($j,2)
               }
-              print dep
+              print val
               exit
             }
           }
         }
-      }' "$pkg_index"
-  }
-
-  parse_dep_groups() {
-    local dep_string="${1:-}"
-    [ -z "$dep_string" ] && return 0
-
-    echo "$dep_string" | tr ',' '\n' | while read -r group; do
-      group="$(echo "$group" | xargs)"
-      [ -z "$group" ] && continue
-      group="$(echo "$group" | sed -E 's/\([^)]*\)//g')"
-      group="$(echo "$group" | sed -E 's/:[a-z0-9_-]+//g')"
-      group="$(echo "$group" | tr -s ' ' ' ' | xargs)"
-      [ -n "$group" ] && echo "$group"
-    done
-  }
-
-  resolve_group() {
-    local group="$1"
-    local alt
-    IFS='|' read -ra alts <<< "$group"
-
-    for alt in "${alts[@]}"; do
-      alt="$(echo "$alt" | xargs)"
-      [ -z "$alt" ] && continue
-
-      local candidates=("$alt")
-      if [ "$alt" = "libc++" ]; then
-        candidates=("libc++" "libc++-shared")
-      elif [ "$alt" = "libc++-shared" ]; then
-        candidates=("libc++-shared" "libc++")
-      fi
-
-      local candidate
-      for candidate in "${candidates[@]}"; do
-        local filename
-        filename="$(pkg_filename "$candidate" || true)"
-        if [ -n "$filename" ]; then
-          echo "$candidate"
-          return 0
-        fi
-      done
-    done
-
-    return 1
+      }' "$index"
   }
 
   download_and_extract() {
     local pkg="$1"
     local filename="$2"
+    # 供应链加固：固定版本与锁文件条目，缺失即 fail-closed
+    local lock_entry
+    lock_entry="$(python3 - "$node_lockfile" "$pkg" <<'PY' || true
+import json, sys
+lock = json.load(open(sys.argv[1], encoding='utf-8'))
+for entry in lock.get('packages', []):
+    if entry.get('name') == sys.argv[2]:
+        print(json.dumps(entry, ensure_ascii=False))
+        break
+PY
+)"
+    if [ -z "$lock_entry" ]; then
+      echo "供应链加固失败：$pkg 不在 node 锁文件 ${node_lockfile} 中（需先更新锁文件）" >&2
+      exit 1
+    fi
+    local expected_version expected_sha
+    expected_version="$(printf '%s' "$lock_entry" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+    expected_sha="$(printf '%s' "$lock_entry" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha256"])')"
+    local index_version
+    index_version="$(pkg_field "$pkg_index" "$pkg" Version || true)"
+    if [ -z "$index_version" ] || [ "$index_version" != "$expected_version" ]; then
+      echo "供应链加固失败：$pkg 版本漂移（锁文件 ${expected_version:-<缺失>}，索引 '${index_version:-<缺失>}'）" >&2
+      exit 1
+    fi
     curl -fLsS --retry 3 "${repo_base}/${filename}" -o "${work_dir}/${pkg}.deb"
+    if ! verify_file_sha256 "${work_dir}/${pkg}.deb" "$expected_sha"; then
+      echo "SHA-256 校验失败，已中止构建：$pkg（锁文件声明: ${expected_sha:-<缺失>}）" >&2
+      exit 1
+    fi
     dpkg-deb -x "${work_dir}/${pkg}.deb" "$extracted"
     rm -f "${work_dir}/${pkg}.deb"
   }
 
-  declare -A seen=()
-  local queue=("nodejs")
-
-  while [ "${#queue[@]}" -gt 0 ]; do
-    local pkg="${queue[0]}"
-    queue=("${queue[@]:1}")
-
+  # 供应链加固：直接按锁文件闭包下载，不再做索引递归解析
+  local pkg
+  while IFS= read -r pkg; do
     [ -n "$pkg" ] || continue
-    if [ "${seen[$pkg]+x}" = "x" ]; then
-      continue
-    fi
-    seen["$pkg"]=1
-
     local filename
-    filename="$(pkg_filename "$pkg" || true)"
+    filename="$(pkg_field "$pkg_index" "$pkg" Filename || true)"
     if [ -z "$filename" ]; then
       echo "在 Packages 索引中找不到包: $pkg" >&2
       exit 1
     fi
-
     download_and_extract "$pkg" "$filename"
-
-    local deps
-    deps="$(pkg_depends "$pkg" || true)"
-    while read -r group; do
-      [ -n "$group" ] || continue
-      local resolved
-      if ! resolved="$(resolve_group "$group")"; then
-        echo "依赖组无法解析: $group" >&2
-        exit 1
-      fi
-      queue+=("$resolved")
-    done < <(parse_dep_groups "$deps")
-  done
+  done < <(python3 - "$node_lockfile" <<'PY' || true
+import json, sys
+lock = json.load(open(sys.argv[1], encoding='utf-8'))
+for entry in lock.get('packages', []):
+    print(entry.get('name', ''))
+PY
+)
 
   local node_bin_path
   node_bin_path="$(find "$extracted" -type f -path '*/files/usr/bin/node' | head -n 1 || true)"
@@ -372,6 +366,16 @@ fetch_termux_node() {
         fi
       else
         done_lib["$soname"]=1
+        # 供应链加固：Android 系统库（由 bionic/linker 提供）允许缺失；
+        # 其余缺失的 NEEDED 库会直接在设备上 CANNOT LINK，构建必须 fail closed。
+        case "$soname" in
+          libc.so|libm.so|libdl.so|liblog.so|libc++_shared.so|libz.so|ld-android.so|libstdc++.so)
+            ;;
+          *)
+            echo "供应链加固失败：$current_file 依赖的库 $soname 不在 Termux 闭包且不在系统白名单" >&2
+            exit 1
+            ;;
+        esac
       fi
     done
   done
@@ -387,6 +391,21 @@ copy_template() {
   rm -rf "$target"
   mkdir -p "$target"
   rsync -a --delete "$MODULE_TEMPLATE_DIR/" "$target/"
+}
+
+verify_runtime_closure() {
+  # 打包前必须校验：锁文件与 package.json 一致、vendor 树包含锁文件声明的包。
+  # 引导依赖树由 scripts/ci/prune_runtime_deps.py 从完整闭包生成，任何漂移都应失败。
+  local app_dir="$MODULE_TEMPLATE_DIR/app"
+  [ -f "$app_dir/package-lock.json" ] || {
+    echo "缺少运行时锁文件: $app_dir/package-lock.json（请先执行 npm ci 并运行 prune_runtime_deps.py）" >&2
+    exit 1
+  }
+  sh "$SCRIPT_DIR/check_runtime_lockfile.sh" "$REPO_ROOT" >/dev/null 2>&1 || {
+    echo "运行时依赖锁文件契约校验失败（check_runtime_lockfile.sh）" >&2
+    sh "$SCRIPT_DIR/check_runtime_lockfile.sh" "$REPO_ROOT" 2>&1 >&2 || true
+    exit 1
+  }
 }
 
 patch_package_json_version() {
@@ -429,6 +448,13 @@ TXT
   mkdir -p "$module_root/bin"
   cp -f "$CI_TMP_DIR/busybox/busybox" "$module_root/bin/busybox"
   chmod 0755 "$module_root/bin/busybox"
+  # Termux busybox 本体是 stub（代码全在 libbusybox.so），必须连同 .so 一起进模块，
+  # 否则设备端 CANNOT LINK。
+  if [ -d "$CI_TMP_DIR/busybox/lib" ]; then
+    mkdir -p "$module_root/bin/lib"
+    cp -a "$CI_TMP_DIR/busybox/lib/." "$module_root/bin/lib/"
+    chmod 0755 "$module_root/bin/lib/"*.so* 2>/dev/null || true
+  fi
 
   sed -i "s|^version=.*|version=${version}|g" "$module_root/module.prop"
   sed -i "s|^versionCode=.*|versionCode=${version_code}|g" "$module_root/module.prop"
@@ -466,6 +492,7 @@ build_variant() {
   local build_time_utc
   build_time_utc="$(date -u +%FT%TZ)"
 
+  verify_runtime_closure
   copy_template "$module_root"
   prepare_module_root "$module_root" "$build_time_utc"
 

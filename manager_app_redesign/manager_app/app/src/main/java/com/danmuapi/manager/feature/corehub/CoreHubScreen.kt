@@ -5,6 +5,8 @@
 
 package com.danmuapi.manager.feature.corehub
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,7 +35,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
@@ -44,6 +49,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -67,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.danmuapi.manager.app.state.DependencyRepairUiState
 import com.danmuapi.manager.app.state.ManagerViewModel
 import com.danmuapi.manager.core.designsystem.component.formatSizeLabel
 import com.danmuapi.manager.core.designsystem.theme.DanmuMonoFamily
@@ -270,6 +277,9 @@ fun CoreDetailScreen(
     var selectedCommit by remember { mutableStateOf<RollbackCommitItem?>(null) }
     var confirmRollbackCommit by remember { mutableStateOf<RollbackCommitItem?>(null) }
     var rollbackQuery by rememberSaveable { mutableStateOf("") }
+    val importLocalLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(viewModel::importLocalDependencyPack) }
 
     if (deleteTarget != null) {
         val target = deleteTarget!!
@@ -447,6 +457,26 @@ fun CoreDetailScreen(
                         viewModel.loadRollbackCommits(core.id, "", append = false)
                     },
                     rollbackBusy = viewModel.rollbackLoading,
+                    repairAvailable = viewModel.dependencyRepairAvailable &&
+                        viewModel.pendingRepairCoreId == core.id,
+                    repairNames = viewModel.dependencyRepairNames,
+                    repairState = if (viewModel.pendingRepairCoreId == core.id) {
+                        viewModel.dependencyRepairState
+                    } else {
+                        DependencyRepairUiState.Idle
+                    },
+                    onRepairDependencies = { viewModel.repairCoreDependencies() },
+                    onImportLocal = {
+                        importLocalLauncher.launch(
+                            arrayOf(
+                                "application/zip",
+                                "application/x-zip-compressed",
+                                "application/octet-stream",
+                                "application/x-7z-compressed",
+                            ),
+                        )
+                    },
+                    onDismissRepair = { viewModel.dismissDependencyRepair() },
                 )
 
                 CoreInfoCard(
@@ -1313,6 +1343,12 @@ private fun CoreDetailSummaryCard(
     onActivate: () -> Unit,
     onOpenRollback: () -> Unit,
     rollbackBusy: Boolean,
+    repairAvailable: Boolean,
+    repairNames: List<String>,
+    repairState: DependencyRepairUiState,
+    onRepairDependencies: () -> Unit,
+    onImportLocal: () -> Unit,
+    onDismissRepair: () -> Unit,
 ) {
     val statusHeadline = buildCoreDetailHeadline(isActive = isActive, updateInfo = updateInfo)
     val latestLine = buildRemoteSnapshotLine(updateInfo)
@@ -1431,6 +1467,18 @@ private fun CoreDetailSummaryCard(
                 }
             }
 
+            if (repairAvailable || repairState != DependencyRepairUiState.Idle) {
+                DependencyRepairBanner(
+                    names = repairNames,
+                    state = repairState,
+                    busy = busy,
+                    colors = colors,
+                    onRepair = onRepairDependencies,
+                    onImportLocal = onImportLocal,
+                    onDismiss = onDismissRepair,
+                )
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1467,6 +1515,103 @@ private fun CoreDetailSummaryCard(
                     colors = colors,
                     onClick = onActivate,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DependencyRepairBanner(
+    names: List<String>,
+    state: DependencyRepairUiState,
+    busy: Boolean,
+    colors: CoreHubColors,
+    onRepair: () -> Unit,
+    onImportLocal: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = colors.warningContainer.copy(alpha = 0.85f),
+        border = BorderStroke(1.dp, colors.warning.copy(alpha = 0.5f)),
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            when (val current = state) {
+                is DependencyRepairUiState.Repairing -> {
+                    Text(
+                        text = current.label,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold),
+                        color = colors.warning,
+                    )
+                    LinearProgressIndicator(
+                        progress = { current.progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(6.dp),
+                        color = colors.warning,
+                        trackColor = colors.warning.copy(alpha = 0.2f),
+                    )
+                }
+                is DependencyRepairUiState.Error -> {
+                    Text(
+                        text = "依赖修复失败：${current.message}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = colors.warning,
+                    )
+                    CoreDetailActionButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = Icons.Filled.Refresh,
+                        label = "重试修复",
+                        busy = busy,
+                        enabled = !busy,
+                        colors = colors,
+                        onClick = onRepair,
+                    )
+                }
+                is DependencyRepairUiState.Idle -> {
+                    val nameText = names.take(3).joinToString("、").let { if (names.size > 3) "$it 等" else it }
+                    Text(
+                        text = "核心缺少运行时依赖（${nameText.ifBlank { "未知" }}），需要修复后才能启动",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = colors.warning,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CoreDetailActionButton(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Filled.Construction,
+                            label = "一键修复",
+                            busy = busy,
+                            enabled = !busy,
+                            colors = colors,
+                            emphasized = true,
+                            onClick = onRepair,
+                        )
+                        CoreDetailActionButton(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Filled.Archive,
+                            label = "本地包",
+                            busy = busy,
+                            enabled = !busy,
+                            colors = colors,
+                            onClick = onImportLocal,
+                        )
+                        CoreDetailActionButton(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Filled.Close,
+                            label = "稍后",
+                            busy = busy,
+                            enabled = !busy,
+                            colors = colors,
+                            onClick = onDismiss,
+                        )
+                    }
+                }
             }
         }
     }
