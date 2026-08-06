@@ -72,11 +72,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.danmuapi.manager.app.state.ManagerViewModel
 import com.danmuapi.manager.core.designsystem.theme.DanmuMonoFamily
 import com.danmuapi.manager.core.designsystem.theme.DanmuConsolePalette
@@ -200,20 +203,25 @@ internal fun ConsoleRecordScreen(
         }
     }
 
+    // 锁屏/退后台（低于 RESUMED）时停止轮询：2 秒一次的 /api/logs 请求
+    // 在 onStop 后继续跑会持续唤醒 CPU 与网络（耗电来源）。
+    val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(selectedTab, selectedLogSource, selectedModuleFile?.path, viewModel.status?.isRunning) {
         if (selectedTab != ConsoleMainTab.Logs) return@LaunchedEffect
 
-        while (isActive) {
-            delay(2_000L)
-            when (selectedLogSource) {
-                ConsoleLogSource.Service -> {
-                    if (viewModel.status?.isRunning == true) {
-                        viewModel.refreshServerLogs()
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (isActive) {
+                delay(2_000L)
+                when (selectedLogSource) {
+                    ConsoleLogSource.Service -> {
+                        if (viewModel.status?.isRunning == true) {
+                            viewModel.refreshServerLogs()
+                        }
                     }
-                }
 
-                ConsoleLogSource.Module -> {
-                    selectedModuleFile?.path?.let(viewModel::loadModuleLog)
+                    ConsoleLogSource.Module -> {
+                        selectedModuleFile?.path?.let(viewModel::loadModuleLog)
+                    }
                 }
             }
         }
