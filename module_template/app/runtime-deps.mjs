@@ -304,7 +304,20 @@ export function smokeCore({ coreRoot, nodeModulesDir }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'danmu-deps-smoke-'));
   try {
     fs.symlinkSync(nodeModulesDir, path.join(tmp, 'node_modules'));
-    fs.symlinkSync(coreContentDir, path.join(tmp, 'danmu_api'));
+    // 核心树必须物化复制而非符号链接：--preserve-symlinks-main 只保留主入口，
+    // 主模块的相对 import 子模块会被 canonicalize 到 realpath。若 tmp/danmu_api
+    // 是指向 live 核心树的符号链接，realpath=live → 子模块裸 import 从 live 的
+    // node_modules 解析，staging 从未被验证（round-3 实证：staging 空+live 满=假阳性
+    // exit 0；staging 满+live 空=假阴性 exit 1，修复流程死锁 smoke_failed）。
+    // 复制后 realpath 落在 tmp 内，裸 import 沿 tmp/danmu_api/node_modules(→staging) 解析。
+    // 注意必须排除核心树自带的 node_modules 链接：dereference 复制会把 live 依赖
+    // 物化成真实副本塞进 tmp，smoke 又变回验证 live（假阳性/假阴性复现）。
+    fs.cpSync(coreContentDir, path.join(tmp, 'danmu_api'), {
+      recursive: true,
+      dereference: true,
+      filter: (src) => !src.split(path.sep).includes('node_modules'),
+    });
+    fs.symlinkSync(nodeModulesDir, path.join(tmp, 'danmu_api', 'node_modules'));
     const rootPkg = path.join(coreRoot, 'package.json');
     if (fs.existsSync(rootPkg)) {
       fs.copyFileSync(rootPkg, path.join(tmp, 'package.json'));

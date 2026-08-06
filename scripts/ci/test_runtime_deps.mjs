@@ -443,3 +443,48 @@ test('CLI smoke: missing worker.js → non-zero exit', () => {
   });
   assert.notEqual(res.status, 0);
 });
+
+// 真实 worker 布局：主模块零裸 import，全部相对 import 到子模块，子模块才裸 import。
+// 与 CI stub worker（裸 import 在主模块）不同——只有相对链才能暴露 canonicalize 缺陷。
+function makeRealLayoutCore() {
+  const core = makeCoreRoot({ deps: {} });
+  const content = path.join(core, 'danmu_api');
+  fs.mkdirSync(path.join(content, 'configs'), { recursive: true });
+  fs.writeFileSync(path.join(content, 'configs', 'globals.js'), [
+    "import fetch from 'node-fetch';",
+    "if (typeof fetch !== 'function') process.exit(9);",
+    'console.log("GLOBALS_OK");',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(content, 'worker.js'), [
+    "import './configs/globals.js';",
+    'console.log("SMOKE_OK");',
+    'process.exit(0);',
+    '',
+  ].join('\n'));
+  return core;
+}
+
+test('smoke 真实布局: staging 空而 live 核心树依赖满 → 必须失败（不得假阳性）', () => {
+  const core = makeRealLayoutCore();
+  // live 侧：核心树 node_modules 链接指向满包目录（模块 bootstrap 树）
+  fs.symlinkSync(MODULE_APP_NODE_MODULES, path.join(core, 'danmu_api', 'node_modules'));
+  const stagingEmpty = makeNodeModules({});
+  const res = spawnSync(process.execPath, [RUNTIME_DEPS_MJS, 'smoke', '--core-root', core, '--node-modules', stagingEmpty], {
+    encoding: 'utf8', timeout: 30000,
+  });
+  assert.notEqual(res.status, 0, `staging 空必须失败；实际 exit=${res.status}（假阳性：staging 未被验证）`);
+});
+
+test('smoke 真实布局: staging 满而 live 核心树依赖空 → 必须通过（不得假阴性死锁）', () => {
+  const core = makeRealLayoutCore();
+  // live 侧：核心树 node_modules 链接指向空目录（live 缺依赖正是修复触发场景）
+  const liveEmpty = makeNodeModules({});
+  fs.symlinkSync(liveEmpty, path.join(core, 'danmu_api', 'node_modules'));
+  // staging 必须含真实可导入的包（makeNodeModules 只写 package.json，import 必失败）
+  const stagingFull = MODULE_APP_NODE_MODULES;
+  const res = spawnSync(process.execPath, [RUNTIME_DEPS_MJS, 'smoke', '--core-root', core, '--node-modules', stagingFull], {
+    encoding: 'utf8', timeout: 30000,
+  });
+  assert.equal(res.status, 0, `staging 满必须通过；实际 exit=${res.status}（假阴性：修复流程死锁 smoke_failed）`);
+});
