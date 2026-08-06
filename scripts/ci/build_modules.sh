@@ -172,8 +172,9 @@ fetch_termux_node() {
   local pkg_index="$work_dir/Packages"
 
   pkg_field() {
-    local pkg="$1"
-    local field="$2"
+    local index="$1"
+    local pkg="$2"
+    local field="$3"
     awk -v pkg="$pkg" -v field="$field" '
       BEGIN{RS="";FS="\n"}
       {
@@ -194,7 +195,7 @@ fetch_termux_node() {
             }
           }
         }
-      }' "$pkg_index"
+      }' "$index"
   }
 
   download_and_extract() {
@@ -202,7 +203,7 @@ fetch_termux_node() {
     local filename="$2"
     # 供应链加固：固定版本与锁文件条目，缺失即 fail-closed
     local lock_entry
-    lock_entry="$(python3 - "$NODE_LOCKFILE" "$pkg" <<'PY' || true
+    lock_entry="$(python3 - "$node_lockfile" "$pkg" <<'PY' || true
 import json, sys
 lock = json.load(open(sys.argv[1], encoding='utf-8'))
 for entry in lock.get('packages', []):
@@ -212,7 +213,7 @@ for entry in lock.get('packages', []):
 PY
 )"
     if [ -z "$lock_entry" ]; then
-      echo "供应链加固失败：$pkg 不在 node 锁文件 ${NODE_LOCKFILE} 中（需先更新锁文件）" >&2
+      echo "供应链加固失败：$pkg 不在 node 锁文件 ${node_lockfile} 中（需先更新锁文件）" >&2
       exit 1
     fi
     local expected_version expected_sha
