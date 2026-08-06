@@ -507,6 +507,51 @@ compute_dependency_id() {
   fi
 }
 
+core_dependency_fingerprint() {
+  # 输出核心依赖指纹（64 位 sha256）。算法与 runtime-packs 发布端一致：
+  # sha256(canonical_json(sorted(dependencies + optionalDependencies)))，其中
+  # canonical_json 为 JSON.stringify 的 sort_keys + separators=(",",":")，
+  # 与 App 的 RuntimeDependencyPackProtocol.dependencyFingerprint 完全等价。
+  # 输出: {"result":"ok","core":"<id>","fingerprint":"<sha256>"}
+  cid="$1"
+  core_root="$(core_dir_for "${cid}")"
+  pkg_file="${core_root}/package.json"
+  [ -f "${pkg_file}" ] || {
+    echo '{"result":"error","error":"package_json_missing"}'
+    return 1
+  }
+
+  if have_cmd node; then
+    node_bin="node"
+  elif [ -x "${MODDIR}/node/bin/node" ]; then
+    node_bin="${MODDIR}/node/bin/node"
+  elif [ -x "${PERSIST}/node/bin/node" ]; then
+    node_bin="${PERSIST}/node/bin/node"
+  else
+    node_bin=""
+  fi
+
+  fingerprint=""
+  if [ -n "${node_bin}" ]; then
+    fingerprint="$("${node_bin}" -e '
+      const fs = require("node:fs");
+      const crypto = require("node:crypto");
+      const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const deps = { ...(pkg.dependencies || {}), ...(pkg.optionalDependencies || {}) };
+      const canonical = JSON.stringify(deps, Object.keys(deps).sort());
+      process.stdout.write(crypto.createHash("sha256").update(canonical, "utf8").digest("hex"));
+    ' "${pkg_file}" 2>/dev/null || true)"
+  fi
+
+  if [ -z "${fingerprint}" ]; then
+    echo '{"result":"error","error":"fingerprint_compute_failed"}'
+    return 1
+  fi
+
+  printf '{"result":"ok","core":"%s","fingerprint":"%s"}\n' "$(json_escape "${cid}")" "${fingerprint}"
+  return 0
+}
+
 resolve_runtime_deps_js() {
   # 显式指定的检查器路径必须真实存在；否则 fail closed
   if [ -n "${RUNTIME_DEPS_JS:-}" ]; then
@@ -1293,6 +1338,11 @@ case "$cmd" in
           # check_core_dependencies 已输出 dependency_repair_required JSON
           exit "${DEP_EXIT_CODE}"
         fi
+        ;;
+      fingerprint)
+        id="${3:-}"
+        [ -n "${id}" ] || { usage; exit 2; }
+        core_dependency_fingerprint "${id}"
         ;;
       delete)
         id="${3:-}"

@@ -163,4 +163,24 @@ CURRENT_LINK="$(readlink "$TEST_PERSIST/core" 2>/dev/null || true)"
 grep -q 'package-lock.json' "$CORE_SH" \
   || fail "测试5: danmu_core.sh 必须处理核心根 package-lock.json"
 
+# ---------- 测试 7: core fingerprint 与 Node 端契约一致 ----------
+# 算法：sha256(canonical_json(sorted(dependencies+optionalDependencies)))，其中
+# canonical_json = sort_keys + separators=(",",":") + ensure_ascii=false（与
+# runtime-packs build_runtime_pack.py 及 App RuntimeDependencyPackProtocol 一致）
+cid7="$(make_core "test7")"
+EXPECTED_FP="$(node -e '
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const deps = { ...(pkg.dependencies || {}), ...(pkg.optionalDependencies || {}) };
+const canonical = JSON.stringify(deps, Object.keys(deps).sort());
+process.stdout.write(crypto.createHash("sha256").update(canonical, "utf8").digest("hex"));
+' "$TEST_PERSIST/cores/$cid7/danmu_api/package.json")"
+run_cli_capture core fingerprint "$cid7"
+[ "$CLI_STATUS" -eq 0 ] || fail "测试7: core fingerprint 命令失败: $CLI_OUTPUT"
+FP="$(printf '%s' "$CLI_OUTPUT" | grep -o '"fingerprint":"[0-9a-f]*"' | head -n1 | sed 's/.*:"\([0-9a-f]*\)"/\1/')"
+[ -n "$FP" ] || fail "测试7: 未输出 fingerprint: $CLI_OUTPUT"
+[ "$FP" = "$EXPECTED_FP" ] \
+  || fail "测试7: 指纹与 Node 契约不一致 expected=$EXPECTED_FP actual=$FP"
+
 echo "runtime dependency shell integration ok"
