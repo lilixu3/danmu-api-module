@@ -83,7 +83,7 @@ class LocalRuntimePackImporter(
                     if (RuntimePackProtocol.isNativeArtifactPath(name)) {
                         throw RuntimePackIntegrityException("本地依赖包包含不支持的原生文件：$name")
                     }
-                    if (!seen.add(name)) {
+                    if (!seen.add(normalized)) {
                         throw RuntimePackIntegrityException("压缩包包含重复路径：$name")
                     }
                     val destination = safeResolve(outputDir, normalized)

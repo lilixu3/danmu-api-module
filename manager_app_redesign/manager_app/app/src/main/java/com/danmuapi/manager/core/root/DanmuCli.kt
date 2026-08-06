@@ -28,6 +28,9 @@ class DanmuCli(
         .add(KotlinJsonAdapterFactory())
         .build(),
 ) : CoreDependencyRepairGateway {
+    companion object {
+        private const val DEPENDENCY_REPAIR_EXIT_CODE = 78
+    }
     private val moshi: Moshi = moshi
     private val statusAdapter = moshi.adapter(ManagerStatus::class.java)
     private val coreCatalogAdapter = moshi.adapter(CoreCatalog::class.java)
@@ -35,19 +38,27 @@ class DanmuCli(
 
     /** CLI dependency_repair_required JSON 的宽松载荷：incompatible 元素可能是字符串或对象 */
     private data class RepairRequiredPayload(
+        val result: String = "",
         val core: String = "",
         val missing: List<String> = emptyList(),
         val incompatible: List<RepairElement> = emptyList(),
-        val conditional: List<String> = emptyList(),
+        val conditional: List<RepairElement> = emptyList(),
         val skipped: String? = null,
+        val error: String? = null,
     )
+
+    private val repairPayloadAdapter: JsonAdapter<RepairRequiredPayload> = moshi
+        .newBuilder()
+        .add(RepairElement::class.java, RepairElement.ADAPTER)
+        .build()
+        .adapter(RepairRequiredPayload::class.java)
 
     /** 兼容字符串/对象两种 incompatible 元素 */
     private data class RepairElement(val name: String? = null) {
         fun displayName(): String? = name
 
         companion object {
-            val ADAPTER: Any = object : com.squareup.moshi.JsonAdapter<RepairElement>() {
+            val ADAPTER: JsonAdapter<RepairElement> = object : JsonAdapter<RepairElement>() {
                 override fun fromJson(reader: com.squareup.moshi.JsonReader): RepairElement? {
                     return when (reader.peek()) {
                         com.squareup.moshi.JsonReader.Token.STRING -> RepairElement(reader.nextString())
@@ -85,7 +96,7 @@ class DanmuCli(
             core = core.ifBlank { fallbackCore },
             missing = missing,
             incompatible = incompatible.mapNotNull { it.displayName() },
-            conditional = conditional,
+            conditional = conditional.mapNotNull { it.displayName() },
             skipped = skipped,
         )
     }
@@ -173,18 +184,36 @@ class DanmuCli(
     }
 
     /**
-     * 激活核心并解析依赖阻断信息。
-     * @return null=激活成功；否则为依赖修复要求（exit 78 约定）
+     * 激活核心并严格区分成功、依赖阻断（仅 exit 78 + result 匹配）和普通失败。
      */
-    override suspend fun activateCoreWithDependencyRepair(id: String): CoreDependencyRepairRequired? {
+    override suspend fun activateCoreWithDependencyRepair(id: String): CoreActivationOutcome {
         val safeId = sanitizeShellArgument(id)
         val result = runSu("${DanmuPaths.CORE_CLI} core activate '$safeId'", 30_000L)
-        if (result.exitCode == 0) return null
-        val json = extractJsonObjectForTest(result.stdout) ?: return CoreDependencyRepairRequired(core = safeId)
-        val parsed = runCatching {
-            moshi.adapter(RepairRequiredPayload::class.java).fromJson(json)
-        }.getOrNull()
-        return parsed?.toModel(safeId) ?: CoreDependencyRepairRequired(core = safeId)
+        if (result.exitCode == 0) return CoreActivationOutcome.Activated
+
+        val json = extractJsonObjectForTest(result.stdout)
+        val parsed = json?.let { raw ->
+            runCatching { repairPayloadAdapter.fromJson(raw) }.getOrNull()
+        }
+        if (result.exitCode == DEPENDENCY_REPAIR_EXIT_CODE &&
+            parsed?.result == "dependency_repair_required" &&
+            parsed.skipped.isNullOrBlank()
+        ) {
+            return CoreActivationOutcome.RepairRequired(parsed.toModel(safeId))
+        }
+
+        val message = when (parsed?.error) {
+            "core_not_found" -> "核心不存在"
+            "runtime_deps_missing" -> "运行时依赖检查器不可用"
+            else -> when (parsed?.skipped) {
+                "inspect_failed" -> "运行时依赖检查失败"
+                else -> parsed?.error
+                    ?: result.stderr.trim().takeIf { it.isNotBlank() }
+                    ?: result.stdout.trim().takeIf { it.isNotBlank() }
+                    ?: "核心激活失败"
+            }
+        }
+        return CoreActivationOutcome.Failure(message.take(240), result.exitCode)
     }
 
     suspend fun deleteCore(id: String): Boolean {
@@ -211,7 +240,7 @@ class DanmuCli(
         val safeCoreId = sanitizeShellArgument(coreId)
         val safeSource = sanitizeShellArgument(sourceNodeModulesDir)
         val safeDependencyId = sanitizeShellArgument(dependencyId)
-        if (safeDependencyId.any { !it.isLetterOrDigit() && it !in setOf('.', '_', '-') }) {
+        if (!Regex("^[A-Za-z0-9._-]+$").matches(safeDependencyId)) {
             return false
         }
         return runSu(

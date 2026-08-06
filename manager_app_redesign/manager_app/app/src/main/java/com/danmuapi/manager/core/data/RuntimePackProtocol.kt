@@ -51,6 +51,10 @@ internal object RuntimePackProtocol {
             lower.endsWith(".so") ||
             lower.endsWith(".dll") ||
             lower.endsWith(".dylib") ||
+            // 发布端 build_runtime_pack.py 同步拒绝的原生源码/构建产物
+            lower.endsWith(".cc") ||
+            lower.endsWith(".c") ||
+            lower.endsWith(".cpp") ||
             lower.endsWith("/binding.gyp") ||
             "/prebuilds/" in lower
     }

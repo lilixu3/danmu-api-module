@@ -51,6 +51,12 @@ if [ -z "$version_code" ]; then
   version_code="$(calc_version_code "$version")"
 fi
 
+# finalize_zip 在模块根目录的子 shell 中执行 zip，相对 out_dir 会解析错位
+case "$out_dir" in
+  /*) ;;
+  *) out_dir="$(pwd)/$out_dir" ;;
+esac
+
 case "$variant" in
   both|node|no_node) ;;
   *)
@@ -73,7 +79,8 @@ mkdir -p "$out_dir" "$build_root"
 termux_prepare_index() {
   local arch="aarch64"
   local repo_base="https://packages.termux.dev/apt/termux-main"
-  local index_xz="${repo_base}/dists/stable/main/binary-${arch}/Packages.xz"
+  # 实测官方索引无 .xz（404），提供 .gz 与明文两级回退
+  local index_gz="${repo_base}/dists/stable/main/binary-${arch}/Packages.gz"
   local index_plain="${repo_base}/dists/stable/main/binary-${arch}/Packages"
 
   local work_dir
@@ -81,8 +88,8 @@ termux_prepare_index() {
 
   echo "$repo_base" > "$work_dir/.repo_base"
 
-  if curl -fLsS --retry 3 "$index_xz" -o "$work_dir/Packages.xz"; then
-    xz -dc "$work_dir/Packages.xz" > "$work_dir/Packages"
+  if curl -fLsS --retry 3 "$index_gz" -o "$work_dir/Packages.gz"; then
+    gzip -dc "$work_dir/Packages.gz" > "$work_dir/Packages"
   else
     curl -fLsS --retry 3 "$index_plain" -o "$work_dir/Packages"
   fi
@@ -113,10 +120,12 @@ termux_pkg_filename() {
 }
 
 prepare_termux_busybox() {
-  if [ -f "$CI_TMP_DIR/busybox/busybox" ]; then
+  # 缓存必须 stub + libbusybox.so 同时存在才复用；旧缓存（只有 stub）作废重下
+  if [ -f "$CI_TMP_DIR/busybox/busybox" ] && \
+     find "$CI_TMP_DIR/busybox/lib" -maxdepth 1 -name 'libbusybox.so*' -print -quit 2>/dev/null | grep -q .; then
     return 0
   fi
-
+  rm -rf "$CI_TMP_DIR/busybox"
   mkdir -p "$CI_TMP_DIR/busybox"
   local idx_dir
   idx_dir="$(termux_prepare_index)"
@@ -147,6 +156,36 @@ prepare_termux_busybox() {
 
   cp -f "$busybox_bin" "$CI_TMP_DIR/busybox/busybox"
   chmod 0755 "$CI_TMP_DIR/busybox/busybox"
+
+  # Termux busybox 是动态链接（NEEDED libbusybox.so.*，位于 deb 的 usr/lib/）。
+  # 只拷二进制会在设备上 CANNOT LINK；把 .so 一起拷入 bin/lib，
+  # danmu_core.sh 已将该目录加入 LD_LIBRARY_PATH。
+  local bb_so
+  while IFS= read -r bb_so; do
+    [ -n "$bb_so" ] || continue
+    mkdir -p "$CI_TMP_DIR/busybox/lib"
+    cp -f "$bb_so" "$CI_TMP_DIR/busybox/lib/"
+  done < <(find "$idx_dir/extract" -type f -name 'libbusybox.so*' 2>/dev/null)
+
+  # 供应链加固：busybox 的 NEEDED 库必须全部可解析，否则设备端直接无法运行。
+  # Android 系统库（bionic）由设备提供，仅校验 Termux 侧库。
+  if command -v readelf >/dev/null 2>&1; then
+    local missing_needed
+    missing_needed="$(readelf -d "$CI_TMP_DIR/busybox/busybox" 2>/dev/null \
+      | awk '/NEEDED/{gsub(/\[|\]/,"",$5); print $5}' \
+      | while read -r soname; do
+          case "$soname" in
+            libc.so|libm.so|libdl.so|liblog.so|libc++_shared.so|libz.so|ld-android.so|libstdc++.so)
+              continue ;;
+          esac
+          [ -e "$CI_TMP_DIR/busybox/lib/$soname" ] || echo "$soname"
+        done)"
+    if [ -n "$missing_needed" ]; then
+      echo "供应链加固失败：busybox 依赖缺失库: $missing_needed" >&2
+      exit 1
+    fi
+  fi
+
   rm -rf "$idx_dir"
 }
 
@@ -156,7 +195,8 @@ fetch_termux_node() {
   local repo_base="https://packages.termux.dev/apt/termux-main"
   # 供应链加固：node 闭包版本/SHA 全部固定于锁文件，索引解析仅作存在性回退
   local node_lockfile="${NODE_LOCKFILE:-$SCRIPT_DIR/termux-node-aarch64.lock.json}"
-  local index_xz="${repo_base}/dists/stable/main/binary-${arch}/Packages.xz"
+  # 实测官方索引无 .xz（404），提供 .gz 与明文两级回退
+  local index_gz="${repo_base}/dists/stable/main/binary-${arch}/Packages.gz"
   local index_plain="${repo_base}/dists/stable/main/binary-${arch}/Packages"
 
   local work_dir
@@ -164,8 +204,8 @@ fetch_termux_node() {
   local extracted="${work_dir}/extracted"
   mkdir -p "$extracted"
 
-  if curl -fLsS --retry 3 "$index_xz" -o "$work_dir/Packages.xz"; then
-    xz -dc "$work_dir/Packages.xz" > "$work_dir/Packages"
+  if curl -fLsS --retry 3 "$index_gz" -o "$work_dir/Packages.gz"; then
+    gzip -dc "$work_dir/Packages.gz" > "$work_dir/Packages"
   else
     curl -fLsS --retry 3 "$index_plain" -o "$work_dir/Packages"
   fi
@@ -326,6 +366,16 @@ PY
         fi
       else
         done_lib["$soname"]=1
+        # 供应链加固：Android 系统库（由 bionic/linker 提供）允许缺失；
+        # 其余缺失的 NEEDED 库会直接在设备上 CANNOT LINK，构建必须 fail closed。
+        case "$soname" in
+          libc.so|libm.so|libdl.so|liblog.so|libc++_shared.so|libz.so|ld-android.so|libstdc++.so)
+            ;;
+          *)
+            echo "供应链加固失败：$current_file 依赖的库 $soname 不在 Termux 闭包且不在系统白名单" >&2
+            exit 1
+            ;;
+        esac
       fi
     done
   done
@@ -398,6 +448,13 @@ TXT
   mkdir -p "$module_root/bin"
   cp -f "$CI_TMP_DIR/busybox/busybox" "$module_root/bin/busybox"
   chmod 0755 "$module_root/bin/busybox"
+  # Termux busybox 本体是 stub（代码全在 libbusybox.so），必须连同 .so 一起进模块，
+  # 否则设备端 CANNOT LINK。
+  if [ -d "$CI_TMP_DIR/busybox/lib" ]; then
+    mkdir -p "$module_root/bin/lib"
+    cp -a "$CI_TMP_DIR/busybox/lib/." "$module_root/bin/lib/"
+    chmod 0755 "$module_root/bin/lib/"*.so* 2>/dev/null || true
+  fi
 
   sed -i "s|^version=.*|version=${version}|g" "$module_root/module.prop"
   sed -i "s|^versionCode=.*|versionCode=${version_code}|g" "$module_root/module.prop"

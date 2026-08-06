@@ -63,7 +63,9 @@ EOF
 
 # 通过环境变量注入测试路径
 run_cli() {
+  CORE_DANMU_TEST_MODE=1 \
   CORE_DANMU_TEST_PERSIST="$TEST_PERSIST" \
+  CORE_DANMU_TEST_ARCHIVE="${TEST_ARCHIVE:-}" \
   CORE_DANMU_TEST_MODDIR="$TMP/moddir" \
   CORE_DANMU_TEST_NODE="$MODULE_NODE_MODULES" \
   CORE_DANMU_TEST_NODE_MODULES="${TEST_NODE_MODULES:-$MODULE_NODE_MODULES}" \
@@ -157,11 +159,66 @@ CURRENT_LINK="$(readlink "$TEST_PERSIST/core" 2>/dev/null || true)"
 [ "$CURRENT_LINK" = "$TEST_PERSIST/cores/$cid6/danmu_api" ] \
   || fail "测试6: fail-closed 时 CORE_LINK 不应被改变: $CURRENT_LINK"
 
-# ---------- 测试 5: install_core 保留核心根 package.json/package-lock.json ----------
-# 通过本地 mock GitHub 不现实，这里直接验证 staging 复制逻辑：
-# 检查 install_core 中复制路径包含根锁文件
-grep -q 'package-lock.json' "$CORE_SH" \
-  || fail "测试5: danmu_core.sh 必须处理核心根 package-lock.json"
+# ---------- 测试 6b: 核心不存在是普通失败，不得伪装 exit 78 ----------
+run_cli_capture core activate does-not-exist
+[ "$CLI_STATUS" -eq 1 ] \
+  || fail "测试6b: core_not_found 应 exit 1，实际 exit=$CLI_STATUS output=$CLI_OUTPUT"
+echo "$CLI_OUTPUT" | grep -q '"error":"core_not_found"' \
+  || fail "测试6b: 应输出 core_not_found: $CLI_OUTPUT"
+
+# ---------- 测试 5: install_core 真实归档布局保留根 manifest ----------
+# GitHub tar/zip 都有一层 <repo>-<ref>/；依赖声明位于该层，worker 位于其 danmu_api/。
+archive_src="$TMP/archive-src/test-repo-fixture"
+mkdir -p "$archive_src/danmu_api"
+cat > "$archive_src/package.json" <<'JSON'
+{"name":"fixture-core","version":"1.0.0","type":"module","dependencies":{}}
+JSON
+cat > "$archive_src/package-lock.json" <<'JSON'
+{"name":"fixture-core","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture-core","version":"1.0.0"}}}
+JSON
+cat > "$archive_src/danmu_api/worker.js" <<'EOF'
+export function handleRequest() { return new Response('fixture'); }
+EOF
+TEST_ARCHIVE="$TMP/test-repo-fixture.tar.gz"
+tar -czf "$TEST_ARCHIVE" -C "$TMP/archive-src" test-repo-fixture
+run_cli_capture core install test/repo fixture
+unset TEST_ARCHIVE
+[ "$CLI_STATUS" -eq 0 ] || fail "测试5: 本地归档安装失败: $CLI_OUTPUT"
+installed_root="$TEST_PERSIST/cores/test_repo_fixture_"
+[ -f "$installed_root/package.json" ] \
+  || fail "测试5: dest_root 未保留 package.json"
+[ -f "$installed_root/package-lock.json" ] \
+  || fail "测试5: dest_root 未保留 package-lock.json"
+[ -f "$installed_root/danmu_api/package.json" ] \
+  || fail "测试5: danmu_api 未保留供检查器读取的 package.json"
+[ -f "$installed_root/danmu_api/package-lock.json" ] \
+  || fail "测试5: danmu_api 未保留供检查器读取的 package-lock.json"
+run_cli_capture core fingerprint test_repo_fixture_
+[ "$CLI_STATUS" -eq 0 ] || fail "测试5: 安装后 fingerprint 失败: $CLI_OUTPUT"
+
+# ---------- 测试 5b: 安装成功但依赖阻断时不得上报 activated:true ----------
+blocked_src="$TMP/archive-src/test-blocked-ref"
+mkdir -p "$blocked_src/danmu_api"
+cat > "$blocked_src/package.json" <<'JSON'
+{"name":"blocked-core","version":"1.0.0","type":"module","dependencies":{"definitely-missing-danmu-test-dep":"1.0.0"}}
+JSON
+cat > "$blocked_src/package-lock.json" <<'JSON'
+{"name":"blocked-core","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"blocked-core","version":"1.0.0","dependencies":{"definitely-missing-danmu-test-dep":"1.0.0"}}}}
+JSON
+cp "$archive_src/danmu_api/worker.js" "$blocked_src/danmu_api/worker.js"
+TEST_ARCHIVE="$TMP/test-blocked-ref.tar.gz"
+tar -czf "$TEST_ARCHIVE" -C "$TMP/archive-src" test-blocked-ref
+run_cli_capture core install test/blocked ref
+unset TEST_ARCHIVE
+[ "$CLI_STATUS" -eq 78 ] \
+  || fail "测试5b: 缺依赖的已安装核心应 exit 78: exit=$CLI_STATUS output=$CLI_OUTPUT"
+echo "$CLI_OUTPUT" | grep -q '"result":"dependency_repair_required"' \
+  || fail "测试5b: 应返回 dependency_repair_required: $CLI_OUTPUT"
+echo "$CLI_OUTPUT" | grep -q '"activated":false' \
+  || fail "测试5b: 应明确 activated:false: $CLI_OUTPUT"
+if echo "$CLI_OUTPUT" | grep -q '"activated":true'; then
+  fail "测试5b: 不得谎报 activated:true: $CLI_OUTPUT"
+fi
 
 # ---------- 测试 7: core fingerprint 与 Node 端契约一致 ----------
 # 算法：sha256(canonical_json(sorted(dependencies+optionalDependencies)))，其中

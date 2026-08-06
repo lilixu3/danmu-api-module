@@ -468,7 +468,12 @@ fun CoreDetailScreen(
                     onRepairDependencies = { viewModel.repairCoreDependencies() },
                     onImportLocal = {
                         importLocalLauncher.launch(
-                            arrayOf("application/zip", "application/x-zip-compressed"),
+                            arrayOf(
+                                "application/zip",
+                                "application/x-zip-compressed",
+                                "application/octet-stream",
+                                "application/x-7z-compressed",
+                            ),
                         )
                     },
                     onDismissRepair = { viewModel.dismissDependencyRepair() },

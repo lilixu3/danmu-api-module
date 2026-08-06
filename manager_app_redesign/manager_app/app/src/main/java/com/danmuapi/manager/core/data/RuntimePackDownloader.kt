@@ -230,7 +230,7 @@ VUsmyyO7hViS/U7pwIdYiXT0+rvwwcyLhWyzUJjI+2clAgMBAAE=
                 }
             }
             if (count != manifest.artifactSize ||
-                RuntimePackProtocol.sha256(target.readBytes()) != manifest.artifactSha256
+                RuntimePackProtocol.sha256(target) != manifest.artifactSha256
             ) {
                 throw RuntimePackIntegrityException("依赖包大小或 SHA-256 校验失败")
             }
@@ -239,6 +239,11 @@ VUsmyyO7hViS/U7pwIdYiXT0+rvwwcyLhWyzUJjI+2clAgMBAAE=
     }
 
     fun extractArchive(archive: File, unpackDir: File): File {
+        // 先清空目标目录，保证安装集严格等于本次包内容，杜绝旧残留混入。
+        if (unpackDir.exists()) {
+            unpackDir.deleteRecursively()
+        }
+        unpackDir.mkdirs()
         val seen = HashSet<String>()
         var entryCount = 0
         var extractedBytes = 0L
@@ -299,19 +304,22 @@ VUsmyyO7hViS/U7pwIdYiXT0+rvwwcyLhWyzUJjI+2clAgMBAAE=
     }
 
     private fun requestBytes(url: String, maxBytes: Int): ByteArray? {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .build()
         return try {
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", USER_AGENT)
-                .build()
             metadataClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
                 val body = response.body ?: return null
                 if (body.contentLength() > maxBytes.toLong()) {
+                    // 大小超限是完整性失败而非网络故障：留给调用方区分错误归因
                     throw RuntimePackIntegrityException("响应超过允许大小")
                 }
                 body.bytes()
             }
+        } catch (error: RuntimePackIntegrityException) {
+            throw error
         } catch (_: Exception) {
             null
         }

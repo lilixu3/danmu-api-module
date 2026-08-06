@@ -55,10 +55,12 @@ function makeNodeModules(specs) {
 
 // ---------------------------------------------------------------- classify
 
-test('classifyDependency: chokidar/dotenv/esbuild are knownNonRuntime', () => {
-  assert.equal(classifyDependency('chokidar'), 'knownNonRuntime');
-  assert.equal(classifyDependency('dotenv'), 'knownNonRuntime');
-  assert.equal(classifyDependency('esbuild'), 'knownNonRuntime');
+test('classifyDependency: esbuild is knownNonRuntime, chokidar/dotenv required, redis conditional', () => {
+  assert.strictEqual(classifyDependency('esbuild'), 'knownNonRuntime');
+  assert.strictEqual(classifyDependency('chokidar'), 'required');
+  assert.strictEqual(classifyDependency('dotenv'), 'required');
+  assert.strictEqual(classifyDependency('redis'), 'conditional');
+  assert.strictEqual(classifyDependency('node-fetch'), 'required');
 });
 
 test('classifyDependency: redis is conditional, everything else required', () => {
@@ -130,6 +132,22 @@ test('satisfies: unparseable spec or installed version fails closed with null', 
   assert.equal(satisfies('garbage', '^1.0.0'), null);
   // v-prefixed installed versions are unambiguous and tolerated
   assert.equal(satisfies('v1.2.3', '^1.0.0'), true);
+});
+
+test('satisfies: caret/tilde single and dual component semantics match npm', () => {
+  assert.equal(satisfies('1.9.9', '^1'), true);
+  assert.equal(satisfies('2.0.0', '^1'), false);
+  assert.equal(satisfies('0.9.9', '^0'), true);
+  assert.equal(satisfies('1.0.0', '^0'), false);
+  assert.equal(satisfies('1.0.9', '~1'), true);
+  assert.equal(satisfies('2.0.0', '~1'), false);
+  assert.equal(satisfies('1.2.9', '^1.2'), true);
+  assert.equal(satisfies('2.0.0', '^1.2'), false);
+});
+
+test('satisfies: comma separated ranges are supported', () => {
+  assert.equal(satisfies('1.5.0', '>=1.0.0, <2.0.0'), true);
+  assert.equal(satisfies('2.5.0', '>=1.0.0, <2.0.0'), false);
 });
 
 // ------------------------------------------------------------ parseEnvFile
@@ -217,9 +235,10 @@ test('inspectCore: healthy core with all deps installed', () => {
   assert.equal(r.blocked, false);
   assert.deepEqual(r.missing, []);
   assert.deepEqual(r.incompatible, []);
-  assert.equal(r.required.length, 2);
+  // chokidar/dotenv 是运行时依赖（server.js 顶层 import），esbuild 才是构建期
+  assert.equal(r.required.length, 4);
   assert.ok(r.required.every((e) => e.compatible === true));
-  assert.deepEqual(r.ignored.map((i) => i.name).sort(), ['chokidar', 'dotenv', 'esbuild']);
+  assert.deepEqual(r.ignored.map((i) => i.name), ['esbuild']);
 });
 
 test('inspectCore: missing required dep is listed and blocks', () => {

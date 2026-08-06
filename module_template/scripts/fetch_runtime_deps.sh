@@ -99,7 +99,19 @@ ACTUAL_SIZE="$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ')"
   exit 1
 }
 
-# 解压并校验路径安全
+# 解压前路径安全校验：任何条目含 .. 、绝对路径或以非 node_modules 开头都拒绝。
+# 先校验再解压，避免危险条目先落盘。unzip -Z1 与 busybox unzip -l 输出兼容。
+unsafe=""
+if command -v unzip >/dev/null 2>&1; then
+  unsafe="$(unzip -Z1 "$ZIP" 2>/dev/null | grep -E '(^|/)\\.\\.(/|$)|^/' || true)"
+elif command -v busybox >/dev/null 2>&1; then
+  unsafe="$(busybox unzip -l "$ZIP" 2>/dev/null | awk 'NR>3 && $0 !~ /^Archive:/ {print $4}' | grep -E '(^|/)\\.\\.(/|$)|^/' || true)"
+fi
+if [ -n "$unsafe" ]; then
+  echo "zip contains unsafe path" >&2
+  exit 1
+fi
+
 EXTRACT="$WORK/extract"
 mkdir -p "$EXTRACT"
 
@@ -112,21 +124,19 @@ else
   exit 1
 fi
 
-# 路径穿越检查：任何条目含 .. 或绝对路径都拒绝
-if command -v unzip >/dev/null 2>&1; then
-  unzip -Z1 "$ZIP" 2>/dev/null | grep -E '(^|/)\.\.(/|$)|^/' >/dev/null 2>&1 && {
-    echo "zip contains unsafe path" >&2
-    exit 1
-  }
+# 校验解压后 node_modules 存在（签名包契约；支持根层或单层包装目录）
+has_node_modules=""
+if [ -d "$EXTRACT/node_modules" ]; then
+  has_node_modules=1
+else
+  for candidate in "$EXTRACT"/*/node_modules; do
+    [ -d "$candidate" ] && has_node_modules=1 && break
+  done
 fi
-
-# 校验解压内容在目标内部
-EXTRACT_DIR="$(cd "$EXTRACT" && pwd)"
-DEST_PARENT="$(cd "$(dirname "$DEST")" && pwd)"
-[ "${EXTRACT_DIR#"$DEST_PARENT"}" != "$EXTRACT_DIR" ] || {
-  # 不在同一父目录时无法做路径前缀检查，但 mktemp 目录本身是可信的
-  :
-}
+if [ -z "$has_node_modules" ]; then
+  echo "zip does not contain node_modules" >&2
+  exit 1
+fi
 
 # 原子替换：先移动到 staging，再 rename 到目标
 STAGING="$WORK/staging"

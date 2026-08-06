@@ -1,6 +1,7 @@
 package com.danmuapi.manager.core.data
 
 import com.danmuapi.manager.core.model.CoreDependencyRepairRequired
+import com.danmuapi.manager.core.root.CoreActivationOutcome
 import com.danmuapi.manager.core.root.CoreDependencyRepairGateway
 import java.io.File
 
@@ -23,6 +24,7 @@ class RuntimePackRepairManager(
         DownloadExtractFailed,
         InstallFailed,
         ActivateStillBlocked,
+        ActivateFailed,
     }
 
     sealed class RepairOutcome {
@@ -81,15 +83,22 @@ class RuntimePackRepairManager(
         onProgress(RepairStage.Install, 1f)
 
         onProgress(RepairStage.Activate, 0f)
-        val stillBlocked = cli.activateCoreWithDependencyRepair(coreId)
+        val activation = cli.activateCoreWithDependencyRepair(coreId)
         onProgress(RepairStage.Activate, 1f)
-        return if (stillBlocked == null) {
-            RepairOutcome.Success
-        } else {
-            RepairOutcome.Failure(
-                RepairFailure.ActivateStillBlocked,
-                "依赖已安装但激活仍被阻断：${stillBlocked.allNames}",
-                stillBlocked,
+        return when (activation) {
+            CoreActivationOutcome.Activated -> RepairOutcome.Success
+            is CoreActivationOutcome.RepairRequired -> {
+                val names = activation.repair.allNames
+                val suffix = names.takeIf { it.isNotEmpty() }?.joinToString() ?: "未知依赖"
+                RepairOutcome.Failure(
+                    RepairFailure.ActivateStillBlocked,
+                    "依赖已安装但激活仍被阻断：$suffix",
+                    activation.repair,
+                )
+            }
+            is CoreActivationOutcome.Failure -> RepairOutcome.Failure(
+                RepairFailure.ActivateFailed,
+                activation.message,
             )
         }
     }

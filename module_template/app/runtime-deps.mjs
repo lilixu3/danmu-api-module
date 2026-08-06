@@ -9,10 +9,12 @@
 //       symlink farm; exit 0 = import ok, non-zero = failure. Never modifies the core.
 //
 // Classification:
-//   - chokidar / dotenv / esbuild  -> knownNonRuntime (build-time, ignored)
+//   - esbuild                      -> knownNonRuntime (build-time, ignored)
 //   - redis                        -> conditional (required only when the .env file
 //                                      has a non-empty LOCAL_REDIS_URL)
 //   - everything else              -> required
+// Note: chokidar / dotenv are RUNTIME deps (danmu_api/server.js imports them at
+// top level) and must be treated as required like any other.
 //
 // Version ranges: exact, ^, ~, >=, compound (">=1.0.0 <2.0.0"), *. Anything that
 // cannot be parsed fails closed (treated as incompatible).
@@ -23,7 +25,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const KNOWN_NON_RUNTIME = new Set(['chokidar', 'dotenv', 'esbuild']);
+const KNOWN_NON_RUNTIME = new Set(['esbuild']);
 const CONDITIONAL_DEPS = new Set(['redis']);
 const ENV_KEY_REDIS = 'LOCAL_REDIS_URL';
 const SMOKE_TIMEOUT_MS = 15000;
@@ -71,14 +73,22 @@ export function parseRange(spec) {
   if (!s) return null;
   if (/^[*xX]$/.test(s)) return { kind: 'any' };
 
-  const tokens = s.split(/\s+/).filter(Boolean);
+  // 支持逗号分隔（">=1.0.0, <2.0.0"）与空格分隔的联合比较器
+  const tokens = s.split(/[\s,]+/).filter(Boolean);
   const comparators = [];
   for (const t of tokens) {
     const m = /^(>=|<=|>|<|=|~|\^)?v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(t);
     if (!m) return null;
     const op = m[1] ?? '=';
+    const comps = componentCount(t);
     const ver = [Number(m[2]), Number(m[3] ?? 0), Number(m[4] ?? 0)];
-    comparators.push(...expandComparator(op, ver, componentCount(t)));
+    if (comps === 1 && op === '^' && ver[0] === 0) {
+      // ^0 -> >=0.0.0 <1.0.0（npm 语义；补零后的普通 caret 会误判为 <0.0.1）
+      comparators.push({ op: '>=', ver });
+      comparators.push({ op: '<', ver: [1, 0, 0] });
+    } else {
+      comparators.push(...expandComparator(op, ver, comps));
+    }
   }
   if (comparators.length === 0) return null;
   return { kind: 'comparators', comparators };
@@ -282,23 +292,36 @@ export function inspectCore({ coreRoot, nodeModulesDir, envFile, fallbackManifes
 // -------------------------------------------------------------------- smoke
 
 export function smokeCore({ coreRoot, nodeModulesDir }) {
-  const worker = path.join(coreRoot, 'danmu_api', 'worker.js');
-  if (!fs.existsSync(worker)) return 3;
+  // 兼容两种调用布局：coreRoot 为 cores/<id>（根层）或 cores/<id>/danmu_api（内容层）
+  const nestedWorker = path.join(coreRoot, 'danmu_api', 'worker.js');
+  const directWorker = path.join(coreRoot, 'worker.js');
+  const worker = fs.existsSync(nestedWorker) ? nestedWorker
+    : fs.existsSync(directWorker) ? directWorker
+    : null;
+  if (!worker) return 3;
+  const coreContentDir = worker === nestedWorker ? path.join(coreRoot, 'danmu_api') : coreRoot;
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'danmu-deps-smoke-'));
   try {
     fs.symlinkSync(nodeModulesDir, path.join(tmp, 'node_modules'));
-    fs.symlinkSync(path.join(coreRoot, 'danmu_api'), path.join(tmp, 'danmu_api'));
+    fs.symlinkSync(coreContentDir, path.join(tmp, 'danmu_api'));
     const rootPkg = path.join(coreRoot, 'package.json');
     if (fs.existsSync(rootPkg)) {
       fs.copyFileSync(rootPkg, path.join(tmp, 'package.json'));
     }
 
-    const res = spawnSync(process.execPath, ['--preserve-symlinks-main', path.join(tmp, 'danmu_api', 'worker.js')], {
-      cwd: tmp,
-      timeout: SMOKE_TIMEOUT_MS,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    // spawnSync + timeout：import 即崩（status != null 且非 0）立刻暴露；
+    // 超时说明 worker 仍存活 —— danmu_api worker 是常驻服务（启动即监听），视为健康。
+    // 注意：不能在此用异步 spawn 轮询 —— Atomics.wait 阻塞主线程时 exit 事件不派发。
+    const res = spawnSync(
+      process.execPath,
+      ['--preserve-symlinks-main', path.join(tmp, 'danmu_api', path.basename(worker))],
+      {
+        cwd: tmp,
+        timeout: SMOKE_TIMEOUT_MS,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
     if (res.error) {
       if (res.error.code === 'ETIMEDOUT') return 0; // worker kept running (healthy server)
       return 4; // spawn failure

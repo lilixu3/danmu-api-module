@@ -45,6 +45,7 @@ import com.danmuapi.manager.core.model.RollbackCommitItem
 import com.danmuapi.manager.core.model.RollbackSearchSnapshot
 import com.danmuapi.manager.core.model.ServerConfig
 import com.danmuapi.manager.core.model.ServerLogEntry
+import com.danmuapi.manager.core.root.CoreActivationOutcome
 import com.danmuapi.manager.core.root.RootShell
 import com.danmuapi.manager.worker.CoreUpdateSilentCheckScheduler
 import com.danmuapi.manager.worker.LogCleanupScheduler
@@ -55,6 +56,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -92,6 +95,9 @@ class ManagerViewModel(
         private set
     var dependencyRepairNames: List<String> by mutableStateOf(emptyList())
         private set
+
+    /** 修复/导入流程互斥：共享工作目录与 deps install 不得并发。 */
+    private val dependencyRepairMutex = Mutex()
 
     var apiToken: String by mutableStateOf("87654321")
         private set
@@ -388,22 +394,32 @@ class ManagerViewModel(
     fun activateCore(id: String) {
         viewModelScope.launch {
             if (!ensureRootAccess(forceSnackbar = true)) return@launch
-            val repair = withBusy("切换核心中…") {
+            when (val activation = withBusy("切换核心中…") {
                 val result = repository.activateCoreWithRepair(id)
                 refreshAllInternal()
                 result
-            }
-            if (repair == null) {
-                pendingRepairCoreId = null
-                dependencyRepairAvailable = false
-                dependencyRepairNames = emptyList()
-                snackbars.tryEmit("已切换核心")
-            } else {
-                pendingRepairCoreId = id
-                dependencyRepairAvailable = repair.allNames.isNotEmpty()
-                dependencyRepairNames = repair.allNames
-                dependencyRepairState = DependencyRepairUiState.Idle
-                snackbars.tryEmit("核心缺少依赖，需要修复后才能启动")
+            }) {
+                CoreActivationOutcome.Activated -> {
+                    pendingRepairCoreId = null
+                    dependencyRepairAvailable = false
+                    dependencyRepairNames = emptyList()
+                    dependencyRepairState = DependencyRepairUiState.Idle
+                    snackbars.tryEmit("已切换核心")
+                }
+                is CoreActivationOutcome.RepairRequired -> {
+                    pendingRepairCoreId = id
+                    dependencyRepairAvailable = true
+                    dependencyRepairNames = activation.repair.allNames
+                    dependencyRepairState = DependencyRepairUiState.Idle
+                    snackbars.tryEmit("核心缺少依赖，需要修复后才能启动")
+                }
+                is CoreActivationOutcome.Failure -> {
+                    pendingRepairCoreId = null
+                    dependencyRepairAvailable = false
+                    dependencyRepairNames = emptyList()
+                    dependencyRepairState = DependencyRepairUiState.Idle
+                    snackbars.tryEmit("核心激活失败：${activation.message}")
+                }
             }
         }
     }
@@ -419,24 +435,33 @@ class ManagerViewModel(
         val coreId = pendingRepairCoreId ?: return
         viewModelScope.launch {
             if (!ensureRootAccess(forceSnackbar = true)) return@launch
-            dependencyRepairState = DependencyRepairUiState.Repairing("准备修复…", 0f)
-            val outcome = repository.repairCoreDependencies(coreId) { stage, progress ->
-                dependencyRepairState = DependencyRepairUiState.Repairing(stageLabel(stage), progress)
-            }
-            when (outcome) {
-                is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Success -> {
-                    pendingRepairCoreId = null
-                    dependencyRepairAvailable = false
-                    dependencyRepairNames = emptyList()
-                    dependencyRepairState = DependencyRepairUiState.Idle
-                    snackbars.tryEmit("依赖修复完成，核心已激活")
+            dependencyRepairMutex.withLock {
+                dependencyRepairState = DependencyRepairUiState.Repairing("准备修复…", 0f)
+                busy = true
+                busyMessage = "修复核心依赖中…"
+                try {
+                    val outcome = repository.repairCoreDependencies(coreId) { stage, progress ->
+                        dependencyRepairState = DependencyRepairUiState.Repairing(stageLabel(stage), progress)
+                    }
+                    when (outcome) {
+                        is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Success -> {
+                            pendingRepairCoreId = null
+                            dependencyRepairAvailable = false
+                            dependencyRepairNames = emptyList()
+                            dependencyRepairState = DependencyRepairUiState.Idle
+                            snackbars.tryEmit("依赖修复完成，核心已激活")
+                        }
+                        is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Failure -> {
+                            dependencyRepairState = DependencyRepairUiState.Error(outcome.message)
+                            snackbars.tryEmit("依赖修复失败：${outcome.message}")
+                        }
+                    }
+                } finally {
+                    busy = false
+                    busyMessage = null
                 }
-                is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Failure -> {
-                    dependencyRepairState = DependencyRepairUiState.Error(outcome.message)
-                    snackbars.tryEmit("依赖修复失败：${outcome.message}")
-                }
+                refreshAllInternal()
             }
-            refreshAllInternal()
         }
     }
 
@@ -455,38 +480,81 @@ class ManagerViewModel(
         val coreId = pendingRepairCoreId ?: return
         viewModelScope.launch {
             if (!ensureRootAccess(forceSnackbar = true)) return@launch
-            dependencyRepairState = DependencyRepairUiState.Repairing("导入本地依赖包…", 0f)
-            val archive = withContext(Dispatchers.IO) {
-                val file = File(getApplication<Application>().cacheDir, "local-pack-${System.currentTimeMillis()}.zip")
-                runCatching {
-                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
-                        file.outputStream().use { output -> input.copyTo(output) }
+            dependencyRepairMutex.withLock {
+                dependencyRepairState = DependencyRepairUiState.Repairing("导入本地依赖包…", 0f)
+                busy = true
+                busyMessage = "导入本地依赖包中…"
+                try {
+                    val archive = withContext(Dispatchers.IO) {
+                        val file = File(getApplication<Application>().cacheDir, "local-pack-${System.currentTimeMillis()}.zip")
+                        val copied = runCatching {
+                            val resolver = getApplication<Application>().contentResolver
+                            val size = resolver.query(
+                                uri,
+                                arrayOf(android.provider.OpenableColumns.SIZE),
+                                null, null, null,
+                            )?.use { cursor ->
+                                if (cursor.moveToFirst()) {
+                                    cursor.getLong(0)
+                                } else {
+                                    -1L
+                                }
+                            } ?: -1L
+                            if (size > com.danmuapi.manager.core.data.RuntimePackProtocol.MAX_ARCHIVE_BYTES) {
+                                throw java.io.IOException("所选文件超过 64MB 上限")
+                            }
+                            resolver.openInputStream(uri)?.use { input ->
+                                file.outputStream().use { output ->
+                                    var total = 0L
+                                    val buffer = ByteArray(64 * 1024)
+                                    while (true) {
+                                        val read = input.read(buffer)
+                                        if (read < 0) break
+                                        total += read
+                                        if (total > com.danmuapi.manager.core.data.RuntimePackProtocol.MAX_ARCHIVE_BYTES) {
+                                            throw java.io.IOException("所选文件超过 64MB 上限")
+                                        }
+                                        output.write(buffer, 0, read)
+                                    }
+                                }
+                            } ?: throw java.io.IOException("无法打开所选文件")
+                        }
+                        copied.fold(
+                            onSuccess = { file },
+                            onFailure = { error ->
+                                file.delete()
+                                snackbars.tryEmit(error.message ?: "本地依赖包读取失败")
+                                File("")
+                            },
+                        )
                     }
-                }.getOrNull()?.let { file } ?: File("")
-            }
-            if (!archive.isFile || archive.length() <= 0L) {
-                dependencyRepairState = DependencyRepairUiState.Error("无法读取所选文件")
-                snackbars.tryEmit("本地依赖包读取失败")
-                return@launch
-            }
-            val outcome = repository.importLocalDependencies(coreId, archive) { stage, progress ->
-                dependencyRepairState = DependencyRepairUiState.Repairing(stageLabel(stage), progress)
-            }
-            archive.delete()
-            when (outcome) {
-                is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Success -> {
-                    pendingRepairCoreId = null
-                    dependencyRepairAvailable = false
-                    dependencyRepairNames = emptyList()
-                    dependencyRepairState = DependencyRepairUiState.Idle
-                    snackbars.tryEmit("依赖导入完成，核心已激活")
+                    if (!archive.isFile || archive.length() <= 0L) {
+                        dependencyRepairState = DependencyRepairUiState.Error("无法读取所选文件")
+                        return@withLock
+                    }
+                    val outcome = repository.importLocalDependencies(coreId, archive) { stage, progress ->
+                        dependencyRepairState = DependencyRepairUiState.Repairing(stageLabel(stage), progress)
+                    }
+                    archive.delete()
+                    when (outcome) {
+                        is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Success -> {
+                            pendingRepairCoreId = null
+                            dependencyRepairAvailable = false
+                            dependencyRepairNames = emptyList()
+                            dependencyRepairState = DependencyRepairUiState.Idle
+                            snackbars.tryEmit("依赖导入完成，核心已激活")
+                        }
+                        is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Failure -> {
+                            dependencyRepairState = DependencyRepairUiState.Error(outcome.message)
+                            snackbars.tryEmit("依赖导入失败：${outcome.message}")
+                        }
+                    }
+                } finally {
+                    busy = false
+                    busyMessage = null
                 }
-                is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Failure -> {
-                    dependencyRepairState = DependencyRepairUiState.Error(outcome.message)
-                    snackbars.tryEmit("依赖导入失败：${outcome.message}")
-                }
+                refreshAllInternal()
             }
-            refreshAllInternal()
         }
     }
 

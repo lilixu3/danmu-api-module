@@ -14,6 +14,7 @@ import com.danmuapi.manager.core.model.RollbackCommitItem
 import com.danmuapi.manager.core.model.RollbackCommitPage
 import com.danmuapi.manager.core.model.RollbackSearchSnapshot
 import com.danmuapi.manager.core.model.CoreDependencyRepairRequired
+import com.danmuapi.manager.core.root.CoreActivationOutcome
 import com.danmuapi.manager.core.root.DanmuCli
 import okhttp3.OkHttpClient
 import java.io.File
@@ -122,11 +123,8 @@ class DanmuRepository(
 
     suspend fun activateCore(id: String): Boolean = cli.activateCore(id)
 
-    /**
-     * 激活核心并返回依赖阻断信息（exit 78 时）。
-     * @return null=激活成功；否则为需要修复的依赖信息
-     */
-    suspend fun activateCoreWithRepair(id: String): CoreDependencyRepairRequired? =
+    /** 激活核心并严格区分成功、依赖阻断和普通失败。 */
+    suspend fun activateCoreWithRepair(id: String): CoreActivationOutcome =
         cli.activateCoreWithDependencyRepair(id)
 
     /**
@@ -138,6 +136,9 @@ class DanmuRepository(
         onProgress: (RuntimePackRepairManager.RepairStage, Float) -> Unit = { _, _ -> },
     ): RuntimePackRepairManager.RepairOutcome {
         runtimePackWorkDir.mkdirs()
+        // 每次修复使用独立子目录，结束时整体清理，避免旧包残留混入 cp -a。
+        val sessionDir = File(runtimePackWorkDir, "repair-${System.currentTimeMillis()}")
+        sessionDir.mkdirs()
         val httpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
@@ -156,9 +157,13 @@ class DanmuRepository(
                 }
                 downloader.extractArchive(archive, workingDir)
             },
-            workingDir = runtimePackWorkDir,
+            workingDir = sessionDir,
         )
-        return manager.repair(coreId, onProgress)
+        return try {
+            manager.repair(coreId, onProgress)
+        } finally {
+            sessionDir.deleteRecursively()
+        }
     }
 
     /**
@@ -171,9 +176,9 @@ class DanmuRepository(
         onProgress: (RuntimePackRepairManager.RepairStage, Float) -> Unit = { _, _ -> },
     ): RuntimePackRepairManager.RepairOutcome {
         runtimePackWorkDir.mkdirs()
+        val outDir = File(runtimePackWorkDir, "local-import-${System.currentTimeMillis()}")
+        outDir.mkdirs()
         try {
-            val outDir = File(runtimePackWorkDir, "local-import-${System.currentTimeMillis()}")
-            outDir.mkdirs()
             val importer = LocalRuntimePackImporter()
             val sourceNodeModules = importer.importArchive(archive, outDir)
                 ?: return RuntimePackRepairManager.RepairOutcome.Failure(
@@ -194,15 +199,24 @@ class DanmuRepository(
             onProgress(RuntimePackRepairManager.RepairStage.Install, 1f)
 
             onProgress(RuntimePackRepairManager.RepairStage.Activate, 0f)
-            val stillBlocked = cli.activateCoreWithDependencyRepair(coreId)
+            val activation = cli.activateCoreWithDependencyRepair(coreId)
             onProgress(RuntimePackRepairManager.RepairStage.Activate, 1f)
-            return if (stillBlocked == null) {
-                RuntimePackRepairManager.RepairOutcome.Success
-            } else {
-                RuntimePackRepairManager.RepairOutcome.Failure(
-                    RuntimePackRepairManager.RepairFailure.ActivateStillBlocked,
-                    "依赖已安装但激活仍被阻断：${stillBlocked.allNames}",
-                    stillBlocked,
+            return when (activation) {
+                CoreActivationOutcome.Activated -> RuntimePackRepairManager.RepairOutcome.Success
+                is CoreActivationOutcome.RepairRequired -> {
+                    val suffix = activation.repair.allNames
+                        .takeIf { it.isNotEmpty() }
+                        ?.joinToString()
+                        ?: "未知依赖"
+                    RuntimePackRepairManager.RepairOutcome.Failure(
+                        RuntimePackRepairManager.RepairFailure.ActivateStillBlocked,
+                        "依赖已安装但激活仍被阻断：$suffix",
+                        activation.repair,
+                    )
+                }
+                is CoreActivationOutcome.Failure -> RuntimePackRepairManager.RepairOutcome.Failure(
+                    RuntimePackRepairManager.RepairFailure.ActivateFailed,
+                    activation.message,
                 )
             }
         } catch (error: Exception) {
@@ -210,6 +224,8 @@ class DanmuRepository(
                 RuntimePackRepairManager.RepairFailure.DownloadExtractFailed,
                 error.message ?: "本地依赖包导入失败",
             )
+        } finally {
+            outDir.deleteRecursively()
         }
     }
 

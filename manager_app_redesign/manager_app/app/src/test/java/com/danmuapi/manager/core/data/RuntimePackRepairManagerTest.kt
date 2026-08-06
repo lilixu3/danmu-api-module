@@ -1,6 +1,7 @@
 package com.danmuapi.manager.core.data
 
 import com.danmuapi.manager.core.model.CoreDependencyRepairRequired
+import com.danmuapi.manager.core.root.CoreActivationOutcome
 import com.danmuapi.manager.core.root.CoreDependencyRepairGateway
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -35,7 +36,7 @@ class RuntimePackRepairManagerTest {
 
     private class FakeCli(
         var fingerprint: String? = "f".repeat(64),
-        var activateResult: CoreDependencyRepairRequired? = null,
+        var activateResult: CoreActivationOutcome = CoreActivationOutcome.Activated,
         var installResult: Boolean = true,
     ) : CoreDependencyRepairGateway {
         val calls = mutableListOf<String>()
@@ -54,7 +55,7 @@ class RuntimePackRepairManagerTest {
             return installResult
         }
 
-        override suspend fun activateCoreWithDependencyRepair(id: String): CoreDependencyRepairRequired? {
+        override suspend fun activateCoreWithDependencyRepair(id: String): CoreActivationOutcome {
             calls.add("activate")
             return activateResult
         }
@@ -182,7 +183,11 @@ class RuntimePackRepairManagerTest {
 
     @Test
     fun repair_activateStillBlocked_reportsRemainingRepair() = runBlocking {
-        val cli = FakeCli(activateResult = CoreDependencyRepairRequired(core = "core-1", missing = listOf("redis")))
+        val cli = FakeCli(
+            activateResult = CoreActivationOutcome.RepairRequired(
+                CoreDependencyRepairRequired(core = "core-1", missing = listOf("redis")),
+            ),
+        )
         val manager = RuntimePackRepairManager(
             cli = cli,
             fetchManifest = { manifest() },

@@ -58,6 +58,18 @@ jobs:
       - name: Check module runtime contract
         run: ./scripts/ci/check_module_runtime_contract.sh
 
+      - name: Shell integration tests (dependency gate / atomic install / archive layout)
+        run: sh scripts/ci/test_runtime_dependency_shell.sh
+
+      - name: Node pinning & lockfile contract tests
+        run: sh scripts/ci/test_build_node_pinning.sh
+
+      - name: Runtime pack fetch contract tests
+        run: sh scripts/ci/test_fetch_runtime_deps.sh
+
+      - name: CI contract self-check
+        run: sh scripts/ci/test_ci_node_matrix.sh
+
       - name: Build manager debug
         run: ./scripts/ci/build_manager.sh --variant debug
 
