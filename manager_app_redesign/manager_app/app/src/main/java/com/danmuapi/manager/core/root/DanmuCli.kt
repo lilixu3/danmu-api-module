@@ -1,6 +1,7 @@
 package com.danmuapi.manager.core.root
 
 import com.danmuapi.manager.core.model.CoreCatalog
+import com.danmuapi.manager.core.model.CoreDependencyRepairRequired
 import com.danmuapi.manager.core.model.LogDirectory
 import com.danmuapi.manager.core.model.LogFileEntry
 import com.danmuapi.manager.core.model.ManagerStatus
@@ -26,10 +27,68 @@ class DanmuCli(
     moshi: Moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
         .build(),
-) {
+) : CoreDependencyRepairGateway {
+    private val moshi: Moshi = moshi
     private val statusAdapter = moshi.adapter(ManagerStatus::class.java)
     private val coreCatalogAdapter = moshi.adapter(CoreCatalog::class.java)
     private val logDirectoryAdapter = moshi.adapter(LogDirectory::class.java)
+
+    /** CLI dependency_repair_required JSON 的宽松载荷：incompatible 元素可能是字符串或对象 */
+    private data class RepairRequiredPayload(
+        val core: String = "",
+        val missing: List<String> = emptyList(),
+        val incompatible: List<RepairElement> = emptyList(),
+        val conditional: List<String> = emptyList(),
+        val skipped: String? = null,
+    )
+
+    /** 兼容字符串/对象两种 incompatible 元素 */
+    private data class RepairElement(val name: String? = null) {
+        fun displayName(): String? = name
+
+        companion object {
+            val ADAPTER: Any = object : com.squareup.moshi.JsonAdapter<RepairElement>() {
+                override fun fromJson(reader: com.squareup.moshi.JsonReader): RepairElement? {
+                    return when (reader.peek()) {
+                        com.squareup.moshi.JsonReader.Token.STRING -> RepairElement(reader.nextString())
+                        com.squareup.moshi.JsonReader.Token.BEGIN_OBJECT -> {
+                            var name: String? = null
+                            reader.beginObject()
+                            while (reader.hasNext()) {
+                                val key = reader.nextName()
+                                if (key == "name") name = reader.nextString() else reader.skipValue()
+                            }
+                            reader.endObject()
+                            RepairElement(name)
+                        }
+                        else -> {
+                            reader.skipValue()
+                            null
+                        }
+                    }
+                }
+
+                override fun toJson(
+                    writer: com.squareup.moshi.JsonWriter,
+                    value: RepairElement?,
+                ) {
+                    writer.beginObject()
+                    writer.name("name").value(value?.name)
+                    writer.endObject()
+                }
+            }
+        }
+    }
+
+    private fun RepairRequiredPayload.toModel(fallbackCore: String): CoreDependencyRepairRequired {
+        return CoreDependencyRepairRequired(
+            core = core.ifBlank { fallbackCore },
+            missing = missing,
+            incompatible = incompatible.mapNotNull { it.displayName() },
+            conditional = conditional,
+            skipped = skipped,
+        )
+    }
 
     private fun sanitizeShellArgument(value: String): String {
         return value
@@ -113,9 +172,52 @@ class DanmuCli(
         return runSu("${DanmuPaths.CORE_CLI} core activate '$safeId'", 30_000L).exitCode == 0
     }
 
+    /**
+     * 激活核心并解析依赖阻断信息。
+     * @return null=激活成功；否则为依赖修复要求（exit 78 约定）
+     */
+    override suspend fun activateCoreWithDependencyRepair(id: String): CoreDependencyRepairRequired? {
+        val safeId = sanitizeShellArgument(id)
+        val result = runSu("${DanmuPaths.CORE_CLI} core activate '$safeId'", 30_000L)
+        if (result.exitCode == 0) return null
+        val json = extractJsonObjectForTest(result.stdout) ?: return CoreDependencyRepairRequired(core = safeId)
+        val parsed = runCatching {
+            moshi.adapter(RepairRequiredPayload::class.java).fromJson(json)
+        }.getOrNull()
+        return parsed?.toModel(safeId) ?: CoreDependencyRepairRequired(core = safeId)
+    }
+
     suspend fun deleteCore(id: String): Boolean {
         val safeId = sanitizeShellArgument(id)
         return runSu("${DanmuPaths.CORE_CLI} core delete '$safeId'", 30_000L).exitCode == 0
+    }
+
+    override suspend fun getCoreFingerprint(id: String): String? {
+        val safeId = sanitizeShellArgument(id)
+        val result = runSu("${DanmuPaths.CORE_CLI} core fingerprint '$safeId'", 15_000L)
+        if (result.exitCode != 0) return null
+        val fingerprint = Regex("\"fingerprint\":\\s*\"([0-9a-f]{64})\"")
+            .find(result.stdout)
+            ?.groupValues
+            ?.getOrNull(1)
+        return fingerprint
+    }
+
+    override suspend fun installCoreDependencies(
+        coreId: String,
+        sourceNodeModulesDir: String,
+        dependencyId: String,
+    ): Boolean {
+        val safeCoreId = sanitizeShellArgument(coreId)
+        val safeSource = sanitizeShellArgument(sourceNodeModulesDir)
+        val safeDependencyId = sanitizeShellArgument(dependencyId)
+        if (safeDependencyId.any { !it.isLetterOrDigit() && it !in setOf('.', '_', '-') }) {
+            return false
+        }
+        return runSu(
+            "${DanmuPaths.CORE_CLI} deps install '$safeCoreId' '$safeSource' '$safeDependencyId'",
+            120_000L,
+        ).exitCode == 0
     }
 
     suspend fun listLogs(): LogDirectory? {

@@ -83,6 +83,15 @@ class ManagerViewModel(
     var logs: LogDirectory? by mutableStateOf(null)
         private set
 
+    var dependencyRepairState: DependencyRepairUiState by mutableStateOf(DependencyRepairUiState.Idle)
+        private set
+    var pendingRepairCoreId: String? by mutableStateOf(null)
+        private set
+    var dependencyRepairAvailable: Boolean by mutableStateOf(false)
+        private set
+    var dependencyRepairNames: List<String> by mutableStateOf(emptyList())
+        private set
+
     var apiToken: String by mutableStateOf("87654321")
         private set
     var apiPort: Int by mutableStateOf(9321)
@@ -378,12 +387,65 @@ class ManagerViewModel(
     fun activateCore(id: String) {
         viewModelScope.launch {
             if (!ensureRootAccess(forceSnackbar = true)) return@launch
-            val ok = withBusy("切换核心中…") {
-                val activated = repository.activateCore(id)
+            val repair = withBusy("切换核心中…") {
+                val result = repository.activateCoreWithRepair(id)
                 refreshAllInternal()
-                activated
+                result
             }
-            snackbars.tryEmit(if (ok) "已切换核心" else "切换核心失败")
+            if (repair == null) {
+                pendingRepairCoreId = null
+                dependencyRepairAvailable = false
+                dependencyRepairNames = emptyList()
+                snackbars.tryEmit("已切换核心")
+            } else {
+                pendingRepairCoreId = id
+                dependencyRepairAvailable = repair.allNames.isNotEmpty()
+                dependencyRepairNames = repair.allNames
+                dependencyRepairState = DependencyRepairUiState.Idle
+                snackbars.tryEmit("核心缺少依赖，需要修复后才能启动")
+            }
+        }
+    }
+
+    fun dismissDependencyRepair() {
+        pendingRepairCoreId = null
+        dependencyRepairAvailable = false
+        dependencyRepairNames = emptyList()
+        dependencyRepairState = DependencyRepairUiState.Idle
+    }
+
+    fun repairCoreDependencies() {
+        val coreId = pendingRepairCoreId ?: return
+        viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
+            dependencyRepairState = DependencyRepairUiState.Repairing("准备修复…", 0f)
+            val outcome = repository.repairCoreDependencies(coreId) { stage, progress ->
+                dependencyRepairState = DependencyRepairUiState.Repairing(stageLabel(stage), progress)
+            }
+            when (outcome) {
+                is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Success -> {
+                    pendingRepairCoreId = null
+                    dependencyRepairAvailable = false
+                    dependencyRepairNames = emptyList()
+                    dependencyRepairState = DependencyRepairUiState.Idle
+                    snackbars.tryEmit("依赖修复完成，核心已激活")
+                }
+                is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Failure -> {
+                    dependencyRepairState = DependencyRepairUiState.Error(outcome.message)
+                    snackbars.tryEmit("依赖修复失败：${outcome.message}")
+                }
+            }
+            refreshAllInternal()
+        }
+    }
+
+    private fun stageLabel(stage: com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage): String {
+        return when (stage) {
+            com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage.Fingerprint -> "读取依赖指纹…"
+            com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage.Manifest -> "校验签名清单…"
+            com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage.Download -> "下载依赖包…"
+            com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage.Install -> "安装依赖…"
+            com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage.Activate -> "激活核心…"
         }
     }
 

@@ -13,7 +13,11 @@ import com.danmuapi.manager.core.model.ReleaseAsset
 import com.danmuapi.manager.core.model.RollbackCommitItem
 import com.danmuapi.manager.core.model.RollbackCommitPage
 import com.danmuapi.manager.core.model.RollbackSearchSnapshot
+import com.danmuapi.manager.core.model.CoreDependencyRepairRequired
 import com.danmuapi.manager.core.root.DanmuCli
+import okhttp3.OkHttpClient
+import java.io.File
+import java.util.concurrent.TimeUnit
 
 internal fun compareVersions(left: String, right: String): Int {
     fun parseParts(value: String): List<Int> {
@@ -93,6 +97,10 @@ class DanmuRepository(
     private val cli: DanmuCli = DanmuCli(),
     private val gitHubApi: GitHubApi = GitHubApi(),
     private val gitHubReleaseApi: GitHubReleaseApi = GitHubReleaseApi(),
+    private val runtimePackWorkDir: File = File(
+        System.getProperty("java.io.tmpdir") ?: "/tmp",
+        "danmu-runtime-pack",
+    ),
 ) {
     suspend fun getStatus(): ManagerStatus? = cli.getStatus()
 
@@ -113,6 +121,45 @@ class DanmuRepository(
     suspend fun installCore(repo: String, ref: String): Boolean = cli.installCore(repo, ref)
 
     suspend fun activateCore(id: String): Boolean = cli.activateCore(id)
+
+    /**
+     * 激活核心并返回依赖阻断信息（exit 78 时）。
+     * @return null=激活成功；否则为需要修复的依赖信息
+     */
+    suspend fun activateCoreWithRepair(id: String): CoreDependencyRepairRequired? =
+        cli.activateCoreWithDependencyRepair(id)
+
+    /**
+     * 依赖修复全流程：签名清单 → 匹配指纹 → 下载/校验/解压 → 原子安装 → 重新激活。
+     * @param onProgress 阶段进度回调（0..1）
+     */
+    suspend fun repairCoreDependencies(
+        coreId: String,
+        onProgress: (RuntimePackRepairManager.RepairStage, Float) -> Unit = { _, _ -> },
+    ): RuntimePackRepairManager.RepairOutcome {
+        runtimePackWorkDir.mkdirs()
+        val httpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .callTimeout(180, TimeUnit.SECONDS)
+            .build()
+        val downloader = RuntimePackDownloader(httpClient, cli)
+        val manager = RuntimePackRepairManager(
+            cli = cli,
+            fetchManifest = { downloader.fetchSignedManifest() },
+            downloadAndExtract = { manifest, workingDir, progress ->
+                val archive = File(workingDir, "node_modules.zip")
+                downloader.downloadArchive(manifest, archive) { downloaded, total ->
+                    if (total > 0L) {
+                        progress((downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f))
+                    }
+                }
+                downloader.extractArchive(archive, workingDir)
+            },
+            workingDir = runtimePackWorkDir,
+        )
+        return manager.repair(coreId, onProgress)
+    }
 
     suspend fun deleteCore(id: String): Boolean = cli.deleteCore(id)
 
