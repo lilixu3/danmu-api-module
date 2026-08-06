@@ -26,7 +26,9 @@ object CoreUpdateSilentCheckScheduler {
         )
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    // 仅非计费网络（Wi-Fi/以太网）执行：后台静默检查每次会对每个核心
+                    // 发起 2~4 个 GitHub API 请求，移动网络下会白白消耗流量与电量。
+                    .setRequiredNetworkType(NetworkType.UNMETERED)
                     .setRequiresBatteryNotLow(true)
                     .build(),
             )

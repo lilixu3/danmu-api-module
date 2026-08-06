@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,6 +67,8 @@ import androidx.compose.ui.unit.sp
 import com.danmuapi.manager.app.state.ManagerViewModel
 import com.danmuapi.manager.core.designsystem.theme.DanmuMonoFamily
 import com.danmuapi.manager.core.designsystem.theme.ImmersivePalette
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.danmuapi.manager.core.designsystem.theme.rememberImmersivePalette
 import com.danmuapi.manager.core.util.rememberLanIpv4Addresses
 import kotlinx.coroutines.delay
@@ -1016,6 +1019,8 @@ private fun rememberLiveElapsedSeconds(
     pid: String?,
     baseElapsedSeconds: Long?,
 ): Long? {
+    // 锁屏/退后台（低于 RESUMED）时暂停 1 秒计时，避免持续唤醒 CPU。
+    val lifecycleOwner = LocalLifecycleOwner.current
     val liveElapsed by produceState<Long?>(
         initialValue = baseElapsedSeconds,
         running,
@@ -1029,10 +1034,12 @@ private fun rememberLiveElapsedSeconds(
 
         val startedAtMs = System.currentTimeMillis()
         val base = baseElapsedSeconds ?: 0L
-        while (true) {
-            val deltaSeconds = ((System.currentTimeMillis() - startedAtMs) / 1000L).coerceAtLeast(0L)
-            value = base + deltaSeconds
-            delay(1_000L)
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val deltaSeconds = ((System.currentTimeMillis() - startedAtMs) / 1000L).coerceAtLeast(0L)
+                value = base + deltaSeconds
+                delay(1_000L)
+            }
         }
     }
     return liveElapsed
