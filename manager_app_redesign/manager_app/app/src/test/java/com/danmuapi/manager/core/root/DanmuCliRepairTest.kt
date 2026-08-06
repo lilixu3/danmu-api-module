@@ -17,6 +17,43 @@ class DanmuCliRepairTest {
     }
 
     private val activateCommand = "${DanmuPaths.CORE_CLI} core activate 'core-1'"
+    private val installCommand = "${DanmuPaths.CORE_CLI} core install 'owner/repo' 'main'"
+
+    @Test
+    fun installCore_returnsInstalledOnSuccess() = runBlocking {
+        val cli = cliWith(installCommand to ShellResult(0, """{"result":"ok","activated":true}""", ""))
+        assertTrue(cli.installCore("owner/repo", "main") === CoreInstallOutcome.Installed)
+    }
+
+    @Test
+    fun installCore_parsesBlockedRepairJson() = runBlocking {
+        // 与 danmu_core.sh 真实输出一致：install_core 激活被依赖门禁阻断时
+        // emit_install_activation_failure 注入 action/activated 字段，exit 78
+        val output = """{"result":"dependency_repair_required","core":"owner-repo-main","missing":["brotli"],"incompatible":[],"conditional":[{"name":"redis","spec":"^5.11.0","installed":null,"compatible":false,"reason":"not_enabled","required":false}],"action":"installed","activated":false}"""
+        val cli = cliWith(installCommand to ShellResult(78, output, ""))
+        val outcome = cli.installCore("owner/repo", "main")
+        assertTrue(outcome is CoreInstallOutcome.Blocked)
+        val repair = (outcome as CoreInstallOutcome.Blocked).repair
+        assertEquals("owner-repo-main", repair.core)
+        assertEquals(listOf("brotli"), repair.missing)
+        assertEquals(listOf("redis"), repair.conditional)
+    }
+
+    @Test
+    fun installCore_returnsFailureOnNoise() = runBlocking {
+        val cli = cliWith(installCommand to ShellResult(1, "network error", "stderr"))
+        val outcome = cli.installCore("owner/repo", "main")
+        assertTrue(outcome is CoreInstallOutcome.Failed)
+        assertEquals(1, (outcome as CoreInstallOutcome.Failed).exitCode)
+    }
+
+    @Test
+    fun installCore_doesNotTreatExit78ErrorAsBlocked() = runBlocking {
+        val output = """{"result":"error","error":"core_not_found"}"""
+        val cli = cliWith(installCommand to ShellResult(78, output, ""))
+        val outcome = cli.installCore("owner/repo", "main")
+        assertTrue(outcome is CoreInstallOutcome.Failed)
+    }
 
     @Test
     fun activateCoreWithDependencyRepair_returnsActivatedWhenHealthy() = runBlocking {

@@ -172,10 +172,27 @@ class DanmuCli(
         return runSu("${DanmuPaths.CORE_CLI} autostart $mode", 10_000L).exitCode == 0
     }
 
-    suspend fun installCore(repo: String, ref: String): Boolean {
+    suspend fun installCore(repo: String, ref: String): CoreInstallOutcome {
         val safeRepo = sanitizeShellArgument(repo)
         val safeRef = sanitizeShellArgument(ref)
-        return runSu("${DanmuPaths.CORE_CLI} core install '$safeRepo' '$safeRef'", 600_000L).exitCode == 0
+        val result = runSu("${DanmuPaths.CORE_CLI} core install '$safeRepo' '$safeRef'", 600_000L)
+        if (result.exitCode == 0) return CoreInstallOutcome.Installed
+
+        // install_core 落位后激活被依赖门禁阻断：exit 78 + dependency_repair_required
+        // 载荷（emit_install_activation_failure 注入 action/activated 字段）。
+        // 核心已实际落位，应进入修复流程而非报"安装失败"。
+        val json = extractJsonObjectForTest(result.stdout)
+        val parsed = json?.let { raw ->
+            runCatching { repairPayloadAdapter.fromJson(raw) }.getOrNull()
+        }
+        if (result.exitCode == DEPENDENCY_REPAIR_EXIT_CODE &&
+            parsed?.result == "dependency_repair_required" &&
+            parsed.skipped.isNullOrBlank()
+        ) {
+            return CoreInstallOutcome.Blocked(parsed.toModel(""))
+        }
+
+        return CoreInstallOutcome.Failed(failureMessage(parsed, result, "核心安装失败"), result.exitCode)
     }
 
     suspend fun activateCore(id: String): Boolean {
@@ -202,18 +219,27 @@ class DanmuCli(
             return CoreActivationOutcome.RepairRequired(parsed.toModel(safeId))
         }
 
-        val message = when (parsed?.error) {
-            "core_not_found" -> "核心不存在"
-            "runtime_deps_missing" -> "运行时依赖检查器不可用"
-            else -> when (parsed?.skipped) {
-                "inspect_failed" -> "运行时依赖检查失败"
-                else -> parsed?.error
-                    ?: result.stderr.trim().takeIf { it.isNotBlank() }
-                    ?: result.stdout.trim().takeIf { it.isNotBlank() }
-                    ?: "核心激活失败"
-            }
+        return CoreActivationOutcome.Failure(
+            failureMessage(parsed, result, "核心激活失败").take(240),
+            result.exitCode,
+        )
+    }
+
+    /** CLI 失败载荷 → 用户可读错误消息（activate/install 共用）。 */
+    private fun failureMessage(
+        parsed: RepairRequiredPayload?,
+        result: ShellResult,
+        fallback: String,
+    ): String = when (parsed?.error) {
+        "core_not_found" -> "核心不存在"
+        "runtime_deps_missing" -> "运行时依赖检查器不可用"
+        else -> when (parsed?.skipped) {
+            "inspect_failed" -> "运行时依赖检查失败"
+            else -> parsed?.error
+                ?: result.stderr.trim().takeIf { it.isNotBlank() }
+                ?: result.stdout.trim().takeIf { it.isNotBlank() }
+                ?: fallback
         }
-        return CoreActivationOutcome.Failure(message.take(240), result.exitCode)
     }
 
     suspend fun deleteCore(id: String): Boolean {

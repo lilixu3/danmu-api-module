@@ -15,6 +15,7 @@ import com.danmuapi.manager.core.model.RollbackCommitPage
 import com.danmuapi.manager.core.model.RollbackSearchSnapshot
 import com.danmuapi.manager.core.model.CoreDependencyRepairRequired
 import com.danmuapi.manager.core.root.CoreActivationOutcome
+import com.danmuapi.manager.core.root.CoreInstallOutcome
 import com.danmuapi.manager.core.root.DanmuCli
 import okhttp3.OkHttpClient
 import java.io.File
@@ -119,7 +120,7 @@ class DanmuRepository(
 
     suspend fun setAutostart(enabled: Boolean): Boolean = cli.setAutostart(enabled)
 
-    suspend fun installCore(repo: String, ref: String): Boolean = cli.installCore(repo, ref)
+    suspend fun installCore(repo: String, ref: String): CoreInstallOutcome = cli.installCore(repo, ref)
 
     suspend fun activateCore(id: String): Boolean = cli.activateCore(id)
 

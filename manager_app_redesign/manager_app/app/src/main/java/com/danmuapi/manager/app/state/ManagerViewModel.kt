@@ -46,6 +46,7 @@ import com.danmuapi.manager.core.model.RollbackSearchSnapshot
 import com.danmuapi.manager.core.model.ServerConfig
 import com.danmuapi.manager.core.model.ServerLogEntry
 import com.danmuapi.manager.core.root.CoreActivationOutcome
+import com.danmuapi.manager.core.root.CoreInstallOutcome
 import com.danmuapi.manager.core.root.RootShell
 import com.danmuapi.manager.worker.CoreUpdateSilentCheckScheduler
 import com.danmuapi.manager.worker.LogCleanupScheduler
@@ -379,15 +380,29 @@ class ManagerViewModel(
                 return@launch
             }
             snackbars.tryEmit("开始安装核心：$repoText@$refText")
-            val ok = withBusy("下载并安装核心中…") {
-                val installed = repository.installCore(repoText, refText)
+            val outcome = withBusy("下载并安装核心中…") {
+                val result = repository.installCore(repoText, refText)
                 refreshAllInternal()
-                if (installed) {
-                    markInstalledActiveCoreUpToDate()
-                }
-                installed
+                result
             }
-            snackbars.tryEmit(if (ok) "核心已安装" else "核心安装失败")
+            when (outcome) {
+                CoreInstallOutcome.Installed -> {
+                    clearDependencyRepairState()
+                    markInstalledActiveCoreUpToDate()
+                    snackbars.tryEmit("核心已安装")
+                }
+                is CoreInstallOutcome.Blocked -> {
+                    // 核心已落位但激活被依赖门禁阻断：进入修复流程而非报"安装失败"
+                    pendingRepairCoreId = outcome.repair.core
+                    dependencyRepairAvailable = true
+                    dependencyRepairNames = outcome.repair.allNames
+                    dependencyRepairState = DependencyRepairUiState.Idle
+                    snackbars.tryEmit("核心已安装但缺少依赖，需要修复后才能启动")
+                }
+                is CoreInstallOutcome.Failed -> {
+                    snackbars.tryEmit("核心安装失败：${outcome.message}")
+                }
+            }
         }
     }
 
@@ -425,6 +440,10 @@ class ManagerViewModel(
     }
 
     fun dismissDependencyRepair() {
+        clearDependencyRepairState()
+    }
+
+    private fun clearDependencyRepairState() {
         pendingRepairCoreId = null
         dependencyRepairAvailable = false
         dependencyRepairNames = emptyList()
@@ -625,15 +644,29 @@ class ManagerViewModel(
                 snackbars.tryEmit("未找到核心")
                 return@launch
             }
-            val ok = withBusy("回退核心中…") {
-                val installed = repository.installCore(core.repo, commitSha)
+            val outcome = withBusy("回退核心中…") {
+                val result = repository.installCore(core.repo, commitSha)
                 refreshAllInternal()
-                if (installed) {
-                    markInstalledActiveCoreUpToDate()
-                }
-                installed
+                result
             }
-            snackbars.tryEmit(if (ok) "回退版本已安装，请切换到新核心" else "回退失败")
+            when (outcome) {
+                CoreInstallOutcome.Installed -> {
+                    clearDependencyRepairState()
+                    markInstalledActiveCoreUpToDate()
+                    snackbars.tryEmit("回退版本已安装，请切换到新核心")
+                }
+                is CoreInstallOutcome.Blocked -> {
+                    // 回退版本已落位但激活被依赖门禁阻断：进入修复流程
+                    pendingRepairCoreId = outcome.repair.core
+                    dependencyRepairAvailable = true
+                    dependencyRepairNames = outcome.repair.allNames
+                    dependencyRepairState = DependencyRepairUiState.Idle
+                    snackbars.tryEmit("回退版本已安装但缺少依赖，需要修复后才能启动")
+                }
+                is CoreInstallOutcome.Failed -> {
+                    snackbars.tryEmit("回退失败：${outcome.message}")
+                }
+            }
         }
     }
 
