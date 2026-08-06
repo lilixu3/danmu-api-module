@@ -76,3 +76,33 @@ jobs:
             echo '- 已验证 No-Node / Node 两种 Magisk 模块打包'
             echo '- 本工作流不上传任何构建产物'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  runtime-node-matrix:
+    name: Runtime deps / Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: module_template/app/package-lock.json
+
+      - name: Verify Node major
+        run: |
+          test "$(node -p 'process.versions.node.split(".")[0]')" = "${{ matrix.node-version }}"
+
+      - name: Test runtime dependency inspector
+        run: node --test scripts/ci/test_runtime_deps.mjs
+
+      - name: Check runtime lockfile contract
+        run: sh scripts/ci/check_runtime_lockfile.sh

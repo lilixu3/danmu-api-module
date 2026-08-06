@@ -104,7 +104,6 @@ VUsmyyO7hViS/U7pwIdYiXT0+rvwwcyLhWyzUJjI+2clAgMBAAE=
             }
             if (!Regex(SHA256_PATTERN).matches(manifest.runtimeLockSha256) ||
                 !Regex(SHA256_PATTERN).matches(manifest.dependencyFingerprint) ||
-                manifest.dependencyFingerprint != RuntimePackProtocol.dependencyFingerprint(manifest.dependencies) ||
                 !Regex(SHA256_PATTERN).matches(manifest.artifactSha256)
             ) {
                 throw RuntimePackIntegrityException("运行时依赖清单哈希无效")

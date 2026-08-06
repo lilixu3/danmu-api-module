@@ -60,6 +60,19 @@ internal object RuntimePackProtocol {
         return digest.joinToString("") { "%02x".format(it) }
     }
 
+    fun sha256(file: java.io.File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     private fun jsonString(value: String): String {
         // 与 JSON.stringify 一致：仅转义引号/反斜杠/控制字符；非 ASCII 原样保留
         // （Python ensure_ascii=false 语义），保证跨端指纹一致

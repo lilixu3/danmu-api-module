@@ -5,6 +5,8 @@
 
 package com.danmuapi.manager.feature.corehub
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Construction
@@ -274,6 +277,9 @@ fun CoreDetailScreen(
     var selectedCommit by remember { mutableStateOf<RollbackCommitItem?>(null) }
     var confirmRollbackCommit by remember { mutableStateOf<RollbackCommitItem?>(null) }
     var rollbackQuery by rememberSaveable { mutableStateOf("") }
+    val importLocalLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(viewModel::importLocalDependencyPack) }
 
     if (deleteTarget != null) {
         val target = deleteTarget!!
@@ -460,6 +466,11 @@ fun CoreDetailScreen(
                         DependencyRepairUiState.Idle
                     },
                     onRepairDependencies = { viewModel.repairCoreDependencies() },
+                    onImportLocal = {
+                        importLocalLauncher.launch(
+                            arrayOf("application/zip", "application/x-zip-compressed"),
+                        )
+                    },
                     onDismissRepair = { viewModel.dismissDependencyRepair() },
                 )
 
@@ -1331,6 +1342,7 @@ private fun CoreDetailSummaryCard(
     repairNames: List<String>,
     repairState: DependencyRepairUiState,
     onRepairDependencies: () -> Unit,
+    onImportLocal: () -> Unit,
     onDismissRepair: () -> Unit,
 ) {
     val statusHeadline = buildCoreDetailHeadline(isActive = isActive, updateInfo = updateInfo)
@@ -1457,6 +1469,7 @@ private fun CoreDetailSummaryCard(
                     busy = busy,
                     colors = colors,
                     onRepair = onRepairDependencies,
+                    onImportLocal = onImportLocal,
                     onDismiss = onDismissRepair,
                 )
             }
@@ -1509,6 +1522,7 @@ private fun DependencyRepairBanner(
     busy: Boolean,
     colors: CoreHubColors,
     onRepair: () -> Unit,
+    onImportLocal: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     Surface(
@@ -1572,6 +1586,15 @@ private fun DependencyRepairBanner(
                             colors = colors,
                             emphasized = true,
                             onClick = onRepair,
+                        )
+                        CoreDetailActionButton(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Filled.Archive,
+                            label = "本地包",
+                            busy = busy,
+                            enabled = !busy,
+                            colors = colors,
+                            onClick = onImportLocal,
                         )
                         CoreDetailActionButton(
                             modifier = Modifier.weight(1f),

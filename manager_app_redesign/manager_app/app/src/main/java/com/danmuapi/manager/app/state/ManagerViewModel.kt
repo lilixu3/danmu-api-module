@@ -58,6 +58,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -446,6 +447,46 @@ class ManagerViewModel(
             com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage.Download -> "下载依赖包…"
             com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage.Install -> "安装依赖…"
             com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairStage.Activate -> "激活核心…"
+        }
+    }
+
+    /** 从本地 zip 导入依赖包（自定义核心离线修复） */
+    fun importLocalDependencyPack(uri: Uri) {
+        val coreId = pendingRepairCoreId ?: return
+        viewModelScope.launch {
+            if (!ensureRootAccess(forceSnackbar = true)) return@launch
+            dependencyRepairState = DependencyRepairUiState.Repairing("导入本地依赖包…", 0f)
+            val archive = withContext(Dispatchers.IO) {
+                val file = File(getApplication<Application>().cacheDir, "local-pack-${System.currentTimeMillis()}.zip")
+                runCatching {
+                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
+                        file.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }.getOrNull()?.let { file } ?: File("")
+            }
+            if (!archive.isFile || archive.length() <= 0L) {
+                dependencyRepairState = DependencyRepairUiState.Error("无法读取所选文件")
+                snackbars.tryEmit("本地依赖包读取失败")
+                return@launch
+            }
+            val outcome = repository.importLocalDependencies(coreId, archive) { stage, progress ->
+                dependencyRepairState = DependencyRepairUiState.Repairing(stageLabel(stage), progress)
+            }
+            archive.delete()
+            when (outcome) {
+                is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Success -> {
+                    pendingRepairCoreId = null
+                    dependencyRepairAvailable = false
+                    dependencyRepairNames = emptyList()
+                    dependencyRepairState = DependencyRepairUiState.Idle
+                    snackbars.tryEmit("依赖导入完成，核心已激活")
+                }
+                is com.danmuapi.manager.core.data.RuntimePackRepairManager.RepairOutcome.Failure -> {
+                    dependencyRepairState = DependencyRepairUiState.Error(outcome.message)
+                    snackbars.tryEmit("依赖导入失败：${outcome.message}")
+                }
+            }
+            refreshAllInternal()
         }
     }
 

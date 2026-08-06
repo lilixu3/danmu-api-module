@@ -161,6 +161,58 @@ class DanmuRepository(
         return manager.repair(coreId, onProgress)
     }
 
+    /**
+     * 自定义核心本地依赖包导入：安全解压 zip → 原子安装 → 重新激活。
+     * 依赖 ID 取压缩包 SHA-256 前 16 位，保证同包幂等、异包隔离。
+     */
+    suspend fun importLocalDependencies(
+        coreId: String,
+        archive: File,
+        onProgress: (RuntimePackRepairManager.RepairStage, Float) -> Unit = { _, _ -> },
+    ): RuntimePackRepairManager.RepairOutcome {
+        runtimePackWorkDir.mkdirs()
+        try {
+            val outDir = File(runtimePackWorkDir, "local-import-${System.currentTimeMillis()}")
+            outDir.mkdirs()
+            val importer = LocalRuntimePackImporter()
+            val sourceNodeModules = importer.importArchive(archive, outDir)
+                ?: return RuntimePackRepairManager.RepairOutcome.Failure(
+                    RuntimePackRepairManager.RepairFailure.DownloadExtractFailed,
+                    "本地依赖包导入失败",
+                )
+            onProgress(RuntimePackRepairManager.RepairStage.Download, 1f)
+
+            val dependencyId = RuntimePackProtocol.sha256(archive).take(16)
+            onProgress(RuntimePackRepairManager.RepairStage.Install, 0f)
+            val installed = cli.installCoreDependencies(coreId, sourceNodeModules.absolutePath, dependencyId)
+            if (!installed) {
+                return RuntimePackRepairManager.RepairOutcome.Failure(
+                    RuntimePackRepairManager.RepairFailure.InstallFailed,
+                    "依赖安装失败（原子事务已回滚）",
+                )
+            }
+            onProgress(RuntimePackRepairManager.RepairStage.Install, 1f)
+
+            onProgress(RuntimePackRepairManager.RepairStage.Activate, 0f)
+            val stillBlocked = cli.activateCoreWithDependencyRepair(coreId)
+            onProgress(RuntimePackRepairManager.RepairStage.Activate, 1f)
+            return if (stillBlocked == null) {
+                RuntimePackRepairManager.RepairOutcome.Success
+            } else {
+                RuntimePackRepairManager.RepairOutcome.Failure(
+                    RuntimePackRepairManager.RepairFailure.ActivateStillBlocked,
+                    "依赖已安装但激活仍被阻断：${stillBlocked.allNames}",
+                    stillBlocked,
+                )
+            }
+        } catch (error: Exception) {
+            return RuntimePackRepairManager.RepairOutcome.Failure(
+                RuntimePackRepairManager.RepairFailure.DownloadExtractFailed,
+                error.message ?: "本地依赖包导入失败",
+            )
+        }
+    }
+
     suspend fun deleteCore(id: String): Boolean = cli.deleteCore(id)
 
     suspend fun clearLogs(): Boolean = cli.clearLogs()

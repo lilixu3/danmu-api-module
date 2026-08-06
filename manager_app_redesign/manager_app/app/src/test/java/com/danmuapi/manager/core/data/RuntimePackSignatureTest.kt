@@ -65,7 +65,9 @@ class RuntimePackSignatureTest {
         runtimeProtocol = 2,
         nodeMajor = 18,
         runtimeLockSha256 = "a".repeat(64),
-        dependencyFingerprint = RuntimePackProtocol.dependencyFingerprint(dependencies),
+        // 权威口径：fingerprint 是核心 package.json 全集（dependencies+optionalDependencies）
+        // 的指纹，与 manifest.dependencies（包内子集）无关；发布端用全集计算。
+        dependencyFingerprint = "b".repeat(64),
         dependencies = dependencies,
         artifactUrl = "https://github.com/lilixu3/danmu-api-runtime-packs/releases/download/runtime-dependencies-${artifactSha.take(12)}/node_modules.zip",
         artifactSha256 = artifactSha,
@@ -122,11 +124,13 @@ class RuntimePackSignatureTest {
     }
 
     @Test
-    fun fingerprintMatchesManifestDependencies() {
+    fun validateManifest_acceptsFingerprintUnrelatedToPackageSubset() {
+        // 真实发布端语义：dependencyFingerprint 由核心 package.json 全集计算，
+        // manifest.dependencies 只是包内子集，二者必然不同——清单仍应通过校验。
         val manifest = validManifest()
-        assertEquals(
-            RuntimePackProtocol.dependencyFingerprint(manifest.dependencies),
-            manifest.dependencyFingerprint,
+        assertEquals("b".repeat(64), manifest.dependencyFingerprint)
+        assertTrue(
+            manifest.dependencyFingerprint != RuntimePackProtocol.dependencyFingerprint(manifest.dependencies),
         )
         RuntimePackDownloader.validateManifest(manifest)
     }

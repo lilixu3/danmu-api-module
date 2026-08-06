@@ -183,4 +183,27 @@ FP="$(printf '%s' "$CLI_OUTPUT" | grep -o '"fingerprint":"[0-9a-f]*"' | head -n1
 [ "$FP" = "$EXPECTED_FP" ] \
   || fail "测试7: 指纹与 Node 契约不一致 expected=$EXPECTED_FP actual=$FP"
 
+# ---------- 测试 8: redis conditional —— 仅 LOCAL_REDIS_URL 启用时阻断 ----------
+cid8="$(make_core "test8")"
+# 给核心加 redis 依赖
+python3 - "$TEST_PERSIST/cores/$cid8/danmu_api/package.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["dependencies"]["redis"] = "^5.11.0"
+open(p, "w").write(json.dumps(d, ensure_ascii=False))
+PY
+
+# 8a: 未设置 LOCAL_REDIS_URL → redis 忽略，激活成功
+run_cli_capture core activate "$cid8"
+[ "$CLI_STATUS" -eq 0 ] || fail "测试8a: 未启用 redis 时应可激活: $CLI_OUTPUT"
+
+# 8b: 设置 LOCAL_REDIS_URL → redis 缺失阻断，exit 78 且 missing 含 redis
+echo 'LOCAL_REDIS_URL=redis://127.0.0.1:6379' > "$TEST_PERSIST/config/.env"
+run_cli_capture core activate "$cid8"
+[ "$CLI_STATUS" -eq 78 ] || fail "测试8b: 启用 redis 且缺失时应 exit 78: $CLI_OUTPUT"
+echo "$CLI_OUTPUT" | grep -q '"missing":\["redis"\]' \
+  || fail "测试8b: missing 应含 redis: $CLI_OUTPUT"
+rm -f "$TEST_PERSIST/config/.env"
+
 echo "runtime dependency shell integration ok"

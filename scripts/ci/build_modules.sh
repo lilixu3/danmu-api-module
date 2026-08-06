@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
+# shellcheck source=./node_pinning_lib.sh
+source "$SCRIPT_DIR/node_pinning_lib.sh"
 
 variant="both"
 version="$(default_build_version)"
@@ -152,6 +154,8 @@ fetch_termux_node() {
   local root="$1"
   local arch="aarch64"
   local repo_base="https://packages.termux.dev/apt/termux-main"
+  # 供应链加固：node 闭包版本/SHA 全部固定于锁文件，索引解析仅作存在性回退
+  local node_lockfile="${NODE_LOCKFILE:-$SCRIPT_DIR/termux-node-aarch64.lock.json}"
   local index_xz="${repo_base}/dists/stable/main/binary-${arch}/Packages.xz"
   local index_plain="${repo_base}/dists/stable/main/binary-${arch}/Packages"
 
@@ -167,9 +171,10 @@ fetch_termux_node() {
   fi
   local pkg_index="$work_dir/Packages"
 
-  pkg_filename() {
+  pkg_field() {
     local pkg="$1"
-    awk -v pkg="$pkg" '
+    local field="$2"
+    awk -v pkg="$pkg" -v field="$field" '
       BEGIN{RS="";FS="\n"}
       {
         hit=0
@@ -177,127 +182,75 @@ fetch_termux_node() {
           if($i == "Package: " pkg){ hit=1; break }
         }
         if(hit){
+          prefix=field ": "
           for(i=1;i<=NF;i++){
-            if(index($i,"Filename: ")==1){
-              sub(/^Filename: /,"",$i)
-              print $i
-              exit
-            }
-          }
-        }
-      }' "$pkg_index"
-  }
-
-  pkg_depends() {
-    local pkg="$1"
-    awk -v pkg="$pkg" '
-      BEGIN{RS="";FS="\n"}
-      {
-        hit=0
-        for(i=1;i<=NF;i++){
-          if($i == "Package: " pkg){ hit=1; break }
-        }
-        if(hit){
-          for(i=1;i<=NF;i++){
-            if(index($i,"Depends: ")==1){
-              dep=substr($i,10)
-              for(j=i+1;j<=NF && $j ~ /^ /; j++){
-                dep=dep " " substr($j,2)
+            if(index($i,prefix)==1){
+              val=substr($i,length(prefix)+1)
+              for(j=i+1;j<=NF && substr($j,1,1)==" "; j++){
+                val=val " " substr($j,2)
               }
-              print dep
+              print val
               exit
             }
           }
         }
       }' "$pkg_index"
-  }
-
-  parse_dep_groups() {
-    local dep_string="${1:-}"
-    [ -z "$dep_string" ] && return 0
-
-    echo "$dep_string" | tr ',' '\n' | while read -r group; do
-      group="$(echo "$group" | xargs)"
-      [ -z "$group" ] && continue
-      group="$(echo "$group" | sed -E 's/\([^)]*\)//g')"
-      group="$(echo "$group" | sed -E 's/:[a-z0-9_-]+//g')"
-      group="$(echo "$group" | tr -s ' ' ' ' | xargs)"
-      [ -n "$group" ] && echo "$group"
-    done
-  }
-
-  resolve_group() {
-    local group="$1"
-    local alt
-    IFS='|' read -ra alts <<< "$group"
-
-    for alt in "${alts[@]}"; do
-      alt="$(echo "$alt" | xargs)"
-      [ -z "$alt" ] && continue
-
-      local candidates=("$alt")
-      if [ "$alt" = "libc++" ]; then
-        candidates=("libc++" "libc++-shared")
-      elif [ "$alt" = "libc++-shared" ]; then
-        candidates=("libc++-shared" "libc++")
-      fi
-
-      local candidate
-      for candidate in "${candidates[@]}"; do
-        local filename
-        filename="$(pkg_filename "$candidate" || true)"
-        if [ -n "$filename" ]; then
-          echo "$candidate"
-          return 0
-        fi
-      done
-    done
-
-    return 1
   }
 
   download_and_extract() {
     local pkg="$1"
     local filename="$2"
+    # 供应链加固：固定版本与锁文件条目，缺失即 fail-closed
+    local lock_entry
+    lock_entry="$(python3 - "$NODE_LOCKFILE" "$pkg" <<'PY' || true
+import json, sys
+lock = json.load(open(sys.argv[1], encoding='utf-8'))
+for entry in lock.get('packages', []):
+    if entry.get('name') == sys.argv[2]:
+        print(json.dumps(entry, ensure_ascii=False))
+        break
+PY
+)"
+    if [ -z "$lock_entry" ]; then
+      echo "供应链加固失败：$pkg 不在 node 锁文件 ${NODE_LOCKFILE} 中（需先更新锁文件）" >&2
+      exit 1
+    fi
+    local expected_version expected_sha
+    expected_version="$(printf '%s' "$lock_entry" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+    expected_sha="$(printf '%s' "$lock_entry" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha256"])')"
+    local index_version
+    index_version="$(pkg_field "$pkg_index" "$pkg" Version || true)"
+    if [ -z "$index_version" ] || [ "$index_version" != "$expected_version" ]; then
+      echo "供应链加固失败：$pkg 版本漂移（锁文件 ${expected_version:-<缺失>}，索引 '${index_version:-<缺失>}'）" >&2
+      exit 1
+    fi
     curl -fLsS --retry 3 "${repo_base}/${filename}" -o "${work_dir}/${pkg}.deb"
+    if ! verify_file_sha256 "${work_dir}/${pkg}.deb" "$expected_sha"; then
+      echo "SHA-256 校验失败，已中止构建：$pkg（锁文件声明: ${expected_sha:-<缺失>}）" >&2
+      exit 1
+    fi
     dpkg-deb -x "${work_dir}/${pkg}.deb" "$extracted"
     rm -f "${work_dir}/${pkg}.deb"
   }
 
-  declare -A seen=()
-  local queue=("nodejs")
-
-  while [ "${#queue[@]}" -gt 0 ]; do
-    local pkg="${queue[0]}"
-    queue=("${queue[@]:1}")
-
+  # 供应链加固：直接按锁文件闭包下载，不再做索引递归解析
+  local pkg
+  while IFS= read -r pkg; do
     [ -n "$pkg" ] || continue
-    if [ "${seen[$pkg]+x}" = "x" ]; then
-      continue
-    fi
-    seen["$pkg"]=1
-
     local filename
-    filename="$(pkg_filename "$pkg" || true)"
+    filename="$(pkg_field "$pkg_index" "$pkg" Filename || true)"
     if [ -z "$filename" ]; then
       echo "在 Packages 索引中找不到包: $pkg" >&2
       exit 1
     fi
-
     download_and_extract "$pkg" "$filename"
-
-    local deps
-    deps="$(pkg_depends "$pkg" || true)"
-    while read -r group; do
-      [ -n "$group" ] || continue
-      local resolved
-      if ! resolved="$(resolve_group "$group")"; then
-        echo "依赖组无法解析: $group" >&2
-        exit 1
-      fi
-      queue+=("$resolved")
-    done < <(parse_dep_groups "$deps")
-  done
+  done < <(python3 - "$node_lockfile" <<'PY' || true
+import json, sys
+lock = json.load(open(sys.argv[1], encoding='utf-8'))
+for entry in lock.get('packages', []):
+    print(entry.get('name', ''))
+PY
+)
 
   local node_bin_path
   node_bin_path="$(find "$extracted" -type f -path '*/files/usr/bin/node' | head -n 1 || true)"
